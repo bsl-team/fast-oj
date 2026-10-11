@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/liangbinchen2013/fast-oj/internal/casefs"
 	"github.com/liangbinchen2013/fast-oj/internal/config"
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
@@ -17,17 +18,28 @@ type Server struct {
 	cfg     config.Config
 	log     *slog.Logger
 	db      *store.DB
+	cases   *casefs.Store
 	started time.Time
 }
 
 func New(cfg config.Config, log *slog.Logger, db *store.DB) *Server {
-	return &Server{cfg: cfg, log: log, db: db, started: time.Now()}
+	return &Server{cfg: cfg, log: log, db: db, cases: casefs.New(cfg.DataDir), started: time.Now()}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /about", s.handleAbout)
+
+	mux.HandleFunc("GET /problems", s.handleProblemList)
+	mux.HandleFunc("POST /problems", s.handleProblemCreate)
+	mux.HandleFunc("GET /problems/{key}", s.handleProblemGet)
+	mux.HandleFunc("PUT /problems/{key}", s.handleProblemUpdate)
+	mux.HandleFunc("DELETE /problems/{key}", s.handleProblemDelete)
+	mux.HandleFunc("GET /problems/{key}/cases", s.handleCaseList)
+	mux.HandleFunc("POST /problems/{key}/cases", s.handleCaseUpload)
+	mux.HandleFunc("DELETE /problems/{key}/cases", s.handleCaseWipe)
+	mux.HandleFunc("GET /problems/{key}/cases/{name}/{which}", s.handleCaseBody)
 	return s.wrap(mux)
 }
 

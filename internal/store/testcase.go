@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 const testcaseColumns = `id, problem_id, ordinal, name, is_sample, score, input_rel, output_rel`
@@ -80,4 +81,62 @@ func (db *DB) ProblemScoreTotal(ctx context.Context, problemID int64) (int, erro
 	err := db.SQL.QueryRowContext(ctx,
 		`SELECT IFNULL(SUM(score), 0) FROM testcases WHERE problem_id=? AND is_sample=0`, problemID).Scan(&total)
 	return total, err
+}
+
+// CaseCounts returns judged-case counts for many problems in one query, so the
+// problem list never turns into one query per row.
+func (db *DB) CaseCounts(ctx context.Context, problemIDs []int64) (map[int64]int, error) {
+	counts := make(map[int64]int, len(problemIDs))
+	if len(problemIDs) == 0 {
+		return counts, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(problemIDs)), ",")
+	args := make([]any, len(problemIDs))
+	for i, id := range problemIDs {
+		args[i] = id
+	}
+	rows, err := db.SQL.QueryContext(ctx,
+		`SELECT problem_id, COUNT(*) FROM testcases WHERE problem_id IN (`+placeholders+`) GROUP BY problem_id`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id int64
+			n  int
+		)
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		counts[id] = n
+	}
+	return counts, rows.Err()
+}
+
+func (db *DB) CountTestcases(ctx context.Context, problemID int64, samplesOnly bool) (int, error) {
+	q := `SELECT COUNT(*) FROM testcases WHERE problem_id=?`
+	if samplesOnly {
+		q += ` AND is_sample=1`
+	}
+	var n int
+	err := db.SQL.QueryRowContext(ctx, q, problemID).Scan(&n)
+	return n, err
+}
+
+// PutTestcase inserts or replaces a case by (problem, name). The id is re-read
+// because an upsert branch leaves last_insert_rowid() untouched.
+func (db *DB) PutTestcase(ctx context.Context, tc *Testcase) (Testcase, error) {
+	_, err := db.SQL.ExecContext(ctx,
+		`INSERT INTO testcases (problem_id, ordinal, name, is_sample, score, input_rel, output_rel)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(problem_id, name) DO UPDATE SET
+			ordinal=excluded.ordinal, is_sample=excluded.is_sample, score=excluded.score,
+			input_rel=excluded.input_rel, output_rel=excluded.output_rel`,
+		tc.ProblemID, tc.Ordinal, tc.Name, boolInt(tc.IsSample), tc.Score, tc.InputRel, tc.OutputRel)
+	if err != nil {
+		return Testcase{}, err
+	}
+	return db.GetTestcase(ctx, tc.ProblemID, tc.Name)
 }

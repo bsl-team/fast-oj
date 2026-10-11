@@ -1,4 +1,5 @@
 data/
+.tmp/
 bin/
 dist/
 *.db

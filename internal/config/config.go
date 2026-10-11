@@ -14,6 +14,8 @@ type Config struct {
 	AdminToken string
 	JudgeToken string
 	MaxSource  int64
+	MaxUpload  int64
+	MaxCase    int64
 	Verbose    bool
 }
 
@@ -45,6 +47,12 @@ func (c *Config) Validate() error {
 	if c.MaxSource <= 0 {
 		return fmt.Errorf("max source size must be positive")
 	}
+	if c.MaxUpload <= 0 || c.MaxCase <= 0 {
+		return fmt.Errorf("max upload and max case sizes must be positive")
+	}
+	if c.MaxCase > c.MaxUpload {
+		return fmt.Errorf("max-case must not exceed max-upload")
+	}
 	abs, err := filepath.Abs(c.DataDir)
 	if err != nil {
 		return err
@@ -64,11 +72,14 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&c.DBPath, "db", os.Getenv("FASTOJ_DB"), "sqlite file (default <data>/fast-oj.db)")
 	fs.StringVar(&c.AdminToken, "admin-token", os.Getenv("FASTOJ_ADMIN_TOKEN"), "token granting problem authoring")
 	fs.StringVar(&c.JudgeToken, "judge-token", os.Getenv("FASTOJ_JUDGE_TOKEN"), "token granting judge access")
-	fs.Int64Var(&c.MaxSource, "max-source", 256<<10, "maximum accepted source bytes")
+	fs.Int64Var(&c.MaxSource, "max-source", 256<<10, "maximum accepted source/json body bytes")
+	fs.Int64Var(&c.MaxUpload, "max-upload", 64<<20, "maximum case archive upload bytes")
+	fs.Int64Var(&c.MaxCase, "max-case", 16<<20, "maximum single case file bytes")
 	fs.BoolVar(&c.Verbose, "v", false, "verbose request logging")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
+	c.DataDir, _ = filepath.Abs(c.DataDir)
 	if err := c.Validate(); err != nil {
 		return c, err
 	}
