@@ -16,7 +16,8 @@ import (
 func ctx() context.Context { return context.Background() }
 
 // testConfig mirrors what Load would produce, without touching the process env.
-func testConfig(t *testing.T) config.Config {
+// It takes testing.TB so benchmarks can use it too.
+func testConfig(t testing.TB) config.Config {
 	t.Helper()
 	dir := t.TempDir()
 	return config.Config{
