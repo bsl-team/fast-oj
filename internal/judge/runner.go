@@ -15,10 +15,14 @@ const (
 	// already cannot match the expected answer, so it is scored as WA.
 	MaxOutput = 1 << 20
 	MaxStderr = 1 << 16
-	// wallClockSlack absorbs process startup and scheduling jitter, and the
-	// floor keeps very small limits usable.
-	wallClockSlack = 2.0
-	minWallClock   = 2 * time.Second
+	// timeSlackMS is how much longer than the problem's limit a run is allowed to
+	// keep going before the wall clock cuts it off. Without the slack a program at
+	// 1001ms of a 1000ms limit gets killed at the boundary and reports 1000ms; with
+	// it we get to measure and report the real number.
+	timeSlackMS = 50
+	// minWallClock covers process creation on a cold judge: a problem with a 10ms
+	// limit cannot be judged by a 10ms wall clock.
+	minWallClock = 250 * time.Millisecond
 	// reapGrace is how long Run waits for a killed tree to actually go away before
 	// it reports the verdict anyway. A run that cannot be reaped (a judge without
 	// CAP_KILL signalling a dropped-uid child, or a grandchild holding the output
@@ -118,6 +122,24 @@ func killText(err error) string {
 	return err.Error()
 }
 
+// verdictFor decides the outcome of one finished run. The order is the meaning:
+// output that blew past the cap can no longer match the answer, a blown memory cap
+// explains a crash better than its exit code does, and a run that used more CPU
+// than the problem allows is TLE even when it exited cleanly on its own.
+func verdictFor(lim Limits, timeMS, memKB, exit int, overflowed bool) (Verdict, string) {
+	switch {
+	case overflowed:
+		return WA, "output over " + strconv.Itoa(MaxOutput) + " bytes"
+	case lim.MemKB > 0 && memKB > lim.MemKB:
+		return MLE, ""
+	case lim.TimeMS > 0 && timeMS > lim.TimeMS:
+		return TLE, "cpu time over the " + strconv.Itoa(lim.TimeMS) + "ms limit"
+	case exit != 0:
+		return RE, ""
+	}
+	return AC, ""
+}
+
 // allowedEnvKeys is everything a judged program may inherit. SystemRoot/WINDIR
 // are what the loader needs to find the system DLLs; PATH is what reaches the
 // compiler. Nothing else survives, because none of it is the program's business.
@@ -208,19 +230,10 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 			TimeMS: timeMS, MemKB: memKB, Exit: exitCode(w.err),
 			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
 		}
-		switch {
-		case stdout.Overflowed():
-			ex.Verdict = WA
-			ex.Note = "output over " + strconv.Itoa(MaxOutput) + " bytes"
-		case lim.MemKB > 0 && memKB > lim.MemKB:
-			ex.Verdict = MLE
-		case ex.Exit != 0:
-			ex.Verdict = RE
-			if ex.Note == "" && w.err != nil {
-				ex.Note = w.err.Error()
-			}
-		default:
-			ex.Verdict = AC
+		v, note := verdictFor(lim, timeMS, memKB, ex.Exit, stdout.Overflowed())
+		ex.Verdict, ex.Note = v, note
+		if ex.Verdict == RE && w.err != nil {
+			ex.Note = w.err.Error()
 		}
 		return ex
 
@@ -244,10 +257,20 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 		if memKB < 0 {
 			memKB = usageMemKB(w.state)
 		}
+		// Show what the run actually cost, floored at the limit: a CPU-bound program
+		// killed at 1050ms should not be reported as "1000ms", while a program that
+		// slept instead of computing has no meaningful CPU number to show.
+		measured := usageMS(w.state)
+		if measured < 0 {
+			_, measured = g.Measure()
+		}
+		if measured < lim.TimeMS {
+			measured = lim.TimeMS
+		}
 		return Execution{
-			Verdict: TLE, TimeMS: lim.TimeMS, MemKB: memKB,
+			Verdict: TLE, TimeMS: measured, MemKB: memKB,
 			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
-			Note: "wall clock limit " + strconv.Itoa(lim.TimeMS) + "ms exceeded",
+			Note: "wall clock limit " + strconv.Itoa(lim.TimeMS+timeSlackMS) + "ms exceeded",
 		}
 	}
 }
@@ -287,7 +310,7 @@ func usageMemKB(state *os.ProcessState) int {
 // wallClockFor turns a CPU limit into a hard deadline. Without one, a program
 // that sleeps instead of computing would pin a judge slot forever.
 func wallClockFor(timeMS int) time.Duration {
-	d := time.Duration(float64(timeMS)*wallClockSlack) * time.Millisecond
+	d := time.Duration(timeMS+timeSlackMS) * time.Millisecond
 	if d < minWallClock {
 		d = minWallClock
 	}

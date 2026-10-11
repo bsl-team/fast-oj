@@ -53,8 +53,9 @@ type Report struct {
 // CompileLimits are deliberately loose: a slow link step is not the submitter's
 // fault. The compiler is not the untrusted input here, but it still runs under a
 // scrubbed environment and a wide process cap rather than unsandboxed, since it is
-// the same execution path.
-var CompileLimits = Limits{TimeMS: 60_000, MemKB: 2 << 20, MaxProcs: 16}
+// the same execution path. TimeMS is a wall budget (limit + 50ms slack), so it
+// carries the multi-process compiler's startup overhead rather than one CPU bound.
+var CompileLimits = Limits{TimeMS: 120_000, MemKB: 2 << 20, MaxProcs: 16}
 
 // maxDetail keeps judge-side text out of the database from growing unbounded.
 const maxDetail = 4 << 10
