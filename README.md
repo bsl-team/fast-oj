@@ -119,7 +119,7 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/jso
 - 行内用 `$a + b$`
 - 行间用 `$$ \frac{a+b}{2} $$`，**并且要让这一段只放公式**：`$$…$$` 夹在句子里会被读成两个相邻的行内 `$…$`，结果是公式渲染了、两侧各留下一个裸 `$`。行间公式请单独占一行（前后空行最稳）。
 
-渲染器把两者输出成 `<span class="math inline">\(…\)</span>` / `<span class="math display">\[…\]</span>`，页面里的 `math.js` 只对这两个节点调用 KaTeX，所以代码块里的下划线、`$` 不会被误当成公式。KaTeX 走 CDN（jsdelivr，0.16.11）；**CDN 不可达时公式退回显示原始 TeX**，题面照样能读，需要完全离线就把 KaTeX 放本地并改 `internal/api/templates/layout.html` 的两行链接。
+渲染器把两者输出成 `<span class="math inline">\(…\)</span>` / `<span class="math display">\[…\]</span>`，页面里的 `math.js` 只对这两个节点调用 KaTeX，所以代码块里的下划线、`$` 不会被误当成公式。KaTeX 走 CDN（jsdelivr，0.16.11），但**只有页面上真的出现公式时才会去取**（模板里没有 CDN 标签，`static/math.js` 发现 `span.math` 才注入）；**CDN 不可达时公式退回显示原始 TeX**，题面照样能读。需要完全离线就把 KaTeX 与字体嵌进二进制，见[性能](#浏览器侧的账f12-限速-3g)。
 
 > 注意：请写 `$…$`，不要写 `\(…\)` —— 后者会被当成普通文本并吞掉反斜杠。
 
@@ -412,6 +412,26 @@ powershell -File build.ps1 -Test
 
 已知会先劣化的地方：`/rank` 用相关子查询按用户聚合，用户数上千后需要改成物化计数列。
 
+### 浏览器侧的账（F12 限速 3G）
+
+后端 1 ms 级别不代表页面快。Chrome 的 Fast 3G 是 1.6 Mbps（≈200 KB/s）+ 150 ms RTT，
+在这个档位下首字节 14 ms、整页 P99 却要 2.3 s——差的那部分是**下载量**：
+
+| 项目 | 改前 | 改后 |
+|------|------|------|
+| 页面 HTML | 3–11 KB 原样发送 | gzip 后 1.5–2 KB（`/submissions` 10.8 KB → 1.55 KB） |
+| `style.css` + `math.js` | 5 KB + 0.9 KB，`max-age=300` | gzip + `?v=<内容哈希>` + `immutable` 一年缓存 |
+| KaTeX（CSS 23 KB + JS 275 KB + 字体 100–180 KB） | **每一页都从 CDN 拉** | 只有页面上真的存在公式节点时才拉 |
+
+所以现在的规则是：`/problems`、`/submissions`、`/rank`、登录注册这些没有公式的页面，
+一次外部请求都不发（实测网络面板只剩本站两个资源）；只有题面、写了公式的页脚/首页语
+那类页面才付 KaTeX 的钱。加载逻辑在 `static/math.js`：模板里不留任何 CDN 标签，由脚本
+发现 `span.math` 之后再注入 CSS 与 JS，CDN 不可达时原始 TeX 仍然可读。
+
+还要再快可以做两件事：把 KaTeX 与其字体一并嵌进二进制（离线可用，省掉到第三方
+的 DNS + TLS 握手，代价是二进制大约再胖 1.5 MB），以及把关键 CSS 内联进 HTML
+（省一个 RTT）。
+
 ---
 
 ## 已知限制与后续
@@ -426,4 +446,4 @@ powershell -File build.ps1 -Test
 | 统计 | 排行榜只有「按去重 AC 题数」，无难度、标签、通过率排序 |
 | 防作弊 | 无代码查重；登录/注册/发动态有节流，提交与建题还没有速率限制 |
 | 附件与图片 | 题面不能贴图（外链可以），无附件上传 |
-| 静态资源 | 无指纹/长缓存策略，改样式需重启（模板内嵌在二进制里） |
+| 静态资源 | 已按内容哈希加 `immutable` 一年缓存；模板与样式仍内嵌在二进制里，改样式要重新编译并重启 |

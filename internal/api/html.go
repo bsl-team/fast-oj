@@ -2,11 +2,15 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/liangbinchen2013/fast-oj/internal/store"
@@ -14,6 +18,35 @@ import (
 
 //go:embed templates/*.html static/*
 var assetFS embed.FS
+
+// assetVersions fingerprints the embedded assets. The binary is the release, so a
+// changed file always means a changed hash, which is what lets /static be cached
+// for a year without a rebuild ever serving a stale stylesheet.
+var assetVersions = func() map[string]string {
+	out := map[string]string{}
+	entries, err := fs.ReadDir(assetFS, "static")
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		body, err := assetFS.ReadFile("static/" + e.Name())
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256(body)
+		out[e.Name()] = hex.EncodeToString(sum[:])[:8]
+	}
+	return out
+}()
+
+// staticURL is the template helper behind {{static "style.css"}}.
+func staticURL(name string) string {
+	v, ok := assetVersions[name]
+	if !ok {
+		return "/static/" + url.PathEscape(name)
+	}
+	return "/static/" + url.PathEscape(name) + "?v=" + v
+}
 
 // Templates ship inside the binary, so a parse failure is a build-time bug and
 // is allowed to stop the process rather than degrade one page at runtime.
@@ -60,7 +93,7 @@ func loadViews() (*viewEngine, error) {
 	// Templates render operator/user prose (tagline, footer, feed) through the
 	// same Markdown+KaTeX pipeline as problem statements, so there is exactly one
 	// escaping policy in the app.
-	funcs := template.FuncMap{"markdown": renderMarkdownHTML}
+	funcs := template.FuncMap{"markdown": renderMarkdownHTML, "static": staticURL}
 	base, err := template.New("base").Funcs(funcs).ParseFS(assetFS, "templates/layout.html", "templates/partials.html")
 	if err != nil {
 		return nil, err
@@ -146,8 +179,10 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusNotFound, "no such asset")
 		return
 	}
-	// Assets are embedded in the binary, so a new executable is a new version.
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	// The URL carries the content hash, so this can be cached for a year: a new
+	// binary produces a new ?v=, and an old page never asks for the old name.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }

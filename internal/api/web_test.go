@@ -200,11 +200,19 @@ func TestProblemListViewForBrowsers(t *testing.T) {
 	}
 	for _, want := range []string{
 		"<!doctype html>", "<th>编号</th>", `/problems/P4000`, "case ready", "题库",
-		`href="/static/style.css"`, `katex@0.16.11`, `/static/math.js`,
+		`href="/static/style.css?v=`, `/static/math.js?v=`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("list page missing %q", want)
 		}
+	}
+	// KaTeX is ~300 KB and this page has no formula on it, so the page must not
+	// reference the CDN at all: math.js pulls it only when a math node exists.
+	if strings.Contains(body, "katex") {
+		t.Error("a formula-free page still loaded the KaTeX CDN")
+	}
+	if code, math := h.htmlGet("/static/math.js", ""); code != http.StatusOK || !strings.Contains(math, "katex@0.16.11") {
+		t.Errorf("math.js lost the on-demand loader (%d)", code)
 	}
 	// A hidden problem is invisible to an anonymous browser, visible to admin.
 	if strings.Contains(body, "P4001") {

@@ -237,5 +237,5 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // wrap orders the chain: log first so a rejected request is still recorded,
 // then the CSRF gate, then the handler.
 func (s *Server) wrap(next http.Handler) http.Handler {
-	return s.logRequests(s.guardCSRF(next))
+	return gzipResponses(s.logRequests(s.guardCSRF(next)))
 }
