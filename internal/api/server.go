@@ -73,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /messages/{handle}", s.handleThread)
 	mux.HandleFunc("POST /messages/{handle}", s.handleSend)
 	mux.HandleFunc("POST /settings/privacy", s.handlePrivacy)
+	mux.HandleFunc("POST /checkin", s.handleCheckIn)
 
 	mux.HandleFunc("GET /rank", s.handleRank)
 	mux.HandleFunc("GET /u/{handle}", s.handleUser)
@@ -172,6 +173,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /login /register         登录 / 注册（邮箱+密码，邮箱暂不验证）",
 		"  GET  /settings                个人资料、密码、API 令牌",
 		"  POST /settings/privacy        谁可以给我发私信（everyone/mutual/following/off）",
+		"  POST /checkin                 每日打卡（连续天数；漏卡 n 天扣 3^n）",
 		"  GET  /whoami                  当前身份",
 		"  GET  /admin/site              站点设置（site.settings）",
 		"  GET  /admin/perms             权限控制台（permission.manage）",

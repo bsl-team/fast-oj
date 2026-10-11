@@ -426,6 +426,9 @@ type userData struct {
 	Recent        []subRow
 	Posts         []postRow
 	IsSelf        bool
+	// CheckInStreak and CheckInTotal are the daily punch-in record.
+	CheckInStreak int
+	CheckInTotal  int
 	// Follow counts plus the viewer's own relation to this profile, which is what
 	// decides between the 关注 and 取消关注 buttons.
 	Following int
@@ -514,6 +517,11 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	checkIn, err := s.db.CheckInState(ctx, u.ID, time.Now())
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	following, followers, err := s.db.FollowCounts(ctx, u.ID)
 	if err != nil {
 		s.writeStoreError(w, r, err)
@@ -545,6 +553,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		IsSelf:    a.User.ID == u.ID,
 		Following: following, Followers: followers,
 		IFollow: iFollow, Mutual: mutual,
+		CheckInStreak: checkIn.Streak, CheckInTotal: checkIn.Total,
 	})
 }
 

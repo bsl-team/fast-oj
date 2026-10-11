@@ -9,6 +9,13 @@
     {{if .Data.Counts.Pending}} · 队列中 <b>{{.Data.Counts.Pending}}</b>{{end}}
   </p>
   {{if not .Data.Registered}}<p class="meta">当前已关闭注册。</p>{{end}}
+  {{if .Me}}
+  <form method="post" action="/checkin" class="checkin inline">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <input type="submit" value="{{if .Data.CheckIn.Today}}今天已打卡{{else}}打卡{{end}}">
+    <span class="meta">连续 <b>{{.Data.CheckIn.Streak}}</b> 天 · 累计 {{.Data.CheckIn.Total}} 天</span>
+  </form>
+  {{end}}
 </section>
 
 {{template "composer" .}}

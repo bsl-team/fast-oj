@@ -4,6 +4,7 @@
   {{if ne .Data.DisplayName ""}}@{{.Data.Handle}} · {{end}}{{if .Data.Admin}}管理员 · {{end}}注册于 {{.Data.Joined}} ·
   解题 <b>{{.Data.Solved}}</b> / 题库 {{.Data.TotalProblems}} ·
   提交 <b>{{.Data.Submits}}</b>
+  {{if .Data.CheckInStreak}} · 连续打卡 <b>{{.Data.CheckInStreak}}</b> 天（累计 {{.Data.CheckInTotal}} 天）{{end}}
   {{if .Data.IsSelf}} · <a href="/settings">编辑资料与简介</a>{{end}}
 </p>
 

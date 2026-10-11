@@ -179,7 +179,6 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		}
 		s.replyBack(w, r, back, "发送失败")
 		return
-		return
 	}
 	if _, err := s.db.RegisterLoginFailure(r.Context(), key, dmWindow); err != nil {
 		s.log.Error("dm counter", "err", err)

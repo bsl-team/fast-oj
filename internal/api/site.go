@@ -94,7 +94,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The layout already appends "· <站点名>", so the page title stays 首页.
+	checkIn, err := s.checkInFor(r, a)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, http.StatusOK, "首页", "home", a.viewer(), msgOf(r), map[string]any{
+		"CheckIn":    checkIn,
 		"Problems":   problems.Items,
 		"Posts":      postRows(posts, a),
 		"Counts":     counts,

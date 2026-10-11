@@ -118,3 +118,7 @@ article.dm { border-left: 3px solid var(--line); padding: .35rem .7rem; }
 article.dm.mine { border-left-color: var(--accent); background: var(--code); }
 article.dm header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: var(--muted); }
 article.dm .body { white-space: pre-wrap; }
+
+/* daily check-in */
+form.checkin { display: flex; gap: .7rem; align-items: center; margin-top: .8rem; }
+form.checkin .meta { margin: 0; }
