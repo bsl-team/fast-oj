@@ -162,7 +162,7 @@ func TestJudgeResultAndScoring(t *testing.T) {
 		t.Fatalf("AC result = %d %q", code, out)
 	}
 	_, view := h.get("/submissions/"+sid, alice)
-	for _, want := range []string{"status=done", "verdict=AC", "score=2/2", "time=12ms", "mem=3M"} {
+	for _, want := range []string{"status=done", "verdict=AC", "score=2/2", "time=12ms", "mem=3.00M"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("owner view missing %q: %q", want, view)
 		}

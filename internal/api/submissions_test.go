@@ -181,7 +181,7 @@ func TestSubmissionRoundTripAndVisibility(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("waited get = %d", code)
 	}
-	for _, want := range []string{"status=done", "verdict=AC", "time=12ms", "mem=3M", "score=2/2", "judge=1"} {
+	for _, want := range []string{"status=done", "verdict=AC", "time=12ms", "mem=3.00M", "score=2/2", "judge=1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("judged view missing %q: %q", want, body)
 		}

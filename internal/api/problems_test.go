@@ -75,7 +75,7 @@ func TestProblemCrudAndTextRendering(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("create = %d %q", code, body)
 	}
-	if !strings.Contains(body, "P1001") || !strings.Contains(body, "1.5s") || !strings.Contains(body, "128M") {
+	if !strings.Contains(body, "P1001") || !strings.Contains(body, "1500ms") || !strings.Contains(body, "128.00M") {
 		t.Fatalf("create render = %q", body)
 	}
 
@@ -88,7 +88,7 @@ func TestProblemCrudAndTextRendering(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("get = %d %q", code, body)
 	}
-	for _, want := range []string{"A+B Problem", "time=1.5s", "Give a and b", "(no samples)"} {
+	for _, want := range []string{"A+B Problem", "time=1500ms", "Give a and b", "(no samples)"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("detail %q missing %q", body, want)
 		}
@@ -99,7 +99,7 @@ func TestProblemCrudAndTextRendering(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "revised") {
 		t.Fatalf("update = %d %q", code, body)
 	}
-	if _, detail := h.get("/problems/P1001", h.admin); !strings.Contains(detail, "time=1.5s") {
+	if _, detail := h.get("/problems/P1001", h.admin); !strings.Contains(detail, "time=1500ms") {
 		t.Fatalf("update dropped untouched fields: %q", detail)
 	}
 

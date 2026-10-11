@@ -276,16 +276,17 @@ func clip(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
+// formatMS keeps every duration in milliseconds: a list that mixes "15ms" with
+// "1s" makes the numbers impossible to scan side by side.
 func formatMS(ms int) string {
 	if ms < 0 {
 		return "-"
 	}
-	if ms < 1000 {
-		return strconv.Itoa(ms) + "ms"
-	}
-	return strconv.FormatFloat(float64(ms)/1000, 'g', -1, 64) + "s"
+	return strconv.Itoa(ms) + "ms"
 }
 
+// formatKB shows memory in K below a megabyte and in M above it, always to two
+// decimals so 6.73046875M never sprawls across the column.
 func formatKB(kb int) string {
 	if kb < 0 {
 		return "-"
@@ -293,7 +294,7 @@ func formatKB(kb int) string {
 	if kb < 1024 {
 		return strconv.Itoa(kb) + "K"
 	}
-	return strconv.FormatFloat(float64(kb)/1024, 'g', -1, 64) + "M"
+	return strconv.FormatFloat(float64(kb)/1024, 'f', 2, 64) + "M"
 }
 
 func joinOr(items []string, empty string) string {
