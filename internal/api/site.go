@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
@@ -63,6 +64,8 @@ func (s *Server) registrationOpen(r *http.Request) bool {
 
 type linkRow struct{ Title, URL string }
 
+func tooLong(s string, n int) bool { return utf8.RuneCountInString(s) > n }
+
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		s.notFound(w, r)
@@ -74,7 +77,6 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a, _ := s.authenticate(r)
-	site := s.site(r.Context())
 	problems, err := s.db.ListProblems(r.Context(), 0, 6, "", !a.can(permProblemEditAny))
 	if err != nil {
 		s.writeStoreError(w, r, err)
@@ -91,12 +93,12 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.page(w, r, http.StatusOK, site.Title, "home", a.viewer(), msgOf(r), map[string]any{
+	// The layout already appends "· <站点名>", so the page title stays 首页.
+	s.page(w, r, http.StatusOK, "首页", "home", a.viewer(), msgOf(r), map[string]any{
 		"Problems":   problems.Items,
 		"Posts":      postRows(posts, a),
 		"Counts":     counts,
 		"SignedIn":   a.User.ID != 0,
-		"CanPost":    a.User.ID != 0,
 		"Registered": s.registrationOpen(r),
 	})
 }
@@ -146,7 +148,7 @@ func parseLinkLines(raw string) ([]store.SiteLink, error) {
 		}
 		title = strings.TrimSpace(title)
 		target = strings.TrimSpace(target)
-		if title == "" || len(title) > 60 {
+		if title == "" || tooLong(title, 60) {
 			return nil, errBadLink
 		}
 		if !safeExternalURL(target) {
@@ -188,6 +190,7 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	rawLinks := r.FormValue("links")
 	in := store.SiteConfig{
 		Title:   strings.TrimSpace(r.FormValue("title")),
 		Tagline: r.FormValue("tagline"),
@@ -195,17 +198,30 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 		// The checkbox is only present when checked.
 		AllowRegister: r.FormValue("allow_register") == "1",
 	}
-	if in.Title == "" || len(in.Title) > 60 {
-		s.respondError(w, r, http.StatusBadRequest, "站点标题要 1..60 个字符")
+	// A rejected save keeps what was typed: having to re-enter a whole home page
+	// because one link line was malformed is not a fair trade.
+	fail := func(msg string) {
+		if !wantsHTML(r) {
+			s.respondError(w, r, http.StatusBadRequest, msg)
+			return
+		}
+		s.page(w, r, http.StatusBadRequest, "站点设置", "admin_site", a.viewer(), msg, map[string]any{
+			"Site": in, "Links": rawLinks,
+		})
+	}
+	// Counted in runes because that is what the form's maxlength counts: 60 bytes
+	// would refuse a 20-character Chinese site name.
+	if tooLong(in.Tagline, 2000) || tooLong(in.Footer, 2000) {
+		fail("首页语与页脚各最长 2000 字")
 		return
 	}
-	if len(in.Tagline) > 2000 || len(in.Footer) > 2000 {
-		s.respondError(w, r, http.StatusBadRequest, "首页语与页脚各最长 2000 字")
+	if in.Title == "" || tooLong(in.Title, 60) {
+		fail("站点标题要 1..60 个字符")
 		return
 	}
-	links, err := parseLinkLines(r.FormValue("links"))
+	links, err := parseLinkLines(rawLinks)
 	if err != nil {
-		s.respondError(w, r, http.StatusBadRequest, err.Error())
+		fail(err.Error())
 		return
 	}
 	in.Links = links

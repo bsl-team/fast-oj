@@ -4,10 +4,19 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
-// MaxPostBody bounds one feed entry so a paste cannot bloat the home page.
+// MaxPostBody bounds one feed entry in characters, matching the textarea limit in
+// the browser, so a Chinese post is not charged triple for its bytes.
 const MaxPostBody = 4000
+
+// Timeline page bounds. Callers clamp the same way, so a short page really does
+// mean the end of the feed.
+const (
+	DefaultPostPage = 30
+	MaxPostPage     = 200
+)
 
 // Post is one feed entry. Author is joined so a timeline needs one query.
 type Post struct {
@@ -41,7 +50,7 @@ func (db *DB) CreatePost(ctx context.Context, authorID int64, body string) (Post
 	if strings.TrimSpace(body) == "" {
 		return Post{}, errors.New("说点什么吧")
 	}
-	if len(body) > MaxPostBody {
+	if utf8.RuneCountInString(body) > MaxPostBody {
 		return Post{}, errors.New("太长了")
 	}
 	res, err := db.SQL.ExecContext(ctx,
@@ -61,8 +70,10 @@ func (db *DB) GetPost(ctx context.Context, id int64) (Post, error) {
 // ListPosts walks newest-first with a cursor. includeHidden is only meaningful
 // for a moderator viewing their own audit surface.
 func (db *DB) ListPosts(ctx context.Context, limit int, after int64, authorID int64, includeHidden bool) ([]Post, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 30
+	if limit <= 0 {
+		limit = DefaultPostPage
+	} else if limit > MaxPostPage {
+		limit = MaxPostPage
 	}
 	q := `SELECT ` + postColumns + ` FROM posts p JOIN users u ON u.id=p.author_id WHERE 1=1`
 	args := []any{}

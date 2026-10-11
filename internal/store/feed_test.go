@@ -7,6 +7,21 @@ import (
 	"testing"
 )
 
+func TestPostLengthCountsCharacters(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	u := mustUser(t, db, "cjk10")
+
+	// The browser's textarea counts characters, so storage must not charge three
+	// bytes for each Chinese one.
+	if _, err := db.CreatePost(ctx, u.ID, strings.Repeat("长", MaxPostBody)); err != nil {
+		t.Fatalf("4000 Chinese characters refused: %v", err)
+	}
+	if _, err := db.CreatePost(ctx, u.ID, strings.Repeat("长", MaxPostBody+1)); err == nil {
+		t.Fatal("4001 characters accepted")
+	}
+}
+
 func TestFeedRoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

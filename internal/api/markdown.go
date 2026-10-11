@@ -15,7 +15,9 @@ import (
 func newMarkdownParser() *parser.Parser {
 	return parser.NewWithExtensions(
 		parser.CommonExtensions | // tables, fenced code, headings, lists
-			parser.MathJax) // keep $...$ / $$...$$ verbatim for KaTeX
+			// $...$ and $$...$$ become math nodes; display math has to own its
+			// paragraph, since inline $$ parses as two adjacent inline $...$.
+			parser.MathJax)
 }
 
 // safeURL blocks schemes a click could execute. Relative links and http(s),

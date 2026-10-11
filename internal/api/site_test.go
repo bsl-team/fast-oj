@@ -86,14 +86,37 @@ func TestSiteSettingsRejectsBadInput(t *testing.T) {
 		if code != http.StatusBadRequest {
 			t.Errorf("%s: accepted with %d", name, code)
 		}
-		if strings.Contains(body, "我的 OJ") {
-			t.Errorf("%s: rejected save still changed the site", name)
+		if title := values.Get("title"); title != "" && !strings.Contains(body, title) {
+			t.Errorf("%s: the form lost what was typed:\n%s", name, body)
 		}
 	}
 	// Defaults survived the rejected saves.
 	site, err := h.db.Site(ctx())
 	if err != nil || site.Title != "fast-oj" {
 		t.Fatalf("site config after rejects = %+v %v", site, err)
+	}
+}
+
+func TestSiteSettingsCountsLimitsInCharacters(t *testing.T) {
+	h := newHarness(t)
+
+	long := strings.Repeat("极速判题题库", 21)
+	if code, body := h.postBearer("/admin/site", url.Values{"title": {long}, "links": {""}}, h.admin); code != http.StatusBadRequest {
+		t.Fatalf("oversized title = %d %s", code, body)
+	}
+
+	// 60 Chinese characters are 180 bytes; the form's maxlength counts characters,
+	// so a byte limit would refuse input the browser allowed.
+	ok := strings.Repeat("题", 60)
+	if code, body := h.postBearer("/admin/site", url.Values{"title": {ok}, "links": {""}}, h.admin); code != http.StatusOK {
+		t.Fatalf("60-character title = %d %s", code, body)
+	}
+	site, err := h.db.Site(ctx())
+	if err != nil || site.Title != ok {
+		t.Fatalf("stored title = %q %v", site.Title, err)
+	}
+	if _, page := h.htmlGet("/", ""); !strings.Contains(page, ok) {
+		t.Error("home did not render the Chinese title")
 	}
 }
 
@@ -161,6 +184,21 @@ func TestFeedPosting(t *testing.T) {
 	}
 	if strings.Contains(feed, "<script>alert") || strings.Contains(feed, "javascript:alert") {
 		t.Errorf("feed leaked live markup:\n%s", feed)
+	}
+}
+
+func TestFeedCursorOnlyOffersMoreWhenFull(t *testing.T) {
+	h := newHarness(t)
+	cookie, csrf := h.login("cursor9", "cursor9@example.com", testPassword)
+	for i := 0; i < 3; i++ {
+		h.postForm2("/feed", url.Values{"body": {"第 " + strconv.Itoa(i) + " 条"}}, cookie, csrf)
+	}
+	if _, page := h.htmlGet("/feed", ""); strings.Contains(page, "更早的动态") {
+		t.Error("a short page still offered the next cursor")
+	}
+	code, page := h.htmlGet("/feed?limit=2", "")
+	if code != http.StatusOK || !strings.Contains(page, "更早的动态 →") {
+		t.Errorf("a full page did not offer a cursor: %d", code)
 	}
 }
 

@@ -52,6 +52,12 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	a, _ := s.authenticate(r)
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	author := r.URL.Query().Get("user")
+	limit := pageLimit(r.URL.Query().Get("limit"))
+	// Clamp identically to ListPosts, otherwise "this page was full" would be
+	// judged against a number the query never returned rows for.
+	if limit > store.MaxPostPage {
+		limit = store.MaxPostPage
+	}
 
 	var authorID int64
 	if author != "" {
@@ -64,7 +70,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	// A moderator's timeline includes hidden entries, otherwise a hide could
 	// never be undone from the UI.
-	posts, err := s.db.ListPosts(r.Context(), pageLimit(r.URL.Query().Get("limit")), after, authorID, a.can(permFeedModerate))
+	posts, err := s.db.ListPosts(r.Context(), limit, after, authorID, a.can(permFeedModerate))
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -83,12 +89,14 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	s.page(w, r, http.StatusOK, "动态", "feed", a.viewer(), msgOf(r), map[string]any{
 		"Posts":    postRows(posts, a),
 		"SignedIn": a.User.ID != 0,
-		"Next":     nextCursor(posts),
+		"Next":     nextCursor(posts, limit),
 	})
 }
 
-func nextCursor(posts []store.Post) int64 {
-	if len(posts) == 0 {
+// nextCursor only points at an older page when this one came back full, so the
+// timeline does not invite a click that lands on nothing.
+func nextCursor(posts []store.Post, limit int) int64 {
+	if len(posts) < limit {
 		return 0
 	}
 	return posts[len(posts)-1].ID
