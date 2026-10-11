@@ -37,6 +37,7 @@ type harness struct {
 	db    *store.DB
 	cfg   config.Config
 	admin string
+	judge string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -52,7 +53,7 @@ func newHarness(t *testing.T) *harness {
 		hs.Close()
 		db.Close()
 	})
-	return &harness{t: t, srv: hs, db: db, cfg: cfg, admin: cfg.AdminToken}
+	return &harness{t: t, srv: hs, db: db, cfg: cfg, admin: cfg.AdminToken, judge: cfg.JudgeToken}
 }
 
 // do issues a request and returns status plus body as text.

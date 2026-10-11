@@ -53,11 +53,14 @@ func (db *DB) ClaimNext(ctx context.Context, judgeID int64) (ClaimedTask, error)
 }
 
 // ReportStatus moves a claimed submission along the state machine. Only the
-// judge that owns the row may report, and only legal transitions are written.
-func (db *DB) ReportStatus(ctx context.Context, submissionID, judgeID int64, from, to string) (bool, error) {
+// judge that owns the row may report, and only from the state it is really in.
+// An empty detail leaves the previous note alone.
+func (db *DB) ReportStatus(ctx context.Context, submissionID, judgeID int64, from, to, detail string) (bool, error) {
 	res, err := db.SQL.ExecContext(ctx,
-		`UPDATE submissions SET status=? WHERE id=? AND judge_id=? AND status=?`,
-		to, submissionID, judgeID, from)
+		`UPDATE submissions
+		 SET status=?, detail=CASE WHEN ?='' THEN detail ELSE ? END
+		 WHERE id=? AND judge_id=? AND status=?`,
+		to, detail, detail, submissionID, judgeID, from)
 	if err != nil {
 		return false, err
 	}

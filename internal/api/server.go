@@ -49,6 +49,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /submissions", s.handleSubmitCreate)
 	mux.HandleFunc("GET /submissions", s.handleSubmitList)
 	mux.HandleFunc("GET /submissions/{id}", s.handleSubmitGet)
+
+	mux.HandleFunc("POST /judge/claim", s.handleJudgeClaim)
+	mux.HandleFunc("GET /judge/cases/{id}/{which}", s.handleJudgeCaseFile)
+	mux.HandleFunc("POST /judge/submissions/{id}/status", s.handleJudgeStatus)
+	mux.HandleFunc("POST /judge/submissions/{id}/result", s.handleJudgeResult)
+	mux.HandleFunc("GET /judges", s.handleJudgeList)
 	return s.wrap(mux)
 }
 

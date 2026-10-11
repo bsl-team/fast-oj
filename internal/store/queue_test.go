@@ -143,18 +143,31 @@ func TestReportStatusOnlyByOwnerAndLegalStep(t *testing.T) {
 	}
 
 	// Another box may not touch it.
-	if ok, err := db.ReportStatus(ctx, s.ID, j2.ID, "compiling", "running"); err != nil || ok {
+	if ok, err := db.ReportStatus(ctx, s.ID, j2.ID, "compiling", "running", ""); err != nil || ok {
 		t.Fatalf("non-owner report = %v %v", ok, err)
 	}
 	// Wrong source state.
-	if ok, err := db.ReportStatus(ctx, s.ID, j.ID, "queued", "running"); err != nil || ok {
+	if ok, err := db.ReportStatus(ctx, s.ID, j.ID, "queued", "running", ""); err != nil || ok {
 		t.Fatalf("wrong from-state = %v %v", ok, err)
 	}
-	if ok, err := db.ReportStatus(ctx, s.ID, j.ID, "compiling", "running"); err != nil || !ok {
+	if ok, err := db.ReportStatus(ctx, s.ID, j.ID, "compiling", "running", "on case 3"); err != nil || !ok {
 		t.Fatalf("owner report = %v %v", ok, err)
 	}
-	if row, err := db.GetSubmission(ctx, s.ID); err != nil || row.Status != "running" {
+	row, err := db.GetSubmission(ctx, s.ID)
+	if err != nil || row.Status != "running" {
 		t.Fatalf("row after progress = %+v %v", row, err)
+	}
+	// detail is deliberately absent from the default column set; it comes back
+	// through the payload read.
+	if _, detail, err := db.SubmissionPayload(ctx, s.ID); err != nil || detail != "on case 3" {
+		t.Fatalf("detail = %q %v", detail, err)
+	}
+	// An empty detail must not erase what is already there.
+	if ok, err := db.ReportStatus(ctx, s.ID, j.ID, "running", "running", ""); err != nil || !ok {
+		t.Fatalf("self transition = %v %v", ok, err)
+	}
+	if _, detail, err := db.SubmissionPayload(ctx, s.ID); err != nil || detail != "on case 3" {
+		t.Fatalf("detail was cleared: %q %v", detail, err)
 	}
 }
 

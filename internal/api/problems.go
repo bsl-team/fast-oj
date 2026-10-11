@@ -317,14 +317,18 @@ func (s *Server) problemByKey(w http.ResponseWriter, r *http.Request) (store.Pro
 }
 
 func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
-	body, err := io.ReadAll(io.LimitReader(r.Body, s.cfg.MaxSource+1))
+	return s.decodeBodyLimit(w, r, dst, s.cfg.MaxSource)
+}
+
+func (s *Server) decodeBodyLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		respondError(w, r, http.StatusBadRequest, "unreadable body")
 		return false
 	}
-	if int64(len(body)) > s.cfg.MaxSource {
+	if int64(len(body)) > limit {
 		respondError(w, r, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("body over %d bytes", s.cfg.MaxSource))
+			fmt.Sprintf("body over %d bytes", limit))
 		return false
 	}
 	if len(bytes.TrimSpace(body)) == 0 {

@@ -63,6 +63,11 @@ func (db *DB) ListTestcases(ctx context.Context, problemID int64, samplesOnly bo
 	return out, rows.Err()
 }
 
+func (db *DB) GetTestcaseByID(ctx context.Context, id int64) (Testcase, error) {
+	return scanTestcase(db.SQL.QueryRowContext(ctx,
+		`SELECT `+testcaseColumns+` FROM testcases WHERE id=?`, id))
+}
+
 func (db *DB) GetTestcase(ctx context.Context, problemID int64, name string) (Testcase, error) {
 	return scanTestcase(db.SQL.QueryRowContext(ctx,
 		`SELECT `+testcaseColumns+` FROM testcases WHERE problem_id=? AND name=?`, problemID, name))
