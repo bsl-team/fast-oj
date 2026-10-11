@@ -44,7 +44,10 @@ footer.top { border-bottom: 0; border-top: 1px solid var(--line); margin: 2.5rem
 nav.top a { color: var(--fg); text-decoration: none; }
 nav.top a:hover { color: var(--accent); }
 nav.top .brand { font-weight: 700; letter-spacing: .02em; }
-nav.top .acct { margin-left: auto; color: var(--accent); }
+nav.top .acct { color: var(--accent); }
+/* The personal pair travels together to the right edge, and wraps as one unit
+   instead of splitting across two lines on a narrow window. */
+nav.top .me { margin-left: auto; display: flex; gap: 1.1rem; align-items: center; }
 a { color: var(--accent); }
 h1 { font-size: 1.45rem; margin: 0 0 .25rem; }
 h2 { font-size: 1.1rem; margin: 1.8rem 0 .5rem; }

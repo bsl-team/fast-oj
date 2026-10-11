@@ -17,17 +17,21 @@
   <a href="/rank">排行榜</a>
   <a href="/submissions">提交</a>
   {{if .Me}}
-  <a href="/u/{{.Me.Handle}}">{{.Me.Name}}</a>
-  <a href="/settings">设置</a>
   {{if .Me.Manage}}<a href="/admin/perms">权限</a>{{end}}
   {{if .Me.Site}}<a href="/admin/site">站点</a>{{end}}
   <form class="inline" method="post" action="/logout">
     <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
     <button type="submit">退出</button>
   </form>
+  <span class="me">
+    <a href="/u/{{.Me.Handle}}">{{.Me.Name}}</a>
+    <a href="/settings">设置</a>
+  </span>
   {{else}}
-  <a class="acct" href="/login">登录</a>
-  <a href="/register">注册</a>
+  <span class="me">
+    <a class="acct" href="/login">登录</a>
+    <a href="/register">注册</a>
+  </span>
   {{end}}
 </nav>
 <main>
