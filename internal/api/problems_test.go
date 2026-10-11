@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 
@@ -15,7 +16,12 @@ import (
 func zipOf(files map[string]string) []byte {
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	for _, name := range []string{"3.in", "3.out", "sample2.in", "sample2.out", "1.in", "1.out", "sample1.in", "sample1.out"} {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		f, err := w.Create(name)
 		if err != nil {
 			panic(err)

@@ -39,10 +39,10 @@ func (db *DB) GetSubmission(ctx context.Context, id int64) (Submission, error) {
 
 // Source is kept out of the default column set: listing submissions must not
 // drag megabytes of code through the response path.
-func (db *DB) SubmissionSource(ctx context.Context, id int64) (string, error) {
-	var src string
-	err := db.SQL.QueryRowContext(ctx, `SELECT source FROM submissions WHERE id=?`, id).Scan(&src)
-	return src, notFound(err)
+func (db *DB) SubmissionPayload(ctx context.Context, id int64) (source, detail string, err error) {
+	err = db.SQL.QueryRowContext(ctx,
+		`SELECT source, detail FROM submissions WHERE id=?`, id).Scan(&source, &detail)
+	return source, detail, notFound(err)
 }
 
 type SubmissionFilter struct {
@@ -90,12 +90,14 @@ func (db *DB) ListSubmissions(ctx context.Context, f SubmissionFilter) ([]Submis
 	return out, rows.Err()
 }
 
-// MarkRunning flips a queued submission to the judge that claimed it. The
-// status guard makes a duplicate claim a no-op instead of a reassignment.
-func (db *DB) MarkRunning(ctx context.Context, id, judgeID int64, status string) (bool, error) {
+// SetStatus performs a compare-and-set on the status column. The guard is what
+// makes a duplicate judge claim a no-op instead of a reassignment.
+func (db *DB) SetStatus(ctx context.Context, id int64, from, to string, judgeID int64) (bool, error) {
 	res, err := db.SQL.ExecContext(ctx,
-		`UPDATE submissions SET status=?, judge_id=?, started_at=? WHERE id=? AND status='queued'`,
-		status, judgeID, nowMS(), id)
+		`UPDATE submissions
+		 SET status=?, judge_id=?, started_at=IFNULL(started_at, ?)
+		 WHERE id=? AND status=?`,
+		to, judgeID, nowMS(), id, from)
 	if err != nil {
 		return false, err
 	}

@@ -268,6 +268,9 @@ func clip(s string, n int) string {
 }
 
 func formatMS(ms int) string {
+	if ms < 0 {
+		return "-"
+	}
 	if ms < 1000 {
 		return strconv.Itoa(ms) + "ms"
 	}
@@ -275,6 +278,9 @@ func formatMS(ms int) string {
 }
 
 func formatKB(kb int) string {
+	if kb < 0 {
+		return "-"
+	}
 	if kb < 1024 {
 		return strconv.Itoa(kb) + "K"
 	}

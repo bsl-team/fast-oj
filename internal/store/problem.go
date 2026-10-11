@@ -100,8 +100,11 @@ type ProblemPage struct {
 // ListProblems pages over the primary key with a cursor instead of OFFSET, so
 // deep pages keep the same cost as the first one.
 func (db *DB) ListProblems(ctx context.Context, after int64, limit int, search string, visibleOnly bool) (ProblemPage, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
 	}
 	q := `SELECT ` + problemColumns + ` FROM problems WHERE id > ?`
 	args := []any{after}

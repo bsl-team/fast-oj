@@ -40,6 +40,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /problems/{key}/cases", s.handleCaseUpload)
 	mux.HandleFunc("DELETE /problems/{key}/cases", s.handleCaseWipe)
 	mux.HandleFunc("GET /problems/{key}/cases/{name}/{which}", s.handleCaseBody)
+
+	mux.HandleFunc("GET /whoami", s.handleWhoami)
+	mux.HandleFunc("GET /users", s.handleUserList)
+	mux.HandleFunc("POST /users", s.handleUserCreate)
+	mux.HandleFunc("POST /users/{handle}/tokens", s.handleTokenCreate)
+
+	mux.HandleFunc("POST /submissions", s.handleSubmitCreate)
+	mux.HandleFunc("GET /submissions", s.handleSubmitList)
+	mux.HandleFunc("GET /submissions/{id}", s.handleSubmitGet)
 	return s.wrap(mux)
 }
 

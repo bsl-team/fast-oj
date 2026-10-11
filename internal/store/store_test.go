@@ -291,18 +291,26 @@ func TestSubmissionFlow(t *testing.T) {
 		t.Fatalf("pending = %d, %v", n, err)
 	}
 
-	src, err := db.SubmissionSource(ctx, s.ID)
-	if err != nil || src != "int main(){}" {
-		t.Fatalf("source = %q, %v", src, err)
+	src, detail, err := db.SubmissionPayload(ctx, s.ID)
+	if err != nil || src != "int main(){}" || detail != "" {
+		t.Fatalf("payload = %q/%q, %v", src, detail, err)
 	}
 
-	claimed, err := db.MarkRunning(ctx, s.ID, j.ID, "compiling")
+	claimed, err := db.SetStatus(ctx, s.ID, "queued", "compiling", j.ID)
 	if err != nil || !claimed {
 		t.Fatalf("claim = %v, %v", claimed, err)
 	}
-	again, err := db.MarkRunning(ctx, s.ID, j.ID, "compiling")
+	again, err := db.SetStatus(ctx, s.ID, "queued", "compiling", j.ID)
 	if err != nil || again {
 		t.Fatalf("double claim = %v, %v", again, err)
+	}
+	// Advancing from a status the row is not in must not touch it.
+	if ok, err := db.SetStatus(ctx, s.ID, "queued", "running", 99); err != nil || ok {
+		t.Fatalf("illegal transition accepted: %v %v", ok, err)
+	}
+	got, err := db.GetSubmission(ctx, s.ID)
+	if err != nil || got.Status != "compiling" || got.JudgeID != j.ID || got.StartedAt == 0 {
+		t.Fatalf("after claim = %+v, %v", got, err)
 	}
 
 	runs := []Run{
