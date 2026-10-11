@@ -29,8 +29,7 @@ func validHandle(s string) bool {
 }
 
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
+	if _, ok := s.requirePerm(w, r, permUserManage); !ok {
 		return
 	}
 	var req userRequest
@@ -59,8 +58,7 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserList(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
+	if _, ok := s.requirePerm(w, r, permUserManage); !ok {
 		return
 	}
 	users, err := s.db.ListUsers(r.Context(), 1000)
@@ -84,8 +82,7 @@ type tokenRequest struct {
 // handleTokenCreate issues an API token for a user. The plaintext is returned
 // exactly once; only its digest is stored.
 func (s *Server) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
+	if _, ok := s.requirePerm(w, r, permUserManage); !ok {
 		return
 	}
 	handle := r.PathValue("handle")

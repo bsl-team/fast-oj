@@ -22,6 +22,9 @@ type actor struct {
 	Admin   bool
 	Judge   bool
 	Session store.Session
+	// perms is the effective capability set, loaded once per request: role
+	// baseline plus this user's individual grants and removals.
+	perms map[string]bool
 	// Cookie records that the credentials came from a cookie, which is exactly
 	// the case where a cross-site request could ride along.
 	Cookie bool
@@ -45,16 +48,18 @@ func (s *Server) authenticate(r *http.Request) (actor, error) {
 			if err != nil {
 				return actor{}, err
 			}
-			return actor{User: u, Admin: true}, nil
+			return s.withPerms(r, u, true, false)
 		}
 		if s.cfg.JudgeToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.JudgeToken)) == 1 {
+			// A judge box is a machine, not a person: no capabilities, and the
+			// judge endpoints are its only surface.
 			return actor{Judge: true}, nil
 		}
 		u, err := s.db.UserByToken(r.Context(), token)
 		if err != nil {
 			return actor{}, err
 		}
-		return actor{User: u, Admin: u.Role == "admin"}, nil
+		return s.withPerms(r, u, u.Role == "admin", false)
 	}
 
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
@@ -62,9 +67,23 @@ func (s *Server) authenticate(r *http.Request) (actor, error) {
 		if err != nil {
 			return actor{}, err
 		}
-		return actor{User: u, Admin: u.Role == "admin", Session: sess, Cookie: true}, nil
+		a, err := s.withPerms(r, u, u.Role == "admin", true)
+		if err != nil {
+			return actor{}, err
+		}
+		a.Session = sess
+		return a, nil
 	}
 	return actor{}, errNoCredentials
+}
+
+// withPerms attaches the effective capability set for a user identity.
+func (s *Server) withPerms(r *http.Request, u store.User, admin, cookie bool) (actor, error) {
+	perms, err := s.db.EffectivePermissions(r.Context(), u.ID, u.Role)
+	if err != nil {
+		return actor{}, err
+	}
+	return actor{User: u, Admin: admin, perms: perms, Cookie: cookie}, nil
 }
 
 func (s *Server) requireAdmin(r *http.Request) (actor, error) {
@@ -177,5 +196,8 @@ func (a actor) viewer() *viewer {
 	if a.User.DisplayName != "" {
 		name = a.User.DisplayName
 	}
-	return &viewer{Handle: a.User.Handle, Name: name, Admin: a.Admin, CSRF: a.Session.CSRF}
+	return &viewer{
+		Handle: a.User.Handle, Name: name, Admin: a.Admin,
+		Manage: a.can(permPermissionManage), CSRF: a.Session.CSRF,
+	}
 }

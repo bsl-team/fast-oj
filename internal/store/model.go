@@ -26,6 +26,7 @@ type Problem struct {
 	MemLimitKB  int      `json:"mem_limit_kb"`
 	Languages   []string `json:"languages,omitempty"`
 	Visible     bool     `json:"visible"`
+	OwnerID     int64    `json:"owner_id"`
 	CreatedAt   int64    `json:"created_at"`
 	UpdatedAt   int64    `json:"updated_at"`
 }

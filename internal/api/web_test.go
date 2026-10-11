@@ -102,6 +102,25 @@ func (h *harness) postForm(path string, values url.Values, cookie, csrf string) 
 	return resp.StatusCode, readAll(h.t, resp), resp.Header
 }
 
+// postBearer submits a form with an Authorization header instead of a cookie,
+// which is how an operator drives the console from a script.
+func (h *harness) postBearer(path string, values url.Values, token string) (int, string) {
+	h.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, strings.NewReader(values.Encode()))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, readAll(h.t, resp)
+}
+
 // cookieValue pulls one cookie out of a Set-Cookie list.
 func cookieValue(headers []string, name string) string {
 	for _, line := range headers {

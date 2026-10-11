@@ -1,0 +1,21 @@
+{{define "content"}}
+<h1>权限管理</h1>
+<p class="meta">共 {{len .Data.Users}} 个账号。点进去可以逐项授予或收回权限，不必给人整个管理员身份。</p>
+
+<table>
+  <tr><th class="num">ID</th><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th></th></tr>
+  {{range .Data.Users}}
+  <tr>
+    <td class="num">{{.ID}}</td>
+    <td>
+      <a href="/u/{{.Handle}}">{{.Handle}}</a>
+      {{if eq .ID $.Data.Self}}<span class="hidden">本人</span>{{end}}
+    </td>
+    <td>{{if .Email}}{{.Email}}{{else}}—{{end}}</td>
+    <td>{{.Role}}</td>
+    <td>{{.Status}}</td>
+    <td><a href="/admin/perms/u/{{.Handle}}">配置权限</a></td>
+  </tr>
+  {{end}}
+</table>
+{{end}}

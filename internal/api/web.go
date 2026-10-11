@@ -519,7 +519,7 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 	if err != nil {
 		return store.Submission{}, "找不到这道题", err
 	}
-	if !p.Visible && !a.Admin {
+	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) {
 		return store.Submission{}, "找不到这道题", store.ErrNotFound
 	}
 	if !languageAllowed(p.Languages, lang) {

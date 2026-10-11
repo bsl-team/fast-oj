@@ -121,6 +121,41 @@ type TokenInfo struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+// SetUserRole changes the tier. Sessions stay valid; the effective capability
+// set is recomputed on the next request, which is what makes a demotion stick
+// immediately.
+func (db *DB) SetUserRole(ctx context.Context, userID int64, role string) error {
+	if role != "user" && role != "admin" {
+		return fmt.Errorf("unknown role %q", role)
+	}
+	res, err := db.SQL.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserStatus activates or bans an account. Banning also drops its sessions.
+func (db *DB) SetUserStatus(ctx context.Context, userID int64, status string) error {
+	if status != "active" && status != "banned" {
+		return fmt.Errorf("unknown status %q", status)
+	}
+	res, err := db.SQL.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if status != "active" {
+		return db.DropUserSessions(ctx, userID)
+	}
+	return nil
+}
+
 func (db *DB) ListTokens(ctx context.Context, userID int64) ([]TokenInfo, error) {
 	rows, err := db.SQL.QueryContext(ctx,
 		`SELECT token, label, created_at FROM tokens WHERE user_id=? ORDER BY created_at DESC`, userID)

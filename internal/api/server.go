@@ -73,6 +73,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/tokens", s.handleTokenIssue)
 	mux.HandleFunc("POST /settings/tokens/revoke", s.handleTokenRevoke)
 	mux.HandleFunc("GET /account", s.handleAccountAlias)
+
+	mux.HandleFunc("GET /admin/perms", s.handleAdminUsers)
+	mux.HandleFunc("GET /admin/perms/u/{handle}", s.handleAdminUser)
+	mux.HandleFunc("POST /admin/perms/u/{handle}", s.handleAdminPermChange)
+	mux.HandleFunc("POST /admin/users/{handle}/role", s.handleAdminRoleChange)
+	mux.HandleFunc("POST /admin/users/{handle}/status", s.handleAdminStatusChange)
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)

@@ -1,0 +1,63 @@
+{{define "content"}}
+<h1>{{.Data.Target.Handle}} 的权限</h1>
+<p class="meta">
+  邮箱 {{if .Data.Target.Email}}{{.Data.Target.Email}}{{else}}未填{{end}} ·
+  角色 <b>{{.Data.Target.Role}}</b> · 状态 <b>{{.Data.Target.Status}}</b> ·
+  <a href="/u/{{.Data.Target.Handle}}">看主页</a>
+</p>
+
+{{if .Data.Self}}
+<p class="flash">这是你自己的账号。为避免把自己关在门外，控制台不允许改自己的权限、角色或状态。</p>
+{{end}}
+
+<table>
+  <tr><th>权限</th><th>含义</th><th>角色自带</th><th>单独设置</th><th>生效</th><th></th></tr>
+  {{range .Data.Grants}}
+  <tr>
+    <td><code>{{.Key}}</code></td>
+    <td>{{.Label}}{{if .Staff}} <span class="hidden">管理侧</span>{{end}}</td>
+    <td>{{if .ByRole}}是{{else}}—{{end}}</td>
+    <td>{{if eq .Override "granted"}}授予{{else if eq .Override "removed"}}收回{{else}}—{{end}}</td>
+    <td><span class="badge {{if .Effective}}AC{{else}}WA{{end}}">{{if .Effective}}有{{else}}无{{end}}</span></td>
+    <td>
+      {{if not $.Data.Self}}
+      <form class="inline" method="post" action="/admin/perms/u/{{$.Data.Target.Handle}}">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <input type="hidden" name="key" value="{{.Key}}">
+        {{if .Effective}}<button type="submit" name="action" value="revoke">收回</button>
+        {{else}}<button type="submit" name="action" value="grant">授予</button>{{end}}
+        {{if .Override}}· <button type="submit" name="action" value="clear">恢复默认</button>{{end}}
+      </form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+
+{{if and (not .Data.Self) .Data.CanUser}}
+<h2>角色与状态</h2>
+<form class="row" method="post" action="/admin/users/{{.Data.Target.Handle}}/role">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div><label>角色</label>
+    <select name="role">
+      <option value="user">user</option>
+      <option value="admin">admin</option>
+    </select>
+  </div>
+  <input type="submit" value="改角色">
+</form>
+
+<form class="row" method="post" action="/admin/users/{{.Data.Target.Handle}}/status">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div><label>状态（封禁会立即踢掉所有登录会话）</label>
+    <select name="status">
+      <option value="active">active</option>
+      <option value="banned">banned</option>
+    </select>
+  </div>
+  <input type="submit" value="改状态">
+</form>
+{{end}}
+
+<p class="meta"><a href="/admin/perms">← 返回账号列表</a></p>
+{{end}}

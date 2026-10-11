@@ -18,6 +18,7 @@
   {{if .Me}}
   <a href="/u/{{.Me.Handle}}">{{.Me.Name}}</a>
   <a href="/settings">设置</a>
+  {{if .Me.Manage}}<a href="/admin/perms">权限</a>{{end}}
   <form class="inline" method="post" action="/logout">
     <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
     <button type="submit">退出</button>

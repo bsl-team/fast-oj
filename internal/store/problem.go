@@ -29,7 +29,29 @@ func boolInt(v bool) int {
 	return 0
 }
 
-const problemColumns = `id, pid, title, statement, time_limit_ms, mem_limit_kb, languages, visible, created_at, updated_at`
+// nullInt64 turns a zero id into SQL NULL so the foreign key stays quiet.
+func nullInt64(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// TransferProblemOwner moves authorship, which is how a problem survives its
+// author leaving. Only someone with the manage right may call it.
+func (db *DB) TransferProblemOwner(ctx context.Context, problemID, ownerID int64) error {
+	res, err := db.SQL.ExecContext(ctx, `UPDATE problems SET owner_id=? WHERE id=?`, nullInt64(ownerID), problemID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+const problemColumns = `id, pid, title, statement, time_limit_ms, mem_limit_kb, languages,
+		visible, IFNULL(owner_id, 0), created_at, updated_at`
 
 func scanProblem(row scanner) (Problem, error) {
 	var (
@@ -38,7 +60,7 @@ func scanProblem(row scanner) (Problem, error) {
 		visibleFlag int
 	)
 	err := row.Scan(&p.ID, &p.PID, &p.Title, &p.Statement, &p.TimeLimitMS, &p.MemLimitKB,
-		&langs, &visibleFlag, &p.CreatedAt, &p.UpdatedAt)
+		&langs, &visibleFlag, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
 	p.Languages = splitList(langs)
 	p.Visible = visibleFlag != 0
 	return p, notFound(err)
@@ -49,10 +71,10 @@ func (db *DB) CreateProblem(ctx context.Context, p *Problem) (Problem, error) {
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	res, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO problems (pid, title, statement, time_limit_ms, mem_limit_kb, languages, visible, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO problems (pid, title, statement, time_limit_ms, mem_limit_kb, languages, visible, owner_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.PID, p.Title, p.Statement, p.TimeLimitMS, p.MemLimitKB,
-		joinList(p.Languages), boolInt(p.Visible), p.CreatedAt, p.UpdatedAt)
+		joinList(p.Languages), boolInt(p.Visible), nullInt64(p.OwnerID), p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return Problem{}, conflict(err, "pid "+p.PID)
 	}

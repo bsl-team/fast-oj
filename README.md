@@ -61,12 +61,12 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `GET` | `/about` | 公开 | 运行摘要与全部路由 |
 | `GET` | `/problems` | 公开 | 列表，`?q=` `?limit=` `?after=` |
 | `GET` | `/problems/{key}` | 公开 | 题面 + 样例（`key` 可为编号或数字 id） |
-| `POST` | `/problems` | admin | 建题 |
-| `PUT` | `/problems/{key}` | admin | 改题（只改发来的字段） |
-| `DELETE` | `/problems/{key}` | admin | 删题（连带用例文件） |
-| `POST` | `/problems/{key}/cases` | admin | 上传用例 zip |
-| `GET` | `/problems/{key}/cases` | admin | 用例清单与大小 |
-| `DELETE` | `/problems/{key}/cases` | admin | 清空用例 |
+| `POST` | `/problems` | `problem.create` | 建题（记录 owner） |
+| `PUT` | `/problems/{key}` | 该题 owner 或 `problem.edit.any` | 改题（只改发来的字段） |
+| `DELETE` | `/problems/{key}` | 该题 owner 或 `problem.edit.any` | 删题（连带用例文件） |
+| `POST` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 上传用例 zip |
+| `GET` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 用例清单与大小 |
+| `DELETE` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 清空用例 |
 | `GET` | `/problems/{key}/cases/{name}/{in\|out}` | 样例公开，判题需 admin/判机 | 取单个用例正文 |
 | `POST` | `/problems/{key}/submit` | 登录用户 | 网页表单提交 |
 | `POST` | `/submissions` | 用户令牌 | 提交代码 |
@@ -78,14 +78,19 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `GET` `/POST` | `/login` `/logout` | — | 邮箱或用户名 + 密码登录，session cookie |
 | `GET` `/POST` | `/register` | 公开（可关） | 自助注册，邮箱暂不验证 |
 | `GET` `/POST` | `/settings` `/settings/*` | 登录用户 | 资料、密码、API 令牌签发与吊销 |
-| `POST` | `/users` | admin | 建/取用户 |
-| `GET` | `/users` | admin | 用户列表 |
-| `POST` | `/users/{handle}/tokens` | admin | 代用户签发 API 令牌 |
+| `POST` | `/users` | `user.manage` | 建/取用户 |
+| `GET` | `/users` | `user.manage` | 用户列表 |
+| `POST` | `/users/{handle}/tokens` | `user.manage` | 代用户签发 API 令牌 |
 | `POST` | `/judge/claim` | 判机 | 心跳 + 领取一条（空队列返回 404 `queue empty`） |
 | `GET` | `/judge/cases/{id}/{in\|out}` | 判机 | 取用例正文（含判题用例） |
 | `POST` | `/judge/submissions/{id}/status` | 判机 | 进度（`compiling` → `running`） |
 | `POST` | `/judge/submissions/{id}/result` | 判机 | 回报判定与逐用例结果 |
-| `GET` | `/judges` | admin | 判机框清单 |
+| `GET` | `/judges` | `judge.view` | 判机框清单 |
+| `GET` | `/admin/perms` | `permission.manage` | 账号列表与权限控制台 |
+| `GET` | `/admin/perms/u/{handle}` | `permission.manage` | 单个账号的权限矩阵 |
+| `POST` | `/admin/perms/u/{handle}` | `permission.manage` | 授予 / 收回 / 恢复默认（不能改自己） |
+| `POST` | `/admin/users/{handle}/role` | `user.manage` | 改角色 |
+| `POST` | `/admin/users/{handle}/status` | `user.manage` | 封禁 / 解封（封禁踢掉会话） |
 
 建题示例：
 
@@ -159,7 +164,35 @@ curl -s -X POST -H "Authorization: Bearer ADM" --data-binary @cases.zip localhos
 - 提交的判定结果公开；源码、逐用例明细、判机差异信息只有本人或管理员可见
 - 关闭注册：`-no-register`（M10 会搬到后台开关）
 
-> 权限粒度现在只有 `user` / `admin` 两级；细粒度能力位（谁能出题、谁管比赛、谁管用户）在 M9 落地。
+### 细粒度权限
+
+不是"普通用户 / 管理员"两档了事：每个能力是一项可以单独授予的权限，网页控制台 `/admin/perms` 逐项开关。
+
+| 权限键 | 含义 |
+|--------|------|
+| `problem.create` | 创建题目 |
+| `problem.edit.any` | 编辑他人创建的题目 |
+| `problem.publish` | 公开 / 隐藏题目（作者本人也不能隐藏自己的题，需要这一项） |
+| `testcase.manage` | 管理他人题目的用例 |
+| `contest.create` | 创建比赛 |
+| `contest.manage.any` | 管理他人创建的比赛 |
+| `user.manage` | 改角色、封禁 / 解封 |
+| `permission.manage` | 授予与回收上面这些权限 |
+| `judge.view` | 查看判机框与队列 |
+| `feed.moderate` | 删除他人动态 |
+| `site.settings` | 修改站点设置与首页 |
+| `submission.view.any` | 查看他人源码与逐用例明细（作弊调查用） |
+
+规则：
+
+- 题目记录 `owner_id`。**创建者天然能改自己的题**，不必持有 `problem.edit.any`；`testcase.manage` 是给"只维护测试数据"的人的独立通道
+- 生效权限 = 角色默认 ⊕ 个人覆盖（个人覆盖双向生效，可以只从管理员手里收回某一项）
+- **控制台拒绝修改你自己**：改自己的权限/角色/状态一律 400，避免把自己锁在门外
+- 封禁（`status='banned'`）立即吊销该账号全部会话；解封不需要重设密码
+- 改角色后能力集在下一个请求就重算，不需要对方重新登录
+- 拒绝时回答里会点名缺哪一项（例如 `缺少权限：problem.publish`），方便对接脚本
+
+建题、传用例、看判题数据现在都可以只给到"能出题但不能隐藏题"这种粒度；`-admin-token` 对应的 admin 账号默认持有全部项。
 
 ---
 

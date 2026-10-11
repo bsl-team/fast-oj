@@ -24,6 +24,9 @@ type viewer struct {
 	Handle string
 	Name   string
 	Admin  bool
+	// Manage is the one capability the nav bar cares about: it decides whether
+	// the admin console link shows up.
+	Manage bool
 	CSRF   string
 }
 

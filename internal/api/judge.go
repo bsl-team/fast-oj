@@ -329,8 +329,7 @@ func submissionID(r *http.Request) (int64, error) {
 }
 
 func (s *Server) handleJudgeList(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
+	if _, ok := s.requirePerm(w, r, permJudgeView); !ok {
 		return
 	}
 	judges, err := s.db.ListJudges(r.Context())

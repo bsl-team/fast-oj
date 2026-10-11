@@ -91,8 +91,8 @@ func (req *problemRequest) apply(p *store.Problem, isCreate bool) error {
 }
 
 func (s *Server) handleProblemCreate(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
+	a, ok := s.requirePerm(w, r, permProblemCreate)
+	if !ok {
 		return
 	}
 	var req problemRequest
@@ -104,26 +104,29 @@ func (s *Server) handleProblemCreate(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Authorship is what lets a problem setter keep editing their own problems
+	// without holding a global edit right.
+	p.OwnerID = a.User.ID
 	created, err := s.db.CreateProblem(r.Context(), &p)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	s.log.Info("problem created", "pid", created.PID, "id", created.ID, "by", "admin")
+	s.log.Info("problem created", "pid", created.PID, "id", created.ID, "by", a.User.Handle)
 	respond(w, r, http.StatusCreated, "created  "+problemRow(created, "-")+"\n", created)
 }
 
 func (s *Server) handleProblemUpdate(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
-		return
-	}
-	p, ok := s.problemByKey(w, r)
+	a, p, ok := s.requireProblemEdit(w, r, r.PathValue("key"))
 	if !ok {
 		return
 	}
 	var req problemRequest
 	if !s.decodeBody(w, r, &req) {
+		return
+	}
+	if req.Visible != nil && *req.Visible != p.Visible && !a.can(permProblemPublish) {
+		s.respondError(w, r, http.StatusForbidden, "缺少权限："+permProblemPublish)
 		return
 	}
 	if err := req.apply(&p, false); err != nil {
@@ -135,15 +138,12 @@ func (s *Server) handleProblemUpdate(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	s.log.Info("problem updated", "pid", updated.PID, "by", a.User.Handle)
 	respond(w, r, http.StatusOK, "updated  "+problemRow(updated, "-")+"\n", updated)
 }
 
 func (s *Server) handleProblemDelete(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
-		return
-	}
-	p, ok := s.problemByKey(w, r)
+	a, p, ok := s.requireProblemEdit(w, r, r.PathValue("key"))
 	if !ok {
 		return
 	}
@@ -155,6 +155,7 @@ func (s *Server) handleProblemDelete(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusInternalServerError, "deleted row but case files remain: "+err.Error())
 		return
 	}
+	s.log.Info("problem deleted", "pid", p.PID, "by", a.User.Handle)
 	respond(w, r, http.StatusOK, fmt.Sprintf("deleted %s (id=%d)\n", p.PID, p.ID),
 		map[string]any{"deleted": p.PID, "id": p.ID})
 }
@@ -164,7 +165,7 @@ func (s *Server) handleProblemList(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	limit := pageLimit(r.URL.Query().Get("limit"))
 	search := r.URL.Query().Get("q")
-	page, err := s.db.ListProblems(r.Context(), after, limit, search, !a.Admin)
+	page, err := s.db.ListProblems(r.Context(), after, limit, search, !a.can(permProblemEditAny))
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -203,7 +204,7 @@ func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !p.Visible && !a.Admin {
+	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) {
 		s.respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
 		return
 	}
@@ -454,11 +455,7 @@ func isSampleName(name string) bool {
 }
 
 func (s *Server) handleCaseUpload(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
-		return
-	}
-	p, ok := s.problemByKey(w, r)
+	_, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
 	if !ok {
 		return
 	}
@@ -572,11 +569,7 @@ func (s *Server) readUpload(w http.ResponseWriter, r *http.Request) ([]byte, boo
 }
 
 func (s *Server) handleCaseList(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
-		return
-	}
-	p, ok := s.problemByKey(w, r)
+	_, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
 	if !ok {
 		return
 	}
@@ -609,11 +602,7 @@ func (s *Server) handleCaseList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCaseWipe(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.requireAdmin(r); err != nil {
-		s.writeAuthError(w, r, err)
-		return
-	}
-	p, ok := s.problemByKey(w, r)
+	_, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
 	if !ok {
 		return
 	}
@@ -643,7 +632,7 @@ func (s *Server) handleCaseBody(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	if !tc.IsSample && !a.Admin {
+	if !tc.IsSample && !a.canSeeTestcases(p) {
 		s.respondError(w, r, http.StatusForbidden, "case "+tc.Name+" is not a sample")
 		return
 	}

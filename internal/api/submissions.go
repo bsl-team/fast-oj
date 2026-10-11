@@ -59,7 +59,7 @@ func (s *Server) handleSubmitCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	if !p.Visible && !a.Admin {
+	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) {
 		s.respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
 		return
 	}
@@ -145,7 +145,7 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	full := a.Admin || (a.User.ID != 0 && a.User.ID == d.UserID)
+	full := a.can(permSubmissionViewAny) || (a.User.ID != 0 && a.User.ID == d.UserID)
 	var runs []store.Run
 	var source, detail string
 	if full {
