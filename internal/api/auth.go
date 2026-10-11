@@ -198,6 +198,7 @@ func (a actor) viewer() *viewer {
 	}
 	return &viewer{
 		Handle: a.User.Handle, Name: name, Admin: a.Admin,
-		Manage: a.can(permPermissionManage), CSRF: a.Session.CSRF,
+		Manage: a.can(permPermissionManage), Site: a.can(permSiteSettings),
+		CSRF: a.Session.CSRF,
 	}
 }

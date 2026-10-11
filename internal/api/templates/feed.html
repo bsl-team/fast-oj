@@ -1,0 +1,8 @@
+{{define "content"}}
+<h1>动态</h1>
+{{template "composer" .}}
+{{template "posts" .}}
+<p class="meta">
+  {{if .Data.Next}}<a href="/feed?after={{.Data.Next}}">更早的动态 →</a>{{else}}到底了。{{end}}
+</p>
+{{end}}

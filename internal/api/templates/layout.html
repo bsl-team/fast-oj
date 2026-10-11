@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Title}} · fast-oj</title>
+<title>{{.Title}} · {{.Site.Title}}</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
@@ -11,14 +11,16 @@
 </head>
 <body>
 <nav class="top">
-  <a class="brand" href="/">fast-oj</a>
-  <a href="/">题目</a>
+  <a class="brand" href="/">{{.Site.Title}}</a>
+  <a href="/problems">题目</a>
+  <a href="/feed">动态</a>
   <a href="/rank">排行榜</a>
   <a href="/submissions">提交</a>
   {{if .Me}}
   <a href="/u/{{.Me.Handle}}">{{.Me.Name}}</a>
   <a href="/settings">设置</a>
   {{if .Me.Manage}}<a href="/admin/perms">权限</a>{{end}}
+  {{if .Me.Site}}<a href="/admin/site">站点</a>{{end}}
   <form class="inline" method="post" action="/logout">
     <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
     <button type="submit">退出</button>
@@ -33,7 +35,13 @@
   {{block "content" .}}（空白页）{{end}}
 </main>
 <footer class="top">
-  这份页面同时是纯文本 API：<code>curl -s localhost:8080/problems</code>；机器可读加 <code>?format=json</code>。
+  {{if .Site.Footer}}<div class="foot-note">{{markdown .Site.Footer}}</div>{{end}}
+  {{if .Site.Links}}
+  <div class="links">友情链接：
+    {{range .Site.Links}}<a href="{{.URL}}" rel="nofollow noopener" target="_blank">{{.Title}}</a>{{end}}
+  </div>
+  {{end}}
+  <div class="links">纯文本 API：<code>curl -s localhost:8080/problems</code>；机器可读加 <code>?format=json</code>。</div>
 </footer>
 </body>
 </html>{{end}}

@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>站点设置</h1>
+<p class="meta">改完立即生效（缓存 2 秒）。首页语与页脚支持 Markdown 和 $KaTeX$ 公式。</p>
+
+<form method="post" action="/admin/site">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+
+  <label>站点标题（显示在标签页与导航栏）</label>
+  <input type="text" name="title" value="{{.Data.Site.Title}}" maxlength="60" required>
+
+  <label>首页语（首页大标题下面那段）</label>
+  <textarea name="tagline" rows="3" maxlength="2000">{{.Data.Site.Tagline}}</textarea>
+
+  <label>友情链接（每行一条，写成「标题 | https://…」，最多 20 条）</label>
+  <textarea name="links" rows="5" spellcheck="false">{{.Data.Links}}</textarea>
+
+  <label>页脚（可选）</label>
+  <textarea name="footer" rows="2" maxlength="2000">{{.Data.Site.Footer}}</textarea>
+
+  <label class="check">
+    <input type="checkbox" name="allow_register" value="1" {{if .Data.Site.AllowRegister}}checked{{end}}>
+    允许自助注册
+  </label>
+
+  <p><input type="submit" value="保存"></p>
+</form>
+{{end}}

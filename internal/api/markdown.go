@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"html/template"
 	"strings"
 
@@ -31,8 +30,10 @@ func safeURL(raw []byte) bool {
 	return true
 }
 
-func renderMarkdownHTML(src []byte) template.HTML {
-	if len(bytes.TrimSpace(src)) == 0 {
+// renderMarkdownHTML takes a string so it can be used directly as a template
+// function.
+func renderMarkdownHTML(src string) template.HTML {
+	if strings.TrimSpace(src) == "" {
 		return ""
 	}
 	// Safelink is what makes IsSafeURLOverride actually consulted; without it the
@@ -41,6 +42,6 @@ func renderMarkdownHTML(src []byte) template.HTML {
 		Flags: html.SkipHTML | html.HrefTargetBlank | html.Safelink | html.NofollowLinks,
 	})
 	r.IsSafeURLOverride = safeURL
-	body := markdown.ToHTML(src, newMarkdownParser(), r)
+	body := markdown.ToHTML([]byte(src), newMarkdownParser(), r)
 	return template.HTML(body) //nolint:gosec // raw HTML is skipped and URLs filtered above
 }

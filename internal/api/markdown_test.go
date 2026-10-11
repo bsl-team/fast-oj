@@ -37,7 +37,7 @@ func dangerousStatement() string {
 }
 
 func TestRenderMarkdownKeepsOJFeatures(t *testing.T) {
-	out := string(renderMarkdownHTML([]byte(statementSource)))
+	out := string(renderMarkdownHTML(statementSource))
 	// The MathJax extension turns $...$ / $$...$$ into these spans with the TeX
 	// kept inside as \( \) / \[ \]. That is the contract the KaTeX bootstrap in
 	// the page template relies on, so assert it here rather than scanning text.
@@ -55,7 +55,7 @@ func TestRenderMarkdownKeepsOJFeatures(t *testing.T) {
 }
 
 func TestRenderMarkdownRefusesInjectedHTML(t *testing.T) {
-	out := string(renderMarkdownHTML([]byte(dangerousStatement())))
+	out := string(renderMarkdownHTML(dangerousStatement()))
 	for _, forbidden := range []string{"<script", "</script>", "onerror", "javascript:", "data:text/html"} {
 		if strings.Contains(strings.ToLower(out), forbidden) {
 			t.Errorf("leaked %q:\n%s", forbidden, out)
@@ -68,10 +68,10 @@ func TestRenderMarkdownRefusesInjectedHTML(t *testing.T) {
 }
 
 func TestRenderMarkdownEmptyIsNothing(t *testing.T) {
-	if got := renderMarkdownHTML([]byte("   \n\t")); got != "" {
+	if got := renderMarkdownHTML("   \n\t"); got != "" {
 		t.Fatalf("blank statement rendered %q", got)
 	}
-	if got := renderMarkdownHTML(nil); got != "" {
+	if got := renderMarkdownHTML(""); got != "" {
 		t.Fatalf("nil statement rendered %q", got)
 	}
 }

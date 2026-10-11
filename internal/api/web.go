@@ -238,7 +238,7 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		JudgedCases: judged, TotalScore: total,
 		Solved: c.Solved, Submits: c.Submits,
 		Hidden:    !p.Visible,
-		Statement: renderMarkdownHTML([]byte(p.Statement)),
+		Statement: renderMarkdownHTML(p.Statement),
 		Samples:   samples,
 		Recent:    rows,
 	})
@@ -413,6 +413,9 @@ type solvedView struct{ PID, Title, Time, When string }
 
 type userData struct {
 	Handle        string
+	DisplayName   string
+	Bio           template.HTML
+	HasBio        bool
 	Admin         bool
 	Joined        string
 	Solved        int
@@ -421,6 +424,8 @@ type userData struct {
 	Tally         []tallyView
 	SolvedList    []solvedView
 	Recent        []subRow
+	Posts         []postRow
+	IsSelf        bool
 }
 
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
@@ -459,8 +464,9 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	me := s.viewerOf(r)
-	totalProblems, err := s.db.CountProblems(ctx, me == nil || !me.Admin)
+	a, _ := s.authenticate(r)
+	me := a.viewer()
+	totalProblems, err := s.db.CountProblems(ctx, !a.can(permProblemEditAny))
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -493,10 +499,23 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, rowOf(d))
 	}
 
+	// Own profile shows hidden entries too, so the author can see what was taken
+	// down; moderators see them everywhere.
+	canSeeHidden := a.User.ID == u.ID || a.can(permFeedModerate)
+	myPosts, err := s.db.ListPosts(ctx, 20, 0, u.ID, canSeeHidden)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+
 	s.page(w, r, http.StatusOK, u.Handle, "user", me, msgOf(r), userData{
-		Handle: u.Handle, Admin: u.Role == "admin", Joined: agoMS(u.CreatedAt),
+		Handle: u.Handle, DisplayName: u.DisplayName,
+		Bio: renderMarkdownHTML(u.Bio), HasBio: strings.TrimSpace(u.Bio) != "",
+		Admin: u.Role == "admin", Joined: agoMS(u.CreatedAt),
 		Solved: len(solved), TotalProblems: totalProblems, Submits: submits,
 		Tally: tallyRows, SolvedList: solvedList, Recent: rows,
+		Posts:  postRows(myPosts, a),
+		IsSelf: a.User.ID == u.ID,
 	})
 }
 

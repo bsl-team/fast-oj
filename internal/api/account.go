@@ -167,7 +167,9 @@ func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusForbidden, "当前未开放注册")
 		return
 	}
-	s.page(w, r, http.StatusOK, "注册", "register", nil, msgOf(r), nil)
+	s.page(w, r, http.StatusOK, "注册", "register", nil, msgOf(r), map[string]any{
+		"Handle": "", "Email": "", "DisplayName": "",
+	})
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -252,12 +254,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.clearSession(w)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-// registrationOpen is the hook M10's site settings will drive; until then
-// registration is open unless the operator passes -no-register.
-func (s *Server) registrationOpen(r *http.Request) bool {
-	return s.cfg.AllowRegister
 }
 
 // --- settings: profile, password, API tokens ---

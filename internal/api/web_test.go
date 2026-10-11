@@ -121,6 +121,19 @@ func (h *harness) postBearer(path string, values url.Values, token string) (int,
 	return resp.StatusCode, readAll(h.t, resp)
 }
 
+// postForm2 submits a form the way a browser does: it follows the 303 and hands
+// back the page the user lands on, so flash messages stay assertable.
+func (h *harness) postForm2(path string, values url.Values, cookie, csrf string) (int, string) {
+	h.t.Helper()
+	code, body, hdr := h.postForm(path, values, cookie, csrf)
+	if code == http.StatusSeeOther {
+		if loc := hdr.Get("Location"); loc != "" {
+			return h.htmlWithCookie(http.MethodGet, loc, cookie)
+		}
+	}
+	return code, body
+}
+
 // cookieValue pulls one cookie out of a Set-Cookie list.
 func cookieValue(headers []string, name string) string {
 	for _, line := range headers {

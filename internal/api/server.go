@@ -19,11 +19,12 @@ type Server struct {
 	log     *slog.Logger
 	db      *store.DB
 	cases   *casefs.Store
+	cache   *siteCache
 	started time.Time
 }
 
 func New(cfg config.Config, log *slog.Logger, db *store.DB) *Server {
-	return &Server{cfg: cfg, log: log, db: db, cases: casefs.New(cfg.DataDir), started: time.Now()}
+	return &Server{cfg: cfg, log: log, db: db, cases: casefs.New(cfg.DataDir), cache: &siteCache{}, started: time.Now()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -58,7 +59,16 @@ func (s *Server) Handler() http.Handler {
 
 	// The same URLs answer a browser with HTML, so the text API and the web UI
 	// never diverge on data or permissions.
-	mux.HandleFunc("GET /", s.handleRoot)
+	mux.HandleFunc("GET /", s.handleHome)
+
+	mux.HandleFunc("GET /feed", s.handleFeed)
+	mux.HandleFunc("POST /feed", s.handlePostCreate)
+	mux.HandleFunc("POST /feed/{id}/delete", s.handlePostDelete)
+	mux.HandleFunc("POST /feed/{id}/hide", s.handlePostHide)
+
+	mux.HandleFunc("GET /admin/site", s.handleSiteAdmin)
+	mux.HandleFunc("POST /admin/site", s.handleSiteSave)
+
 	mux.HandleFunc("GET /rank", s.handleRank)
 	mux.HandleFunc("GET /u/{handle}", s.handleUser)
 	mux.HandleFunc("GET /login", s.handleLoginPage)
@@ -82,16 +92,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
-}
-
-// handleRoot serves the problem list at / and turns every other unmatched GET
-// into a 404 that a browser still sees as a page.
-func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		s.notFound(w, r)
-		return
-	}
-	s.handleProblemList(w, r)
 }
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
@@ -136,24 +136,32 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 			counts.Problems, counts.Submissions, counts.Pending, counts.Users, counts.Judges),
 		"",
 		"routes  (浏览器拿 HTML，curl 拿纯文本，?format=json 拿 JSON)",
-		"  GET  /                        题库列表",
+		"  GET  /                        首页：站名+首页语+动态+最新题目（文本视图=题库列表）",
 		"  GET  /problems                题库列表（?q= &limit= &after=）",
 		"  GET  /problems/{key}          题面 + 样例 + 提交表单",
-		"  POST /problems                建题（admin）",
-		"  PUT  /problems/{key}          改题（admin）",
-		"  DELETE /problems/{key}        删题（admin）",
-		"  POST /problems/{key}/cases    上传用例 zip（admin）",
-		"  GET  /problems/{key}/cases    用例清单（admin）",
+		"  POST /problems                建题（problem.create）",
+		"  PUT  /problems/{key}          改题（owner 或 problem.edit.any）",
+		"  DELETE /problems/{key}        删题（owner 或 problem.edit.any）",
+		"  POST /problems/{key}/cases    上传用例 zip（testcase.manage 或 owner）",
+		"  GET  /problems/{key}/cases    用例清单（同上）",
 		"  POST /problems/{key}/submit   网页表单提交代码",
 		"  POST /submissions             提交（bearer）",
 		"  GET  /submissions             提交列表（?user= &problem=）",
 		"  GET  /submissions/{id}        结果（?wait=秒 长轮询）",
+		"  GET  /feed                    动态（?user= &after= &limit=）",
+		"  POST /feed                    发一条动态（需登录）",
+		"  POST /feed/{id}/delete        删动态（本人，或持 feed.moderate 删别人的）",
+		"  POST /feed/{id}/hide          隐藏/恢复动态（feed.moderate）",
 		"  GET  /rank                    排行榜",
-		"  GET  /u/{handle}              个人主页",
+		"  GET  /u/{handle}              个人主页：简介 + 动态 + 战绩",
 		"  GET  /login /register         登录 / 注册（邮箱+密码，邮箱暂不验证）",
 		"  GET  /settings                个人资料、密码、API 令牌",
 		"  GET  /whoami                  当前身份",
-		"  GET  /judges                  判机框列表（admin）",
+		"  GET  /admin/site              站点设置（site.settings）",
+		"  GET  /admin/perms             权限控制台（permission.manage）",
+		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
+		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁",
+		"  GET  /judges                  判机框列表（judge.view）",
 		"  POST /judge/claim             判机：心跳 + 领取",
 		"  GET  /judge/cases/{id}/{which} 判机：取用例正文",
 		"  POST /judge/submissions/{id}/status|result  判机：回报",

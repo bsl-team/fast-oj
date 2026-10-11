@@ -1,0 +1,40 @@
+{{define "posts"}}
+{{range .Data.Posts}}
+<article class="post{{if .Hidden}} muted{{end}}">
+  <header>
+    <a class="who" href="/u/{{.Author}}">{{.DisplayName}}</a>
+    <span class="when">{{.When}}</span>
+    {{if .Hidden}}<span class="hidden">已隐藏</span>{{end}}
+    <span class="ops">
+      {{if .CanDelete}}
+      <form class="inline" method="post" action="/feed/{{.ID}}/delete">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <button type="submit">删除</button>
+      </form>
+      {{end}}
+      {{if .CanModerate}}
+      <form class="inline" method="post" action="/feed/{{.ID}}/hide">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <input type="hidden" name="hidden" value="{{if .Hidden}}0{{else}}1{{end}}">
+        <button type="submit">{{if .Hidden}}恢复{{else}}隐藏{{end}}</button>
+      </form>
+      {{end}}
+    </span>
+  </header>
+  <div class="body">{{.Body}}</div>
+</article>
+{{end}}
+{{end}}
+
+{{define "composer"}}
+{{if .Data.SignedIn}}
+<form method="post" action="/feed" class="composer">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>说点什么（支持 Markdown 与 $KaTeX$ 公式）</label>
+  <textarea name="body" rows="3" maxlength="4000" placeholder="今天调了什么题？"></textarea>
+  <p><input type="submit" value="发布"></p>
+</form>
+{{else}}
+<p class="meta"><a href="/login">登录</a> 后就能发动态。</p>
+{{end}}
+{{end}}

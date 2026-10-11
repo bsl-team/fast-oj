@@ -82,3 +82,25 @@ nav.top button:hover { color: var(--accent); }
 .hidden { color: var(--muted); font-size: .8rem; border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; }
 .katex { font-size: 1.03em; }
 .math.display { display: block; text-align: center; margin: .8rem 0; }
+
+/* home page */
+.hero { border: 1px solid var(--line); border-radius: 6px; padding: 1.2rem 1.4rem; margin-bottom: 1.5rem; }
+.hero h1 { margin-bottom: .3rem; }
+.hero .tagline { color: var(--muted); }
+.hero .tagline p { margin: .3rem 0; }
+.hero .stats { margin: .8rem 0 0; }
+.links, .foot-note { width: 100%; }
+.links a { margin-right: .9rem; }
+
+/* feed */
+.composer textarea { min-height: 5rem; }
+article.post { border-bottom: 1px solid var(--line); padding: .9rem 0; }
+article.post.muted { opacity: .55; }
+article.post header { display: flex; gap: .6rem; align-items: baseline; margin-bottom: .3rem; }
+article.post .who { font-weight: 600; }
+article.post .when { color: var(--muted); font-size: .85rem; }
+article.post .ops { margin-left: auto; font-size: .85rem; }
+article.post .body p { margin: .35rem 0; }
+label.check { display: flex; gap: .4rem; align-items: center; margin: .8rem 0; }
+label.check input { width: auto; }
+section.bio { border-left: 3px solid var(--line); padding-left: .9rem; margin: 1rem 0 1.5rem; }

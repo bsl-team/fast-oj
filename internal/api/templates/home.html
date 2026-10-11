@@ -1,0 +1,32 @@
+{{define "content"}}
+<section class="hero">
+  <h1>{{.Site.Title}}</h1>
+  <div class="tagline">{{markdown .Site.Tagline}}</div>
+  <p class="stats">
+    题库 <b>{{.Data.Counts.Problems}}</b> 题 ·
+    用户 <b>{{.Data.Counts.Users}}</b> 人 ·
+    提交 <b>{{.Data.Counts.Submissions}}</b> 次
+    {{if .Data.Counts.Pending}} · 队列中 <b>{{.Data.Counts.Pending}}</b>{{end}}
+  </p>
+  {{if not .Data.Registered}}<p class="meta">当前已关闭注册。</p>{{end}}
+</section>
+
+{{template "composer" .}}
+{{template "posts" .}}
+
+<h2>最新题目</h2>
+<table>
+  <tr><th>编号</th><th>标题</th><th class="num">时限</th><th class="num">内存</th></tr>
+  {{range .Data.Problems}}
+  <tr>
+    <td><a href="/problems/{{.PID}}">{{.PID}}</a></td>
+    <td><a href="/problems/{{.PID}}">{{.Title}}</a></td>
+    <td class="num">{{.TimeLimitMS}}ms</td>
+    <td class="num">{{.MemLimitKB}}KB</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="4">还没有题目。</td></tr>
+  {{end}}
+</table>
+<p class="meta"><a href="/problems">全部题目 →</a></p>
+{{end}}

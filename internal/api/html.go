@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+
+	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
 //go:embed templates/*.html static/*
@@ -24,9 +26,10 @@ type viewer struct {
 	Handle string
 	Name   string
 	Admin  bool
-	// Manage is the one capability the nav bar cares about: it decides whether
-	// the admin console link shows up.
+	// Manage and Site are the two capabilities the nav bar renders links for, so
+	// a delegate with only one of the consoles sees only that one.
 	Manage bool
+	Site   bool
 	CSRF   string
 }
 
@@ -34,6 +37,8 @@ type viewer struct {
 // payload under .Data.
 type shell struct {
 	Title string
+	// Site carries the operator-editable title, tagline and footer.
+	Site  store.SiteConfig
 	Me    *viewer
 	Flash string
 	Data  any
@@ -52,7 +57,11 @@ func mustLoadViews() *viewEngine {
 }
 
 func loadViews() (*viewEngine, error) {
-	base, err := template.New("base").ParseFS(assetFS, "templates/layout.html")
+	// Templates render operator/user prose (tagline, footer, feed) through the
+	// same Markdown+KaTeX pipeline as problem statements, so there is exactly one
+	// escaping policy in the app.
+	funcs := template.FuncMap{"markdown": renderMarkdownHTML}
+	base, err := template.New("base").Funcs(funcs).ParseFS(assetFS, "templates/layout.html", "templates/partials.html")
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +119,7 @@ func wantsHTML(r *http.Request) bool {
 // page renders an HTML view, falling back to the text error shape if the
 // template blows up, so a rendering bug cannot turn into a blank 200.
 func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, title, name string, me *viewer, flash string, data any) {
-	err := views.render(w, status, name, shell{Title: title, Me: me, Flash: flash, Data: data})
+	err := views.render(w, status, name, shell{Title: title, Site: s.site(r.Context()), Me: me, Flash: flash, Data: data})
 	if err != nil {
 		s.log.Error("template", "page", name, "err", err)
 		s.respondError(w, r, http.StatusInternalServerError, "page rendering failed")
