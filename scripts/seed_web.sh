@@ -69,7 +69,7 @@ PY
 nohup ./dist/fast-oj.exe -addr 127.0.0.1:18080 -data data -admin-token ADM -judge-token JDG -v >/dev/null 2>&1 &
 sleep 1.5
 curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/json" --data-binary @.tmp/problem.json $B/problems >/dev/null
-curl -s -X POST -H "Authorization: Bearer ADM" --data-binary @.tmp/cases.zip $B/problems/P1001/cases >/dev/null
+curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/zip" --data-binary @.tmp/cases.zip $B/problems/P1001/cases >/dev/null
 curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/json" --data-binary @.tmp/user.json $B/users >/dev/null
 TOK=$(curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/json" -d '{}' $B/users/alice/tokens | head -1 | sed 's/token=\([^ ]*\).*/\1/')
 echo "$TOK" > .tmp/token
