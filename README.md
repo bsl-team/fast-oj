@@ -4,7 +4,8 @@
 
 - 单个可执行文件，零外部服务依赖（SQLite 内嵌，纯 Go 驱动）
 - 判机与服务器分离，判机只需要一个出站 HTTP 连接
-- 题面 Markdown + KaTeX 数学公式
+- 题面、动态、个人简介、首页语统一走 Markdown + KaTeX 数学公式
+- 首页内容（站名、首页语、友情链接、页脚、注册开关）在网页后台改，不用重启
 - 读接口每次请求的处理时间在 0.2–1.2 ms 之间（200 题 / 500 提交规模，见[性能](#性能)）
 
 ---
@@ -49,7 +50,7 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `?format=json` 或 `Accept: application/json` | JSON |
 | `?format=text` | 强制纯文本 |
 
-网页版页面：题库 `/`、题面 `/problems/{pid}`、提交列表 `/submissions`、提交详情 `/submissions/{id}`、排行榜 `/rank`、个人主页 `/u/{handle}`、令牌绑定 `/account`。
+网页版页面：首页 `/`（站名 + 首页语 + 统计 + 最新题目 + 动态；curl 与 `?format=json` 拿到的仍是题库列表）、题库 `/problems`、题面 `/problems/{pid}`、动态 `/feed`、提交列表 `/submissions`、提交详情 `/submissions/{id}`、排行榜 `/rank`、个人主页 `/u/{handle}`、登录注册 `/login` `/register`、设置 `/settings`、站点设置 `/admin/site`、权限控制台 `/admin/perms`、令牌绑定 `/account`。
 
 ---
 
@@ -59,6 +60,7 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 |------|------|------|------|
 | `GET` | `/healthz` | 公开 | 探活，会真连一次数据库 |
 | `GET` | `/about` | 公开 | 运行摘要与全部路由 |
+| `GET` | `/` | 公开 | 浏览器给首页，curl/JSON 给题库列表 |
 | `GET` | `/problems` | 公开 | 列表，`?q=` `?limit=` `?after=` |
 | `GET` | `/problems/{key}` | 公开 | 题面 + 样例（`key` 可为编号或数字 id） |
 | `POST` | `/problems` | `problem.create` | 建题（记录 owner） |
@@ -73,6 +75,10 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `GET` | `/submissions` | 公开 | 列表，`?user=`（或 `me`）`&problem=&limit=&after=` |
 | `GET` | `/submissions/{id}` | 公开 | 结果；`?wait=秒` 长轮询到出结论（上限 5 分钟） |
 | `GET` | `/rank` | 公开 | 排行榜 |
+| `GET` | `/feed` | 公开 | 动态时间线，`?user=` `?after=` `?limit=` |
+| `POST` | `/feed` | 登录用户 | 发一条动态（每人每小时 20 条） |
+| `POST` | `/feed/{id}/delete` | 本人或 `feed.moderate` | 删除 |
+| `POST` | `/feed/{id}/hide` | `feed.moderate` | 隐藏 / 恢复（不删数据） |
 | `GET` | `/u/{handle}` | 公开 | 个人主页 |
 | `GET` | `/whoami` | 令牌 | 当前身份 |
 | `GET` `/POST` | `/login` `/logout` | — | 邮箱或用户名 + 密码登录，session cookie |
@@ -86,6 +92,7 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/judge/submissions/{id}/status` | 判机 | 进度（`compiling` → `running`） |
 | `POST` | `/judge/submissions/{id}/result` | 判机 | 回报判定与逐用例结果 |
 | `GET` | `/judges` | `judge.view` | 判机框清单 |
+| `GET` `/POST` | `/admin/site` | `site.settings` | 站名、首页语、友情链接、页脚、注册开关 |
 | `GET` | `/admin/perms` | `permission.manage` | 账号列表与权限控制台 |
 | `GET` | `/admin/perms/u/{handle}` | `permission.manage` | 单个账号的权限矩阵 |
 | `POST` | `/admin/perms/u/{handle}` | `permission.manage` | 授予 / 收回 / 恢复默认（不能改自己） |
@@ -110,7 +117,7 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/jso
 数学公式：
 
 - 行内用 `$a + b$`
-- 行间用 `$$ \frac{a+b}{2} $$`
+- 行间用 `$$ \frac{a+b}{2} $$`，**并且要让这一段只放公式**：`$$…$$` 夹在句子里会被读成两个相邻的行内 `$…$`，结果是公式渲染了、两侧各留下一个裸 `$`。行间公式请单独占一行（前后空行最稳）。
 
 渲染器把两者输出成 `<span class="math inline">\(…\)</span>` / `<span class="math display">\[…\]</span>`，页面里的 `math.js` 只对这两个节点调用 KaTeX，所以代码块里的下划线、`$` 不会被误当成公式。KaTeX 走 CDN（jsdelivr，0.16.11）；**CDN 不可达时公式退回显示原始 TeX**，题面照样能读，需要完全离线就把 KaTeX 放本地并改 `internal/api/templates/layout.html` 的两行链接。
 
@@ -121,6 +128,31 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/jso
 - 裸 HTML 一律丢弃（`SkipHTML`），`<script>`、`<img onerror=…>` 进不去
 - `javascript:` / `data:` / `vbscript:` / `file:` / `blob:` / `about:` 链接被拒（`Safelink` + 白名单谓词）
 - 外链自动加 `target="_blank" rel="nofollow"`
+
+同一条流水线也用在动态正文、个人简介、首页语与页脚上 —— 这些同样是用户/操作员输入的不可信文本，规则一模一样。
+
+---
+
+## 首页、站点设置与动态
+
+`/admin/site`（需要 `site.settings` 权限）改的是数据库里的站点配置，不是启动参数：
+
+| 项 | 说明 |
+|----|------|
+| 站点标题 | 标签页、导航栏与首页大标题 |
+| 首页语 | 首页大标题下面那段，支持 Markdown + 公式 |
+| 友情链接 | 每行一条 `标题 \| https://…`，最多 20 条，只允许 http/https/mailto |
+| 页脚 | 可选，全站显示 |
+| 允许自助注册 | 与 `-no-register` 取与；关掉后 `/register` 的页面与 POST 都是 403 |
+
+保存是一次事务，页面缓存 2 秒后自动过期，改完刷新即见。被拒的保存会把已填内容原样留在表单里（长度按字符数算，与浏览器 `maxlength` 一致），不会让操作员整页重打。
+
+动态（`/feed`）是纯文本版的朋友圈：
+
+- 登录即可发，正文最长 4000 字符，一小时最多 20 条（按用户计数，复用登录节流的那张表）
+- 只能删自己的；`feed.moderate` 可以删别人的，也可以只隐藏（`visible` 翻转，不删数据）
+- 隐藏的条目对公众消失，作者在自己的主页仍能看到标着「已隐藏」的那条，审核者的时间线保留它否则无法撤销
+- 时间线按 `id` 倒序游标翻页，`?after=` 取上一页最后一条；只有当页装满才会给出「更早的动态」
 
 ---
 
@@ -136,8 +168,11 @@ zip 里按 `<名字>.in` + `<名字>.out` 成对给出，目录层级会被压�
 
 ```bash
 zip -j cases.zip 1.in 1.out sample1.in sample1.out
-curl -s -X POST -H "Authorization: Bearer ADM" --data-binary @cases.zip localhost:8080/problems/P1001/cases
+curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/zip" \
+  --data-binary @cases.zip localhost:8080/problems/P1001/cases
 ```
+
+`Content-Type: application/zip` 不能省：`--data-binary` 默认发 `text/plain`，端点按 zip 读体就会一条用例都收不到，而提交只会回报「本题还没有测试数据」。
 
 ---
 
@@ -162,7 +197,8 @@ curl -s -X POST -H "Authorization: Bearer ADM" --data-binary @cases.zip localhos
 - 引导令牌常量时间比较；用户令牌只存 SHA-256 摘要，明文仅在签发那一次出现
 - 隐藏题对无权限者一律 404 而不是 403，避免被枚举
 - 提交的判定结果公开；源码、逐用例明细、判机差异信息只有本人或管理员可见
-- 关闭注册：`-no-register`（M10 会搬到后台开关）
+- 关闭注册：`-no-register` 与后台 `/admin/site` 的「允许自助注册」取与，任一方关掉后 `/register` 即 403
+- 个人简介（`/settings`）与动态正文走题面同一条 Markdown 安全管线，见[首页、站点设置与动态](#首页站点设置与动态)
 
 ### 细粒度权限
 
@@ -265,7 +301,7 @@ data/
 | `-max-case` | 16 MiB | 单个用例文件上限 |
 | `-bcrypt-cost` | 11 | 口令哈希强度（10 偏弱，14 登录会明显卡） |
 | `-secure-cookies` | 关 | 给 session cookie 加 `Secure`，上 TLS 后打开 |
-| `-no-register` | 关 | 关闭自助注册 |
+| `-no-register` | 关 | 关闭自助注册（与 `/admin/site` 的开关取与） |
 | `-v` | 关 | 记录每个请求（默认只记失败与 >50ms 的请求，以及登录失败） |
 
 判机端 `fast-judge`：
@@ -336,6 +372,6 @@ powershell -File build.ps1 -Test
 | 建题 | 只能走 API（网页管理界面未做） |
 | 竞赛/比赛 | 未做 |
 | 统计 | 排行榜只有「按去重 AC 题数」，无难度、标签、通过率排序 |
-| 防作弊 | 无代码查重、无 IP/频率限制 |
+| 防作弊 | 无代码查重；登录/注册/发动态有节流，提交与建题还没有速率限制 |
 | 附件与图片 | 题面不能贴图（外链可以），无附件上传 |
 | 静态资源 | 无指纹/长缓存策略，改样式需重启（模板内嵌在二进制里） |
