@@ -1,0 +1,33 @@
+{{define "content"}}
+<h1>与 {{.Data.PeerName}} 的对话</h1>
+<p class="meta">
+  <a href="{{.Data.Inbox}}">返回私信列表</a> ·
+  <a href="/u/{{.Data.Peer}}">TA 的主页</a>
+</p>
+
+<section class="thread">
+  {{range .Data.Messages}}
+  <article class="dm{{if .FromMe}} mine{{end}}">
+    <header>
+      <b>{{if .FromMe}}我{{else}}{{.Sender}}{{end}}</b>
+      <span class="when">{{.When}}</span>
+      {{if not .Read}}<span class="when">未读</span>{{end}}
+    </header>
+    <div class="body">{{.Body}}</div>
+  </article>
+  {{else}}
+  <p class="meta">还没有说过话，发第一条吧。</p>
+  {{end}}
+</section>
+
+{{if .Data.CanSend}}
+<form method="post" action="/messages/{{.Data.Peer}}" class="composer">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>发私信给 {{.Data.PeerName}}（最长 {{.Data.MaxBytes}} 字，一小时最多 {{.Data.MaxPerHour}} 条）</label>
+  <textarea name="body" rows="3" maxlength="{{.Data.MaxBytes}}" placeholder="说点什么" required></textarea>
+  <p><input type="submit" value="发送"></p>
+</form>
+{{else}}
+<p class="meta">对方不接受你的私信：TA 在「设置 → 谁可以给我发私信」里限制了收信范围。</p>
+{{end}}
+{{end}}

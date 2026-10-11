@@ -1,0 +1,16 @@
+{{define "content"}}
+<h1>私信</h1>
+<table>
+  <tr><th>对方</th><th>最后一条</th><th class="num">未读</th><th>时间</th></tr>
+  {{range .Data.Threads}}
+  <tr>
+    <td><a href="/messages/{{.Peer}}">{{.PeerName}}</a></td>
+    <td>{{if .FromMe}}我：{{end}}{{.Last}}</td>
+    <td class="num">{{if .Unread}}<b class="badge bad">{{.Unread}}</b>{{else}}—{{end}}</td>
+    <td class="meta">{{.When}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="4">还没有私信。在别人的主页点「发私信」就能开始对话。</td></tr>
+  {{end}}
+</table>
+{{end}}

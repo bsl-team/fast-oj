@@ -12,6 +12,9 @@ type User struct {
 	Bio         string `json:"bio,omitempty"`
 	Role        string `json:"role"`
 	Status      string `json:"status"`
+	// DMPolicy is who may send this person a message: everyone, mutual (only
+	// people they follow back), following (only people they follow) or off.
+	DMPolicy    string `json:"dm_policy"`
 	HasPassword bool   `json:"has_password"`
 	CreatedAt   int64  `json:"created_at"`
 	LastLoginAt int64  `json:"last_login_at"`

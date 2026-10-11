@@ -80,6 +80,13 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/feed/{id}/delete` | 本人或 `feed.moderate` | 删除 |
 | `POST` | `/feed/{id}/hide` | `feed.moderate` | 隐藏 / 恢复（不删数据） |
 | `GET` | `/u/{handle}` | 公开 | 个人主页 |
+| `GET` | `/u/{handle}/following` | 公开 | 关注名单（`?format=json` 给脚本） |
+| `GET` | `/u/{handle}/followers` | 公开 | 粉丝名单 |
+| `POST` | `/u/{handle}/follow` | 登录用户 | 关注；`/unfollow` 取消 |
+| `GET` | `/messages` | 登录用户 | 我的私信会话列表（未读数在最后一条那列） |
+| `GET` | `/messages/{handle}` | 登录用户 | 一对一对话，打开即标记已读 |
+| `POST` | `/messages/{handle}` | 登录用户 | 发一条私信（受对方收信策略限制） |
+| `POST` | `/settings/privacy` | 登录用户 | 设置谁可以给我发私信 |
 | `GET` | `/whoami` | 令牌 | 当前身份 |
 | `GET` `/POST` | `/login` `/logout` | — | 邮箱或用户名 + 密码登录，session cookie |
 | `GET` `/POST` | `/register` | 公开（可关） | 自助注册，邮箱暂不验证 |
@@ -153,6 +160,34 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/jso
 - 只能删自己的；`feed.moderate` 可以删别人的，也可以只隐藏（`visible` 翻转，不删数据）
 - 隐藏的条目对公众消失，作者在自己的主页仍能看到标着「已隐藏」的那条，审核者的时间线保留它否则无法撤销
 - 时间线按 `id` 倒序游标翻页，`?after=` 取上一页最后一条；只有当页装满才会给出「更早的动态」
+
+---
+
+## 关注与私信
+
+关注是一张 `(follower, followee)` 的边，个人页上 关注/粉丝 两个数字点进去各自的名单；
+互相关注时多一个「互相关注」标记。关注是幂等的（重复点不报错），取消第二次会如实说
+"你本来就没有关注"。
+
+私信是一对一的纯文本（不走 Markdown，也不渲染 HTML），会话没有独立的表：一条
+`(a,b)` 的对话就是两个方向的消息集合。谁能给你发，由**收信人**在
+`/settings → 谁可以给我发私信` 里决定：
+
+| 策略 | 谁能发进来 |
+|------|-----------|
+| `everyone`（默认） | 所有人 |
+| `mutual` | 只接受互相关注的人 —— 即"拒绝陌生私信" |
+| `following` | 只接受我关注过的人 |
+| `off` | 完全关闭私信 |
+
+几点口径要说清：
+
+- 策略只挡**新发进来**的消息，已经存在的对话仍然看得见；关闭私信不影响你自己往外发
+- 被拒的发送会当场说明原因（页面提示"对方的隐私设置不接受这条私信"），不会静默丢弃
+- 每人每小时 30 条，与动态、登录共用同一张节流表；正文最长 2000 字
+- 导航栏的未读角标只在 cookie 会话上统计（API/bearer 调用不付这次查询），走
+  `WHERE read_at IS NULL` 的部分索引；打开对话就是已读回执
+- 还没有做：拉黑单个用户、举报、删除消息、群发与图片
 
 ---
 

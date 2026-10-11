@@ -65,6 +65,7 @@ pre code { background: none; padding: 0; }
 .meta b { color: var(--fg); font-weight: 600; }
 .flash { border: 1px solid var(--warn); color: var(--warn); padding: .5rem .7rem; border-radius: 4px; }
 .badge { font-weight: 700; font-variant-numeric: tabular-nums; }
+.badge.bad { color: var(--warn); }
 .AC { color: var(--ok); }
 .WA, .RE, .MLE, .TLE, .CE, .IE { color: var(--bad); }
 .queued, .compiling, .running { color: var(--warn); }
@@ -110,3 +111,10 @@ article.post .body p { margin: .35rem 0; }
 label.check { display: flex; gap: .4rem; align-items: center; margin: .8rem 0; }
 label.check input { width: auto; }
 section.bio { border-left: 3px solid var(--line); padding-left: .9rem; margin: 1rem 0 1.5rem; }
+
+/* private messages */
+section.thread { display: flex; flex-direction: column; gap: .5rem; margin: 1rem 0 1.5rem; }
+article.dm { border-left: 3px solid var(--line); padding: .35rem .7rem; }
+article.dm.mine { border-left-color: var(--accent); background: var(--code); }
+article.dm header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: var(--muted); }
+article.dm .body { white-space: pre-wrap; }

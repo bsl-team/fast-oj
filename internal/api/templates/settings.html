@@ -19,6 +19,29 @@
   <p><input type="submit" value="保存"></p>
 </form>
 
+<h2>谁可以给我发私信</h2>
+<form method="post" action="/settings/privacy">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label class="check">
+    <input type="radio" name="dm_policy" value="everyone" {{if eq .Data.DMPolicy "everyone" }}checked{{end }}>
+    所有人（默认）
+  </label>
+  <label class="check">
+    <input type="radio" name="dm_policy" value="mutual" {{if eq .Data.DMPolicy "mutual" }}checked{{end }}>
+    只接受互相关注的人（拒绝陌生私信）
+  </label>
+  <label class="check">
+    <input type="radio" name="dm_policy" value="following" {{if eq .Data.DMPolicy "following" }}checked{{end }}>
+    只接受我关注过的人
+  </label>
+  <label class="check">
+    <input type="radio" name="dm_policy" value="off" {{if eq .Data.DMPolicy "off" }}checked{{end }}>
+    完全关闭私信
+  </label>
+  <p><input type="submit" value="保存"></p>
+</form>
+<p class="meta">这个限制只挡新发的私信，已经发过来的仍然看得到。</p>
+
 <h2>密码</h2>
 {{if .Data.HasPassword}}
 <form method="post" action="/settings/password">

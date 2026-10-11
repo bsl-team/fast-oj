@@ -69,6 +69,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/site", s.handleSiteAdmin)
 	mux.HandleFunc("POST /admin/site", s.handleSiteSave)
 
+	mux.HandleFunc("GET /messages", s.handleInbox)
+	mux.HandleFunc("GET /messages/{handle}", s.handleThread)
+	mux.HandleFunc("POST /messages/{handle}", s.handleSend)
+	mux.HandleFunc("POST /settings/privacy", s.handlePrivacy)
+
 	mux.HandleFunc("GET /rank", s.handleRank)
 	mux.HandleFunc("GET /u/{handle}", s.handleUser)
 	mux.HandleFunc("GET /u/{handle}/following", s.followListHandler("following"))
@@ -158,8 +163,15 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /feed/{id}/hide          隐藏/恢复动态（feed.moderate）",
 		"  GET  /rank                    排行榜",
 		"  GET  /u/{handle}              个人主页：简介 + 动态 + 战绩",
+		"  GET  /u/{handle}/following    关注列表（?format=json 给脚本）",
+		"  GET  /u/{handle}/followers    粉丝列表",
+		"  POST /u/{handle}/follow       关注；/unfollow 取消（需登录）",
+		"  GET  /messages                我的私信会话列表（需登录）",
+		"  GET  /messages/{handle}       与某人的一对一对话（打开即标记已读）",
+		"  POST /messages/{handle}       发一条私信（受对方收信策略限制，每人每小时 30 条）",
 		"  GET  /login /register         登录 / 注册（邮箱+密码，邮箱暂不验证）",
 		"  GET  /settings                个人资料、密码、API 令牌",
+		"  POST /settings/privacy        谁可以给我发私信（everyone/mutual/following/off）",
 		"  GET  /whoami                  当前身份",
 		"  GET  /admin/site              站点设置（site.settings）",
 		"  GET  /admin/perms             权限控制台（permission.manage）",

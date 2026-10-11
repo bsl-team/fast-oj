@@ -24,6 +24,7 @@
   <span class="me">
     <a href="/u/{{.Me.Handle}}">{{.Me.Name}}</a>
     <a href="/settings">设置</a>
+    <a href="/messages">私信{{if .Me.Unread}} <b class="badge bad">{{.Me.Unread}}</b>{{end}}</a>
   </span>
   {{else}}
   <span class="me">

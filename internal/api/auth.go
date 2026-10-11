@@ -28,6 +28,9 @@ type actor struct {
 	// Cookie records that the credentials came from a cookie, which is exactly
 	// the case where a cross-site request could ride along.
 	Cookie bool
+	// Unread is how many private messages are waiting, and is only counted for
+	// cookie sessions: it drives the nav bar badge.
+	Unread int
 }
 
 var (
@@ -83,7 +86,14 @@ func (s *Server) withPerms(r *http.Request, u store.User, admin, cookie bool) (a
 	if err != nil {
 		return actor{}, err
 	}
-	return actor{User: u, Admin: admin, perms: perms, Cookie: cookie}, nil
+	a := actor{User: u, Admin: admin, perms: perms, Cookie: cookie}
+	if cookie {
+		// The badge only matters to a browser, so the API paths do not pay for it.
+		if a.Unread, err = s.db.CountDMUnread(r.Context(), u.ID); err != nil {
+			return actor{}, err
+		}
+	}
+	return a, nil
 }
 
 func (s *Server) requireAdmin(r *http.Request) (actor, error) {
@@ -199,6 +209,6 @@ func (a actor) viewer() *viewer {
 	return &viewer{
 		Handle: a.User.Handle, Name: name, Admin: a.Admin,
 		Manage: a.can(permPermissionManage), Site: a.can(permSiteSettings),
-		CSRF: a.Session.CSRF,
+		Unread: a.Unread, CSRF: a.Session.CSRF,
 	}
 }

@@ -11,7 +11,7 @@ import (
 
 // userColumns never selects passhash: a hash must not ride along in a struct
 // that might get marshalled to JSON.
-const userColumns = `id, handle, IFNULL(email, ''), display_name, bio, role, status,
+const userColumns = `id, handle, IFNULL(email, ''), display_name, bio, role, status, dm_policy,
 		(passhash <> '') AS has_password, created_at, IFNULL(last_login_at, 0)`
 
 func scanUser(row scanner) (User, error) {
@@ -20,7 +20,7 @@ func scanUser(row scanner) (User, error) {
 		hasPass int
 	)
 	err := row.Scan(&u.ID, &u.Handle, &u.Email, &u.DisplayName, &u.Bio, &u.Role, &u.Status,
-		&hasPass, &u.CreatedAt, &u.LastLoginAt)
+		&u.DMPolicy, &hasPass, &u.CreatedAt, &u.LastLoginAt)
 	u.HasPassword = hasPass != 0
 	return u, notFound(err)
 }

@@ -271,8 +271,10 @@ type settingsData struct {
 	Bio         string
 	HasPassword bool
 	Joined      string
-	Tokens      []tokenRow
-	Issued      string
+	// DMPolicy is who may send this person a private message.
+	DMPolicy string
+	Tokens   []tokenRow
+	Issued   string
 }
 
 // buildSettings gathers everything the settings page shows. issued carries a
@@ -293,7 +295,7 @@ func (s *Server) buildSettings(r *http.Request, a actor, issued string) (setting
 	return settingsData{
 		Email: a.User.Email, DisplayName: a.User.DisplayName, Bio: a.User.Bio,
 		HasPassword: a.User.HasPassword, Joined: agoMS(a.User.CreatedAt),
-		Tokens: rows, Issued: issued,
+		DMPolicy: a.User.DMPolicy, Tokens: rows, Issued: issued,
 	}, nil
 }
 
