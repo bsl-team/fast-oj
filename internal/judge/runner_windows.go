@@ -20,6 +20,15 @@ type jobGuard struct {
 	lim  Limits
 }
 
+// maxTreeProcesses caps how many processes a submission's job may hold at once.
+// Without it a program that forks in a loop stays inside the per-process memory
+// cap while eating the box's process table and CPU.
+const maxTreeProcesses = 4
+
+// jobMemFactor turns the per-case memory cap into a cap for the whole tree: the
+// per-process limit alone is multiplied by however many children fit.
+const jobMemFactor = 4
+
 func newGuard(lim Limits) (Guard, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -27,11 +36,19 @@ func newGuard(lim Limits) (Guard, error) {
 	}
 	g := &jobGuard{job: job, lim: lim}
 
+	procs := lim.MaxProcs
+	if procs <= 0 {
+		procs = maxTreeProcesses
+	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+		windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+	info.BasicLimitInformation.ActiveProcessLimit = uint32(procs)
 	if lim.MemKB > 0 {
 		info.ProcessMemoryLimit = uintptr(lim.MemKB) * 1024
-		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+		info.JobMemoryLimit = uintptr(lim.MemKB) * 1024 * jobMemFactor
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY |
+			windows.JOB_OBJECT_LIMIT_JOB_MEMORY
 	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {

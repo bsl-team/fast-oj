@@ -257,15 +257,23 @@ POST /judge/submissions/{id}/result     → 判定 + 逐用例行
 
 当前支持语言：**C / C++**（`g++ -x c++ -std=c++17 -O2 -w -static`）。命令一律是 argv 数组，绝不拼 shell 字符串。
 
-Windows 本地判机（`runner_windows.go`）：
+Windows 本地判机（`runner_windows.go` + `runner.go`）：
 
-- 内存上限用 Job Object（`JOB_OBJECT_LIMIT_PROCESS_MEMORY`）落实，实测 32 MB 上限下 `malloc(512MB)` 直接返回 `NULL`；无上限时如实报出峰值 526 MB
+- 内存上限用 Job Object 落实：`JOB_OBJECT_LIMIT_PROCESS_MEMORY` 管单进程，`JOB_OBJECT_LIMIT_JOB_MEMORY` 管整棵树（上限的 4 倍），实测 32 MB 上限下 `malloc(512MB)` 直接返回 `NULL`；无上限时如实报出峰值 526 MB
+- **进程数上限** `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`（提交默认 4，编译 16）：没有它，一个 `fork` 循环可以躲在单进程内存上限下面把机器的进程表和 CPU 吃光
 - CPU 时间取进程退出状态里的 FILETIME，内存取 Job 的 `PeakProcessMemoryUsed`
 - 超时用 wall-clock 兜底（`max(2×时限, 2s)`）并整树击杀 —— 只限 CPU 的话，一个 `sleep` 型程序能把判机槽位永久占死
+- **环境变量一律不继承**：判题进程只看到 `PATH`/`SystemRoot`/`WINDIR` 与指向临时工作目录的 `TEMP`/`TMP`/`HOME`/`USERPROFILE`。fast-judge 自己的令牌、数据库路径、服务单元导出的任何秘密，`getenv` 都读不到
+- 启动时把边界打印一次，避免有人在日常使用的机器上把判机当成沙箱
 - **Windows 上内存超限通常表现为 `RE`（分配被拒）而不是 `MLE`**，Linux sandbox 才给得出明确的 MLE
-- **不隔离文件系统与网络**：只适合跑可信题、本机自测
 
-生产部署请把判机放 Linux 并接外部 sandbox（HOJ/exejail 那一类）。`judge.Guard` 接口已经留好，`runner_other.go` 是当前占位实现（只有超时击杀）。
+**仍未隔离：文件系统、网络、以及"能不能弹窗口到你的桌面"。** 判题程序就是以 fast-judge 那个用户的身份在跑，能读写该用户能读写的一切，`system("shutdown -s -t 3600")` 这类调用会真的被系统接受 —— Job Object 的 UI 限制在 Vista 之后就被 Windows 作废了，`shutdown.exe` 也不是靠 `ExitWindowsEx` 的句柄限制能拦的。所以：
+
+| 你要的强度 | 做法 |
+|-----------|------|
+| 本机自测、只跑自己的题 | 现在这样就够 |
+| 接受陌生人提交 | **别在登录用的账号上跑 fast-judge**。给它一个专用本地账号（判机账号对 `data\` 无权限，就读不到题库、源码与用户表），或直接上虚拟机/容器 |
+| 生产 | 判机放 Linux + 外部 sandbox（HOJ/exejail 那一类）。`judge.Guard` 接口已经留好，`runner_other.go` 是当前占位实现（只有超时击杀） |
 
 输出：每路最多 1 MiB，超出即按 `WA` 判（已经打印出来的内容不可能再对上答案）。
 
@@ -367,7 +375,7 @@ powershell -File build.ps1 -Test
 | 事项 | 现状 |
 |------|------|
 | 语言 | 只有 C/C++；Python 判机的时间/内存测量另说 |
-| 判机隔离 | Windows 只限内存/CPU；Linux 外部 sandbox 待接 |
+| 判机隔离 | Windows 限内存（单进程 + 整树）、CPU、进程数，环境变量只发最小集；**文件系统、网络、桌面不隔离**，必须用专用账号/容器跑；Linux 外部 sandbox 待接 |
 | 账号 | 注册可关；邮箱验证与「忘记密码」重置链接还没做，忘了密码要管理员改库 |
 | 建题 | 只能走 API（网页管理界面未做） |
 | 竞赛/比赛 | 未做 |

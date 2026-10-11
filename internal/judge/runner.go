@@ -24,6 +24,10 @@ const (
 type Limits struct {
 	TimeMS int
 	MemKB  int
+	// MaxProcs bounds the process tree. Zero means the judge's default for a
+	// submission; compiling needs more headroom because the driver runs its back
+	// ends (cc1plus, as, ld) as children of the same job.
+	MaxProcs int
 }
 
 type Execution struct {
@@ -87,6 +91,31 @@ func exitCode(err error) int {
 	return 0
 }
 
+// allowedEnvKeys is everything a judged program may inherit. SystemRoot/WINDIR
+// are what the loader needs to find the system DLLs; PATH is what reaches the
+// compiler. Nothing else survives, because none of it is the program's business.
+var allowedEnvKeys = []string{"PATH", "SystemRoot", "WINDIR"}
+
+// runEnv is the entire environment a judged program is allowed to see. Nothing
+// is inherited on purpose: the judge process holds operator secrets (its token,
+// the database path, whatever the service unit exports), and a submission that
+// could call getenv would read them out of the very same process it was spawned
+// from. Only what a native toolchain needs to start survives, and temp/home are
+// aimed at the throwaway work directory.
+func runEnv(dir string) []string {
+	env := []string{
+		"TEMP=" + dir, "TMP=" + dir, "TMPDIR=" + dir,
+		"HOME=" + dir, "USERPROFILE=" + dir,
+		"LANG=C", "LC_ALL=C",
+	}
+	for _, key := range allowedEnvKeys {
+		if v := os.Getenv(key); v != "" {
+			env = append(env, key+"="+v)
+		}
+	}
+	return env
+}
+
 // Run executes argv in dir with stdin under lim. The verdict describes this one
 // execution only; comparing output is the caller's job.
 func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
@@ -103,7 +132,7 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 
 	cmd := exec.Command(bin, argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = runEnv(dir)
 	stdout, stderr := newCappedBuffer(MaxOutput), newCappedBuffer(MaxStderr)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Stdin = bytes.NewReader(stdin)

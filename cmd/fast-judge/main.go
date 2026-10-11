@@ -58,6 +58,9 @@ func run() error {
 		return err
 	}
 	log.Printf("judge %s polling %s for [%v]", *name, *server, agent.Languages())
+	// Said out loud once at startup, because the default is not a sandbox: the
+	// judged program runs as this user, with this user's file access.
+	log.Printf("隔离边界：判题进程继承 fast-judge 的用户身份，仅限内存/CPU/进程数并只发最小环境变量；文件系统与网络不设边界。请用专用账号、容器或虚拟机运行判机。")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
