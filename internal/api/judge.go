@@ -8,16 +8,11 @@ import (
 	"strings"
 
 	"github.com/liangbinchen2013/fast-oj/internal/judge"
+	"github.com/liangbinchen2013/fast-oj/internal/protocol"
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
 const maxJudgeRuns = 4096
-
-type judgeGreeting struct {
-	Name      string   `json:"name"`
-	Languages []string `json:"languages,omitempty"`
-	Note      string   `json:"note,omitempty"`
-}
 
 func validJudgeName(s string) bool {
 	if s == "" || len(s) > 64 {
@@ -34,29 +29,9 @@ func validJudgeName(s string) bool {
 	return true
 }
 
-// judgeCase is one test case a judge box must fetch and run.
-type judgeCase struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Ordinal  int    `json:"ordinal"`
-	IsSample bool   `json:"is_sample"`
-	Score    int    `json:"score"`
-}
-
-// judgeTask is the full work order handed to a judge box.
-type judgeTask struct {
-	SubmissionID int64       `json:"submission_id"`
-	PID          string      `json:"pid"`
-	Language     string      `json:"language"`
-	Source       string      `json:"source"`
-	TimeLimitMS  int         `json:"time_limit_ms"`
-	MemLimitKB   int         `json:"mem_limit_kb"`
-	Cases        []judgeCase `json:"cases"`
-}
-
-// register folds the judge heartbeat into every claim, so a box that only knows
+// registerJudge folds the heartbeat into every claim, so a box that only knows
 // how to poll still shows up in the box list.
-func (s *Server) registerJudge(r *http.Request, g judgeGreeting) (store.Judge, error) {
+func (s *Server) registerJudge(r *http.Request, g protocol.Greeting) (store.Judge, error) {
 	g.Name = strings.TrimSpace(g.Name)
 	if !validJudgeName(g.Name) {
 		return store.Judge{}, fmt.Errorf("judge name must be 1..64 of [A-Za-z0-9_.-]")
@@ -74,7 +49,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 		s.writeAuthError(w, r, err)
 		return
 	}
-	var g judgeGreeting
+	var g protocol.Greeting
 	if !s.decodeBody(w, r, &g) {
 		return
 	}
@@ -99,12 +74,12 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	work := judgeTask{
+	work := protocol.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
 	}
 	for _, tc := range cases {
-		work.Cases = append(work.Cases, judgeCase{
+		work.Cases = append(work.Cases, protocol.Case{
 			ID: tc.ID, Name: tc.Name, Ordinal: tc.Ordinal, IsSample: tc.IsSample, Score: tc.Score,
 		})
 	}
@@ -117,7 +92,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleJudgeCaseFile streams case data to a judge box. Unlike the public case
-// route this includes judged (non-sample) cases.
+// route this also serves judged (non-sample) cases.
 func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireJudge(r); err != nil {
 		s.writeAuthError(w, r, err)
@@ -133,10 +108,13 @@ func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	which := r.PathValue("which")
 	rel := tc.OutputRel
-	if r.PathValue("which") == "in" {
+	switch which {
+	case "in":
 		rel = tc.InputRel
-	} else if r.PathValue("which") != "out" {
+	case "out":
+	default:
 		respondError(w, r, http.StatusBadRequest, "which must be in or out")
 		return
 	}
@@ -150,20 +128,27 @@ func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-type statusRequest struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Detail string `json:"detail,omitempty"`
+// resolveJudgeOwner looks up the box that must own the row before it may report.
+func (s *Server) resolveJudgeOwner(w http.ResponseWriter, r *http.Request, name string, sub store.Submission) (store.Judge, bool) {
+	j, err := s.db.GetJudge(r.Context(), strings.TrimSpace(name))
+	if err != nil {
+		respondError(w, r, http.StatusForbidden, "unknown judge box, claim the submission first")
+		return store.Judge{}, false
+	}
+	if sub.JudgeID != j.ID {
+		respondError(w, r, http.StatusForbidden,
+			"judge "+j.Name+" does not own submission "+strconv.FormatInt(sub.ID, 10))
+		return store.Judge{}, false
+	}
+	return j, true
 }
 
-// handleJudgeStatus records progress (compiling -> running) so a waiting client
-// can tell a slow build apart from a dead judge box.
 func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireJudge(r); err != nil {
 		s.writeAuthError(w, r, err)
 		return
 	}
-	var req statusRequest
+	var req protocol.Status
 	if !s.decodeBody(w, r, &req) {
 		return
 	}
@@ -177,13 +162,8 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	j, err := s.db.GetJudge(r.Context(), strings.TrimSpace(req.Name))
-	if err != nil {
-		respondError(w, r, http.StatusForbidden, "unknown judge box, claim the submission first")
-		return
-	}
-	if sub.JudgeID != j.ID {
-		respondError(w, r, http.StatusForbidden, "judge "+j.Name+" does not own submission "+strconv.FormatInt(id, 10))
+	j, ok := s.resolveJudgeOwner(w, r, req.Name, sub)
+	if !ok {
 		return
 	}
 
@@ -197,7 +177,7 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("cannot move submission %d from %s to %s", id, sub.Status, to))
 		return
 	}
-	ok, err := s.db.ReportStatus(r.Context(), id, j.ID, sub.Status, string(to), req.Detail)
+	ok, err = s.db.ReportStatus(r.Context(), id, j.ID, sub.Status, string(to), req.Detail)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -210,33 +190,14 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"sid": id, "state": string(to)})
 }
 
-type runRequest struct {
-	Ordinal  int    `json:"ordinal"`
-	CaseName string `json:"case_name"`
-	Verdict  string `json:"verdict"`
-	TimeMS   int    `json:"time_ms"`
-	MemKB    int    `json:"mem_kb"`
-	IsSample bool   `json:"is_sample"`
-}
-
-type resultRequest struct {
-	Name       string       `json:"name"`
-	Verdict    string       `json:"verdict"`
-	TimeMS     int          `json:"time_ms"`
-	MemKB      int          `json:"mem_kb"`
-	FailedCase string       `json:"failed_case,omitempty"`
-	Detail     string       `json:"detail,omitempty"`
-	Runs       []runRequest `json:"runs,omitempty"`
-}
-
 func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireJudge(r); err != nil {
 		s.writeAuthError(w, r, err)
 		return
 	}
-	var req resultRequest
-	// Judging payloads carry per-case rows, so they get a larger budget than a
-	// normal JSON body.
+	var req protocol.Result
+	// A report carries a row per case, so it gets a larger budget than a normal
+	// JSON body.
 	if !s.decodeBodyLimit(w, r, &req, s.cfg.MaxUpload) {
 		return
 	}
@@ -249,19 +210,13 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 		respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
-
 	sub, err := s.db.GetSubmission(r.Context(), id)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	j, err := s.db.GetJudge(r.Context(), strings.TrimSpace(req.Name))
-	if err != nil {
-		respondError(w, r, http.StatusForbidden, "unknown judge box, claim the submission first")
-		return
-	}
-	if sub.JudgeID != j.ID {
-		respondError(w, r, http.StatusForbidden, "judge "+j.Name+" does not own submission "+strconv.FormatInt(id, 10))
+	j, ok := s.resolveJudgeOwner(w, r, req.Name, sub)
+	if !ok {
 		return
 	}
 	if !judge.Transition(judge.Status(sub.Status), judge.Done) {
@@ -276,26 +231,24 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verdict, runs, score, total, failed := tallyResult(judge.VerdictName(req.Verdict), req.Runs, cases)
-
-	res := store.Result{
-		Verdict:    string(verdict),
-		TimeMS:     req.TimeMS,
-		MemKB:      req.MemKB,
-		Score:      score,
-		TotalScore: total,
-		FailedCase: failed,
-		Detail:     req.Detail,
+	// CE and IE have no failing case to name, so keep whatever the box labelled.
+	if failed == "" {
+		failed = req.FailedCase
 	}
-	if err := s.db.RecordResult(r.Context(), id, res, runs); err != nil {
+
+	if err := s.db.RecordResult(r.Context(), id, store.Result{
+		Verdict: string(verdict), TimeMS: req.TimeMS, MemKB: req.MemKB, Score: score,
+		TotalScore: total, FailedCase: failed, Detail: req.Detail,
+	}, runs); err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
 	s.log.Info("judged", "sid", id, "judge", j.Name, "verdict", string(verdict),
 		"score", fmt.Sprintf("%d/%d", score, total), "time_ms", req.TimeMS)
-	respond(w, r, http.StatusOK,
-		fmt.Sprintf("recorded sid=%d verdict=%s score=%d/%d time=%s mem=%s%s\n",
-			id, verdict, score, total, formatMS(req.TimeMS), formatKB(req.MemKB),
-			orSuffix(failed, " failed=")),
+	respond(w, r, http.StatusOK, fmt.Sprintf(
+		"recorded sid=%d verdict=%s score=%d/%d time=%s mem=%s%s\n",
+		id, verdict, score, total, formatMS(req.TimeMS), formatKB(req.MemKB),
+		orSuffix(failed, " failed=")),
 		map[string]any{"sid": id, "verdict": string(verdict), "score": score,
 			"total_score": total, "failed_case": failed, "cases": len(runs)})
 }
@@ -303,7 +256,7 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 // tallyResult treats the judge as untrusted arithmetic: the score is recomputed
 // from the per-case rows against the stored case weights, and an AC claim whose
 // rows contain a failure is downgraded to that failure.
-func tallyResult(claimed judge.Verdict, reqRuns []runRequest, cases []store.Testcase) (judge.Verdict, []store.Run, int, int, string) {
+func tallyResult(claimed judge.Verdict, reqRuns []protocol.RunRow, cases []store.Testcase) (judge.Verdict, []store.Run, int, int, string) {
 	byName := make(map[string]store.Testcase, len(cases))
 	total := 0
 	for _, tc := range cases {
@@ -338,7 +291,7 @@ func tallyResult(claimed judge.Verdict, reqRuns []runRequest, cases []store.Test
 				verdict = v
 			}
 		case !known && v != judge.AC && claimed == judge.AC && failed == "":
-			// A row for a case that vanished cannot prove AC either.
+			// A row for a case that vanished cannot certify AC either.
 			verdict = v
 			failed = rr.CaseName
 		}

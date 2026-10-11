@@ -191,14 +191,15 @@ func submissionText(d store.SubmissionDetail, runs []store.Run, full bool) strin
 		return b.String()
 	}
 	if len(runs) > 0 {
-		b.WriteString("ord  case                  verdict     time      mem\n")
+		b.WriteString("ord kind   case                 verdict     time      mem\n")
 		for _, run := range runs {
-			kind := "  "
+			kind := "judged"
 			if run.IsSample {
-				kind = "sp"
+				kind = "sample"
 			}
-			fmt.Fprintf(&b, "%-4d %s%-20s %-6s %8s %8s\n",
-				run.Ordinal, kind, clip(run.CaseName, 20), run.Verdict, formatMS(run.TimeMS), formatKB(run.MemKB))
+			fmt.Fprintf(&b, "%-4d %-8s %-18s %-7s %8s %8s\n",
+				run.Ordinal, kind, clip(run.CaseName, 18), run.Verdict,
+				formatMS(run.TimeMS), formatKB(run.MemKB))
 		}
 	}
 	if d.Detail != "" {

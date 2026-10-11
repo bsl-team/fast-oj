@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/liangbinchen2013/fast-oj/internal/protocol"
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
@@ -15,13 +16,13 @@ func (h *harness) claim(name string) (int, string) {
 		[]byte(`{"name":"`+name+`","languages":["cpp"],"note":"test box"}`))
 }
 
-func (h *harness) claimTask(t *testing.T, name string) judgeTask {
+func (h *harness) claimTask(t *testing.T, name string) protocol.Task {
 	t.Helper()
 	code, body := h.claim(name)
 	if code != http.StatusOK {
 		t.Fatalf("claim %s = %d %q", name, code, body)
 	}
-	var task judgeTask
+	var task protocol.Task
 	if err := json.Unmarshal([]byte(body), &task); err != nil {
 		t.Fatalf("claim payload: %v (%s)", err, body)
 	}
@@ -216,11 +217,11 @@ func TestTallyResultMath(t *testing.T) {
 		{Name: "1", Score: 40},
 		{Name: "2", Score: 60},
 	}
-	ac := runRequest{CaseName: "1", Verdict: "AC"}
-	wa := runRequest{CaseName: "2", Verdict: "WA"}
+	ac := protocol.RunRow{CaseName: "1", Verdict: "AC"}
+	wa := protocol.RunRow{CaseName: "2", Verdict: "WA"}
 
 	// Honest AC.
-	v, runs, score, total, failed := tallyResult("AC", []runRequest{
+	v, runs, score, total, failed := tallyResult("AC", []protocol.RunRow{
 		{CaseName: "sample1", Verdict: "AC"}, ac, {CaseName: "2", Verdict: "AC"},
 	}, cases)
 	if v != "AC" || score != 100 || total != 100 || failed != "" || len(runs) != 3 {
@@ -228,7 +229,7 @@ func TestTallyResultMath(t *testing.T) {
 	}
 
 	// Lying AC.
-	v, _, score, total, failed = tallyResult("AC", []runRequest{ac, wa}, cases)
+	v, _, score, total, failed = tallyResult("AC", []protocol.RunRow{ac, wa}, cases)
 	if v != "WA" || score != 40 || total != 100 || failed != "2" {
 		t.Fatalf("lying ac: %v %d %d %q", v, score, total, failed)
 	}
@@ -240,13 +241,13 @@ func TestTallyResultMath(t *testing.T) {
 	}
 
 	// Garbage verdict string collapses to IE.
-	v, _, _, _, _ = tallyResult("AC", []runRequest{{CaseName: "1", Verdict: "boom"}}, cases)
+	v, _, _, _, _ = tallyResult("AC", []protocol.RunRow{{CaseName: "1", Verdict: "boom"}}, cases)
 	if v != "IE" {
 		t.Fatalf("garbage verdict = %v", v)
 	}
 
 	// A row for a deleted case cannot certify AC.
-	v, _, _, _, failed = tallyResult("AC", []runRequest{
+	v, _, _, _, failed = tallyResult("AC", []protocol.RunRow{
 		{CaseName: "1", Verdict: "AC"}, {CaseName: "ghost", Verdict: "RE"},
 	}, cases)
 	if v != "RE" || failed != "ghost" {
@@ -254,7 +255,7 @@ func TestTallyResultMath(t *testing.T) {
 	}
 
 	// Sample rows never add points.
-	v, _, score, _, _ = tallyResult("AC", []runRequest{{CaseName: "sample1", Verdict: "AC"}}, cases)
+	v, _, score, _, _ = tallyResult("AC", []protocol.RunRow{{CaseName: "sample1", Verdict: "AC"}}, cases)
 	if v != "AC" || score != 0 {
 		t.Fatalf("sample only: %v %d", v, score)
 	}
