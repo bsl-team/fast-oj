@@ -11,7 +11,7 @@ func TestSiteSettingsRoundTrip(t *testing.T) {
 	admin := mustUser(t, db, "admin9")
 
 	site, err := db.Site(ctx)
-	if err != nil || site.Title != "fast-oj" || !site.AllowRegister || len(site.Links) != 0 {
+	if err != nil || site.Title != "fast oj" || !site.AllowRegister || len(site.Links) != 0 {
 		t.Fatalf("defaults = %+v %v", site, err)
 	}
 

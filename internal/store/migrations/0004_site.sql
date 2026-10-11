@@ -9,7 +9,7 @@ CREATE TABLE site_settings (
 );
 
 INSERT INTO site_settings (key, value, updated_at) VALUES
-    ('site.title',    'fast-oj',        0),
+    ('site.title',    'fast oj',        0),
     ('site.tagline',  '极简、极快的在线判题。', 0),
     ('site.footer',   '',               0),
     ('site.links',    '[]',             0),

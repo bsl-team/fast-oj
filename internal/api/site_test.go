@@ -37,7 +37,7 @@ func TestSiteSettingsConsoleNeedsTheRight(t *testing.T) {
 func TestSiteSettingsRoundTripAndCache(t *testing.T) {
 	h := newHarness(t)
 
-	if code, body := h.htmlGet("/", ""); code != http.StatusOK || !strings.Contains(body, "fast-oj") {
+	if code, body := h.htmlGet("/", ""); code != http.StatusOK || !strings.Contains(body, "fast oj") {
 		t.Fatalf("default home = %d", code)
 	}
 
@@ -92,7 +92,7 @@ func TestSiteSettingsRejectsBadInput(t *testing.T) {
 	}
 	// Defaults survived the rejected saves.
 	site, err := h.db.Site(ctx())
-	if err != nil || site.Title != "fast-oj" {
+	if err != nil || site.Title != "fast oj" {
 		t.Fatalf("site config after rejects = %+v %v", site, err)
 	}
 }
@@ -128,7 +128,7 @@ func TestRegistrationSwitchInSettings(t *testing.T) {
 
 	// The console path is what invalidates the cache, so use it like an operator.
 	if code, _ := h.postBearer("/admin/site", url.Values{
-		"title": {"fast-oj"}, "links": {""}}, h.admin); code != http.StatusOK {
+		"title": {"fast oj"}, "links": {""}}, h.admin); code != http.StatusOK {
 		t.Fatalf("save without the checkbox = %d", code)
 	}
 	site, err := h.db.Site(ctx())

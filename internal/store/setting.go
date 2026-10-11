@@ -39,7 +39,7 @@ func (db *DB) Site(ctx context.Context) (SiteConfig, error) {
 	defer rows.Close()
 
 	values := map[string]string{
-		setTitle:         "fast-oj",
+		setTitle:         "fast oj",
 		setTagline:       "",
 		setFooter:        "",
 		setLinks:         "[]",
