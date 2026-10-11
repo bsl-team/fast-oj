@@ -1,0 +1,47 @@
+# 判机容器：把不可信的提交代码关在这里，fast-oj 服务器仍然跑在宿主上。
+# 用法：bash scripts/judge.docker.sh   （交叉编译 → 构建镜像 → 起容器）
+#
+# 判机只需要一个出站连接，所以这里没有 ports:，也没有挂载任何宿主目录。
+services:
+  judge:
+    image: fast-oj-judge:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.judge
+    container_name: fast-oj-judge
+    environment:
+      FASTOJ_SERVER: ${FASTOJ_SERVER:-http://host.docker.internal:18080}
+      FASTOJ_JUDGE_TOKEN: ${FASTOJ_JUDGE_TOKEN:?需要判机令牌，与服务器 -judge-token 一致}
+      FASTOJ_JUDGE_NAME: ${FASTOJ_JUDGE_NAME:-judge-docker}
+    command: ["-dir", "/work", "-v"]
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /work:rw,nosuid,nodev,size=512m,mode=1777
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # 硬上限交给 cgroup：判机在里面测量并据实判定，容器负责挡住越界。
+    mem_limit: 1g
+    memswap_limit: 1g # 不给 swap 兜底，超了就 OOM => MLE，而不是慢慢吞到宿主
+    cpus: 2
+    pids_limit: 256
+    ulimits:
+      core: [0, 0]
+      fsize: [67108864, 67108864] # 64 MiB，防止把 tmpfs 写满
+      nofile: [1024, 1024]
+      nproc: [128, 128]
+      cpu: [120, 120] # 兜底：正常判题由 wall-clock 先到
+    networks: [ojjudge]
+    extra_hosts:
+      - "host.docker.internal=host-gateway"
+    restart: unless-stopped
+
+networks:
+  # internal 断掉容器的外网出口，只保留到宿主网关的通路。
+  # 若你的 Docker 版本下 host.docker.internal 在 internal 网络里不通（实测方法见
+  # README「判机容器化」），把 internal 去掉即可放行出口，其余限制不受影响。
+  ojjudge:
+    name: oj-judge
+    internal: true

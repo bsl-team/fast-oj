@@ -275,6 +275,42 @@ Windows 本地判机（`runner_windows.go` + `runner.go`）：
 | 接受陌生人提交 | **别在登录用的账号上跑 fast-judge**。给它一个专用本地账号（判机账号对 `data\` 无权限，就读不到题库、源码与用户表），或直接上虚拟机/容器 |
 | 生产 | 判机放 Linux + 外部 sandbox（HOJ/exejail 那一类）。`judge.Guard` 接口已经留好，`runner_other.go` 是当前占位实现（只有超时击杀） |
 
+### 判机容器化（`Dockerfile.judge` + `docker-compose.judge.yml`）
+
+把提交代码关进容器，是现在最省事的一层真隔离：Docker Desktop 的容器跑在轻量 VM 里，
+判题程序连你登录用的账号都不是同一个。
+
+```bash
+# 1. 服务器照旧在宿主上跑
+./dist/fast-oj.exe -addr 127.0.0.1:18080 -data data -admin-token ADM -judge-token JDG
+
+# 2. 交叉编译 + 构建镜像 + 起容器（只需出站连接，没暴露任何端口）
+FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh
+```
+
+容器里跑的约束：
+
+| 手段 | 挡住什么 |
+|------|----------|
+| `--user 1000`、`cap_drop ALL`、`no-new-privileges` | 拿不到 root，也无法提权 |
+| `read_only` 根文件系统 + `/work` tmpfs（512 MiB） | 改不了镜像里的任何东西；写盘有额度 |
+| `mem_limit` / `memswap_limit`（不给 swap） | 超内存直接被 cgroup OOM，判成 `MLE`，不会拖垮宿主 |
+| `pids_limit 256` + `--ulimit nproc=128` | fork 炸弹 |
+| `--ulimit fsize=64MiB`、`core=0` | 写满磁盘、留下.core 文件 |
+| `internal` 网络 | 容器无外网出口，只留到宿主网关的通路 |
+| 判机侧 `Setpgid` + 整组击杀 | 超时的进程树不会变成孤儿继续吃 CPU |
+
+判机自己不发 rlimit 给子进程：Go 在 Linux 上没有"spawn 时带 rlimit"的通道
+（`SysProcAttr.Rlimits` 只有 BSD 有），而绕道 shell 的 `ulimit` 会让判定结果依赖镜像里
+装的是 dash 还是 bash。硬上限由 cgroup 承担，判机负责**测量**（CPU 取 `wait4` 的
+rusage，内存取 `ru_maxrss`）并据此出判定，所以 Linux 容器的 `MLE` 比 Windows 的
+`RE` 更准确。`-run-as uid:gid` 留给以 root 跑在 Linux 上的部署，把提交再降一个用户。
+
+**先确认一件事**：`internal` 网络挡外网是好的，但某些 Docker 版本里
+`host.docker.internal` 也一起不通了——判机就领不到工单。看 `/judges` 里那台的
+"最后领取"时间是否在走；不走就把 `docker-compose.judge.yml` 里 `internal: true`
+去掉（出口放行，其余限制不变），或者改用宿主机网络外的自定义路由。
+
 输出：每路最多 1 MiB，超出即按 `WA` 判（已经打印出来的内容不可能再对上答案）。
 
 ---
@@ -375,7 +411,7 @@ powershell -File build.ps1 -Test
 | 事项 | 现状 |
 |------|------|
 | 语言 | 只有 C/C++；Python 判机的时间/内存测量另说 |
-| 判机隔离 | Windows 限内存（单进程 + 整树）、CPU、进程数，环境变量只发最小集；**文件系统、网络、桌面不隔离**，必须用专用账号/容器跑；Linux 外部 sandbox 待接 |
+| 判机隔离 | 容器化判机已就位（`Dockerfile.judge` + `docker-compose.judge.yml`）；不带容器直接跑在 Windows 上时只限内存/CPU/进程数，**文件系统、网络、桌面不隔离**，所以别在日常登录的账号上跑判机 |
 | 账号 | 注册可关；邮箱验证与「忘记密码」重置链接还没做，忘了密码要管理员改库 |
 | 建题 | 只能走 API（网页管理界面未做） |
 | 竞赛/比赛 | 未做 |

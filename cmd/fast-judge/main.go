@@ -8,10 +8,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/liangbinchen2013/fast-oj/internal/judge"
 	"github.com/liangbinchen2013/fast-oj/internal/judgeagent"
 )
 
@@ -39,9 +42,20 @@ func run() error {
 		backoff = flag.Duration("backoff", 3*time.Second, "wait after a failed round")
 		once    = flag.Bool("once", false, "process at most one submission, then exit")
 		tools   = flag.String("tools", "", "comma list of languages to advertise (default: everything usable)")
+		runAs   = flag.String("run-as", envOr("FASTOJ_JUDGE_RUN_AS", ""), "run submissions as this uid:gid (Linux/containers; empty keeps the judge's own user)")
 		verbose = flag.Bool("v", false, "log each step")
 	)
 	flag.Parse()
+
+	drop, err := parseRunAs(*runAs)
+	if err != nil {
+		return err
+	}
+	if drop != nil && runtime.GOOS == "windows" {
+		// Refusing beats a silently ignored flag: on Windows there is no way to
+		// hand the judged process a different identity here.
+		return fmt.Errorf("-run-as 在 Windows 上不生效，判机只能以自己的身份跑；要么去掉它，要么把判机放进容器")
+	}
 
 	logf := func(format string, args ...any) {
 		if *verbose {
@@ -52,7 +66,7 @@ func run() error {
 
 	agent, err := judgeagent.New(judgeagent.Config{
 		Server: *server, Token: *token, Name: *name, Dir: *dir,
-		Poll: *poll, Backoff: *backoff, Languages: langs, Logf: logf,
+		Poll: *poll, Backoff: *backoff, Languages: langs, Logf: logf, RunAs: drop,
 	})
 	if err != nil {
 		return err
@@ -97,4 +111,27 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseRunAs turns the operator's "uid:gid" into a drop target. A malformed value
+// fails at startup rather than on the first submission; empty means the judged
+// program keeps the judge's own user, which is what running without a container
+// looks like.
+func parseRunAs(raw string) (*judge.DropTo, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	uidPart, gidPart, found := strings.Cut(raw, ":")
+	if !found {
+		return nil, fmt.Errorf("-run-as wants uid:gid, got %q", raw)
+	}
+	uid, err := strconv.ParseUint(strings.TrimSpace(uidPart), 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("-run-as uid: %w", err)
+	}
+	gid, err := strconv.ParseUint(strings.TrimSpace(gidPart), 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("-run-as gid: %w", err)
+	}
+	return &judge.DropTo{UID: uint32(uid), GID: uint32(gid)}, nil
 }

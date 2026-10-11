@@ -27,7 +27,7 @@ func judgeSource(t *testing.T, tool Tool, source string, cases []Case, timeMS, m
 		SubmissionID: 1, PID: "P1", Language: "cpp", Source: source,
 		TimeLimitMS: timeMS, MemLimitKB: memKB, Cases: cases,
 	}
-	return Judge(task, tool, filepath.Join(t.TempDir(), "work"))
+	return Judge(task, tool, filepath.Join(t.TempDir(), "work"), nil)
 }
 
 func sumCases() []Case {
@@ -261,7 +261,7 @@ func TestWorkDirFailureIsInfrastructureError(t *testing.T) {
 	}
 	rep := Judge(Task{PID: "P", Language: "cpp", Source: "int main(){}",
 		Cases: []Case{{Name: "1", Input: []byte("a"), Expected: []byte("b")}}},
-		tool, filepath.Join(blocker, "work"))
+		tool, filepath.Join(blocker, "work"), nil)
 	if rep.Verdict != IE || !strings.Contains(rep.Detail, "workdir") {
 		t.Fatalf("verdict = %s %q, want IE from the workdir failure", rep.Verdict, rep.Detail)
 	}

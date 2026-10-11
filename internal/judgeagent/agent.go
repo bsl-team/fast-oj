@@ -31,6 +31,9 @@ type Config struct {
 	// Backoff caps the retry wait after a failure.
 	Backoff time.Duration
 	Tools   map[string]judge.Tool
+	// RunAs drops each submission to this uid/gid (Linux and containers only).
+	// The compile step keeps the judge's own identity so it can write the binary.
+	RunAs *judge.DropTo
 	// Languages to advertise; defaults to the keys of Tools.
 	Languages []string
 	Logf      func(format string, args ...any)
@@ -270,7 +273,7 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
 		Cases: cases,
-	}, tool, dir)
+	}, tool, dir, a.cfg.RunAs)
 	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s",
 		task.SubmissionID, rep.Verdict, rep.Score, rep.TotalScore, rep.TimeMS, rep.MemKB,
 		time.Since(started).Truncate(time.Millisecond))

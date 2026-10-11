@@ -1,0 +1,24 @@
+# fast-oj 判机镜像：只装工具链，不带题库、不带数据。
+#
+#   docker build -f Dockerfile.judge -t fast-oj-judge .
+#
+# 判机只是出站连接服务器，所以这个容器不需要任何入站端口、不需要挂载宿主目录。
+FROM debian:bookworm-slim
+
+# g++/gcc 是判题工具链；-static 编译需要 libc6-dev 里的静态库。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ gcc libc6-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# 非 root 的专用账号：容器里它什么都不是，宿主上更不存在。
+RUN groupadd -g 1000 oj && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin oj
+
+# build.ps1 / scripts/judge.docker.sh 先把 fast-judge 交叉编译到
+# dist/linux_amd64/，再构建镜像。
+COPY dist/linux_amd64/fast-judge /usr/local/bin/fast-judge
+RUN mkdir -p /work && chown oj:oj /work
+WORKDIR /work
+
+USER oj
+ENTRYPOINT ["/usr/local/bin/fast-judge"]
+CMD ["-server", "http://host.docker.internal:8080"]

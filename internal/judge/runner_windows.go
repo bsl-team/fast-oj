@@ -4,6 +4,7 @@ package judge
 
 import (
 	"os"
+	"os/exec"
 	"syscall"
 	"unsafe"
 
@@ -57,6 +58,14 @@ func newGuard(lim Limits) (Guard, error) {
 	}
 	return g, nil
 }
+
+// Configure has nothing to do before the process exists: a job object binds a
+// running process, so everything happens in Attach.
+func (g *jobGuard) Configure(cmd *exec.Cmd) error { return nil }
+
+// memKB is not read from the wait status on Windows: the job object already
+// reports the tree's peak commit, which is what the limit is enforced against.
+func memKB(ru *syscall.Rusage) int { return -1 }
 
 func (g *jobGuard) Attach(p *os.Process) error {
 	// Go owns the handle it made for the child, so reopen it by pid with only the

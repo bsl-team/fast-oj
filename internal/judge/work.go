@@ -78,8 +78,9 @@ func normalizeOutput(body []byte) string {
 }
 
 // Judge builds and runs one submission over all of its cases. It never talks to
-// the network: the caller has already fetched the case data.
-func Judge(task Task, tool Tool, dir string) Report {
+// the network: the caller has already fetched the case data. drop is the uid a
+// submission is run as, when the judge has one to give it.
+func Judge(task Task, tool Tool, dir string, drop *DropTo) Report {
 	rep := Report{Verdict: IE, TimeMS: -1, MemKB: -1}
 	if len(task.Cases) == 0 {
 		rep.Detail = "problem " + task.PID + " has no test cases"
@@ -111,7 +112,7 @@ func Judge(task Task, tool Tool, dir string) Report {
 		}
 	}
 
-	runLimits := Limits{TimeMS: task.TimeLimitMS, MemKB: task.MemLimitKB}
+	runLimits := Limits{TimeMS: task.TimeLimitMS, MemKB: task.MemLimitKB, RunAs: drop}
 	argv := tool.RunArgs(dir)
 	if !tool.Compiles() {
 		// Interpreters take the source file after the program name.

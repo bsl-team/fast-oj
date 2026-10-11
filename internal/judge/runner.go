@@ -21,13 +21,37 @@ const (
 	minWallClock   = 2 * time.Second
 )
 
+// DropTo is the uid/gid a judged process should run as. Windows ignores it.
+// A containerised Linux judge uses it so file permissions and RLIMIT_NPROC are
+// scoped to a user that owns nothing on the box, instead of to the judge itself.
+type DropTo struct{ UID, GID uint32 }
+
 type Limits struct {
 	TimeMS int
 	MemKB  int
 	// MaxProcs bounds the process tree. Zero means the judge's default for a
 	// submission; compiling needs more headroom because the driver runs its back
-	// ends (cc1plus, as, ld) as children of the same job.
+	// ends (cc1plus, as, ld) as children of the same job. The Windows job object
+	// enforces it; on Linux the container's --pids-limit is what actually does.
 	MaxProcs int
+	// RunAs drops the judged process to an unprivileged user when set.
+	RunAs *DropTo
+}
+
+// Guard is the platform-specific resource enforcement around one process tree.
+type Guard interface {
+	// Configure prepares the command before it is spawned. rlimits and a private
+	// process group can only be applied there, which is why this is separate from
+	// Attach; Windows has nothing to do before the process exists.
+	Configure(cmd *exec.Cmd) error
+	// Attach binds a running process to the limits.
+	Attach(p *os.Process) error
+	// Kill stops the whole tree.
+	Kill()
+	// Measure reports accumulated CPU time in ms and peak memory in KB, or -1
+	// for either when the platform cannot tell.
+	Measure() (timeMS int, memKB int)
+	Close() error
 }
 
 type Execution struct {
@@ -38,18 +62,6 @@ type Execution struct {
 	Stderr  []byte
 	Exit    int
 	Note    string
-}
-
-// Guard is the platform-specific resource enforcement around one process tree.
-type Guard interface {
-	// Attach binds a running process to the limits.
-	Attach(p *os.Process) error
-	// Kill stops the whole tree.
-	Kill()
-	// Measure reports accumulated CPU time in ms and peak memory in KB, or -1
-	// for either when the platform cannot tell.
-	Measure() (timeMS int, memKB int)
-	Close() error
 }
 
 type limitedBuffer struct {
@@ -143,6 +155,9 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 	}
 	defer g.Close()
 
+	if err := g.Configure(cmd); err != nil {
+		return Execution{Verdict: IE, Note: "sandbox config failed: " + err.Error()}
+	}
 	if err := cmd.Start(); err != nil {
 		return Execution{Verdict: IE, Note: "start failed: " + err.Error()}
 	}
@@ -166,6 +181,11 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 			timeMS, _ = g.Measure()
 		}
 		memKB := jobMemKB
+		if memKB < 0 {
+			// Platforms without a job object report peak RSS out of the wait
+			// status instead.
+			memKB = usageMemKB(w.state)
+		}
 		ex := Execution{
 			TimeMS: timeMS, MemKB: memKB, Exit: exitCode(w.err),
 			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
@@ -188,8 +208,11 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 
 	case <-time.After(wallClockFor(lim.TimeMS)):
 		g.Kill()
-		<-done
+		w := <-done
 		_, memKB := g.Measure()
+		if memKB < 0 {
+			memKB = usageMemKB(w.state)
+		}
 		return Execution{
 			Verdict: TLE, TimeMS: lim.TimeMS, MemKB: memKB,
 			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
@@ -216,6 +239,18 @@ func usageMS(state *os.ProcessState) int {
 		return -1
 	}
 	return cpuMS(ru)
+}
+
+// usageMemKB is the platform's peak-memory reading from the same wait status.
+func usageMemKB(state *os.ProcessState) int {
+	if state == nil {
+		return -1
+	}
+	ru, ok := state.SysUsage().(*syscall.Rusage)
+	if !ok {
+		return -1
+	}
+	return memKB(ru)
 }
 
 // wallClockFor turns a CPU limit into a hard deadline. Without one, a program
