@@ -14,6 +14,7 @@ import (
 
 	"github.com/liangbinchen2013/fast-oj/internal/api"
 	"github.com/liangbinchen2013/fast-oj/internal/config"
+	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
 func main() {
@@ -35,9 +36,15 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
+	db, err := store.Open(context.Background(), cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           api.New(cfg, log).Handler(),
+		Handler:           api.New(cfg, log, db).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
