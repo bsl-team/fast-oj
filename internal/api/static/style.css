@@ -70,7 +70,10 @@ pre code { background: none; padding: 0; }
 .queued, .compiling, .running { color: var(--warn); }
 form { margin-top: 1.5rem; }
 label { display: block; margin-bottom: .35rem; color: var(--muted); font-size: .9rem; }
-textarea, select, input[type=text] {
+/* Every text-like field gets the same box: an email or password input that falls
+   back to the browser default width looks like a different kind of form. */
+textarea, select, input[type=text], input[type=email], input[type=password],
+input[type=number], input[type=url], input[type=search] {
   width: 100%; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 4px;
   background: var(--bg); color: var(--fg); font: inherit;
 }
