@@ -23,11 +23,16 @@ func requireToolchain(t *testing.T) Tool {
 
 func judgeSource(t *testing.T, tool Tool, source string, cases []Case, timeMS, memKB int) Report {
 	t.Helper()
+	return judgeSourceAs(t, tool, source, cases, timeMS, memKB, nil)
+}
+
+func judgeSourceAs(t *testing.T, tool Tool, source string, cases []Case, timeMS, memKB int, drop *DropTo) Report {
+	t.Helper()
 	task := Task{
 		SubmissionID: 1, PID: "P1", Language: "cpp", Source: source,
 		TimeLimitMS: timeMS, MemLimitKB: memKB, Cases: cases,
 	}
-	return Judge(task, tool, filepath.Join(t.TempDir(), "work"), nil)
+	return Judge(task, tool, filepath.Join(t.TempDir(), "work"), drop)
 }
 
 func sumCases() []Case {

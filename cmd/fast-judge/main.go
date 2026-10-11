@@ -72,9 +72,13 @@ func run() error {
 		return err
 	}
 	log.Printf("judge %s polling %s for [%v]", *name, *server, agent.Languages())
-	// Said out loud once at startup, because the default is not a sandbox: the
-	// judged program runs as this user, with this user's file access.
-	log.Printf("隔离边界：判题进程继承 fast-judge 的用户身份，仅限内存/CPU/进程数并只发最小环境变量；文件系统与网络不设边界。请用专用账号、容器或虚拟机运行判机。")
+	if drop != nil {
+		log.Printf("隔离边界：提交以 uid %d 运行（读不到判机的环境与其文件），环境变量只发最小集，内存/CPU/进程数受限；宿主侧边界由容器或账号承担。", drop.UID)
+	} else {
+		// Said out loud once at startup, because this default is not a sandbox: the
+		// judged program runs as this user, with this user's file access.
+		log.Printf("隔离边界：判题进程继承 fast-judge 的用户身份，仅限内存/CPU/进程数并只发最小环境变量；文件系统与网络不设边界。请用专用账号、容器或虚拟机运行判机。")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

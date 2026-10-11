@@ -288,28 +288,36 @@ Windows 本地判机（`runner_windows.go` + `runner.go`）：
 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh
 ```
 
-容器里跑的约束：
+容器里跑的约束（下面这套已在 Docker Desktop 29.7.2 / linux 引擎上实测）：
 
 | 手段 | 挡住什么 |
 |------|----------|
-| `--user 1000`、`cap_drop ALL`、`no-new-privileges` | 拿不到 root，也无法提权 |
-| `read_only` 根文件系统 + `/work` tmpfs（512 MiB） | 改不了镜像里的任何东西；写盘有额度 |
-| `mem_limit` / `memswap_limit`（不给 swap） | 超内存直接被 cgroup OOM，判成 `MLE`，不会拖垮宿主 |
+| `cap_drop ALL` + `cap_add SETUID,SETGID,KILL`，`no-new-privileges` | 只保留"把提交降权"和"杀掉它"这两种能力，其余一律没有 |
+| `-run-as 65534:65534`（判机 root 起步，提交降到 nobody） | 提交读不到判机进程的环境（`/proc/1/environ`）与判机令牌，跨 uid 之后内核直接拒绝 |
+| `read_only` 根文件系统 + `/work` tmpfs（512 MiB，**必须带 `exec`**） | 改不了镜像里的任何东西；写盘有额度。Docker 给 `--tmpfs` 默认挂 `noexec`，而编译产物就在 `/work`，漏写 `exec` 时判题全部 `IE` |
+| `mem_limit` / `memswap_limit`（不给 swap） | 超内存被 cgroup 拦下，实测 512 MiB 的提交报出 524940 KB 并判 `MLE` |
 | `pids_limit 256` + `--ulimit nproc=128` | fork 炸弹 |
-| `--ulimit fsize=64MiB`、`core=0` | 写满磁盘、留下.core 文件 |
-| `internal` 网络 | 容器无外网出口，只留到宿主网关的通路 |
+| `--ulimit fsize=64MiB`、`core=0`、`cpu=120` | 写满磁盘、留下 core 文件、CPU 兜底 |
 | 判机侧 `Setpgid` + 整组击杀 | 超时的进程树不会变成孤儿继续吃 CPU |
 
 判机自己不发 rlimit 给子进程：Go 在 Linux 上没有"spawn 时带 rlimit"的通道
 （`SysProcAttr.Rlimits` 只有 BSD 有），而绕道 shell 的 `ulimit` 会让判定结果依赖镜像里
 装的是 dash 还是 bash。硬上限由 cgroup 承担，判机负责**测量**（CPU 取 `wait4` 的
 rusage，内存取 `ru_maxrss`）并据此出判定，所以 Linux 容器的 `MLE` 比 Windows 的
-`RE` 更准确。`-run-as uid:gid` 留给以 root 跑在 Linux 上的部署，把提交再降一个用户。
+`RE` 更准确。
 
-**先确认一件事**：`internal` 网络挡外网是好的，但某些 Docker 版本里
-`host.docker.internal` 也一起不通了——判机就领不到工单。看 `/judges` 里那台的
-"最后领取"时间是否在走；不走就把 `docker-compose.judge.yml` 里 `internal: true`
-去掉（出口放行，其余限制不变），或者改用宿主机网络外的自定义路由。
+两个坑是实测踩出来的，都进了代码与测试：
+
+- **`cap_add` 里少了 `KILL`**：降权之后判机（uid 0）给 uid 65534 的子进程发 SIGKILL 会
+  `EPERM`。表现是超时的程序杀不掉、判机卡在输出管道上、整条队列停摆（要等容器
+  `--ulimit cpu` 收尸）。现在 `Kill` 会把错误带出来，并且最多再等 5 秒就带着
+  `TLE` 与原因返回，绝不无限占着判机槽位；回归用例是 `TestDroppedSubmissionStillTimesOut`
+  （需要 root 判机，用 `FASTOJ_TEST_RUN_AS_UID=65534` 打开）。
+- **`internal: true` 网络不能用**：它把 `host.docker.internal` 一起挡了
+  （`dial tcp 192.168.65.254:18080: network is unreachable`），判机领不到工单。所以
+  compose 里默认不开，**提交程序的出口网络目前没有被限制**——要单独掐掉，得给每次运行
+  开一个无网络的命名空间（容器内 root + `CAP_NET_ADMIN` + `unshare -n`，再降权），
+  这条归到外部 sandbox 那一期。挡住的关键面仍然是：宿主的文件系统、进程与关机权限。
 
 输出：每路最多 1 MiB，超出即按 `WA` 判（已经打印出来的内容不可能再对上答案）。
 

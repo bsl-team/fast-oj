@@ -13,35 +13,45 @@ services:
       FASTOJ_SERVER: ${FASTOJ_SERVER:-http://host.docker.internal:18080}
       FASTOJ_JUDGE_TOKEN: ${FASTOJ_JUDGE_TOKEN:?需要判机令牌，与服务器 -judge-token 一致}
       FASTOJ_JUDGE_NAME: ${FASTOJ_JUDGE_NAME:-judge-docker}
-    command: ["-dir", "/work", "-v"]
-    user: "1000:1000"
-    read_only: true
-    tmpfs:
-      - /work:rw,nosuid,nodev,size=512m,mode=1777
-      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    command: ["-dir", "/work", "-run-as", "65534:65534", "-v"]
+    # 判机以 root 起步，只为了把每个提交降权到 nobody：同一 uid 时提交程序能读
+    # /proc/1/environ，把判机令牌（连 FASTOJ_JUDGE_TOKEN 都在里面）原样拿走。
+    # 降权之后那道读不了，而 nproc/RLIMIT 这类按用户算的预算也不再和判机自己抢。
+    user: "0:0"
     cap_drop: [ALL]
+    # SETUID/SETGID 用来把提交降权；KILL 是必须的：没有 CAP_KILL，root 的判机也发不出
+    # SIGKILL 给 uid 65534 的子进程，超时的程序杀不掉、判机卡在管道上（实测踩过）。
+    cap_add: [SETUID, SETGID, KILL]
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    # Docker 给 --tmpfs 默认挂 noexec，而编译产物就放在 /work 里，不写 exec 判题一律 IE。
+    tmpfs:
+      - /work:rw,nosuid,nodev,exec,size=512m,mode=1777
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
     # 硬上限交给 cgroup：判机在里面测量并据实判定，容器负责挡住越界。
     mem_limit: 1g
     memswap_limit: 1g # 不给 swap 兜底，超了就 OOM => MLE，而不是慢慢吞到宿主
     cpus: 2
     pids_limit: 256
+    # 单个数字同时给 soft 与 hard（Compose 的写法不是 docker run 的 [soft,hard] 数组）。
     ulimits:
-      core: [0, 0]
-      fsize: [67108864, 67108864] # 64 MiB，防止把 tmpfs 写满
-      nofile: [1024, 1024]
-      nproc: [128, 128]
-      cpu: [120, 120] # 兜底：正常判题由 wall-clock 先到
+      core: 0
+      fsize: 67108864 # 64 MiB，防止把 tmpfs 写满
+      nofile: 1024
+      nproc: 128
+      cpu: 120 # 兜底：正常判题由 wall-clock 先到
     networks: [ojjudge]
     extra_hosts:
       - "host.docker.internal=host-gateway"
     restart: unless-stopped
 
 networks:
-  # internal 断掉容器的外网出口，只保留到宿主网关的通路。
-  # 若你的 Docker 版本下 host.docker.internal 在 internal 网络里不通（实测方法见
-  # README「判机容器化」），把 internal 去掉即可放行出口，其余限制不受影响。
+  # 实测（Docker Desktop 29.7.2）：`internal: true` 会连 host.docker.internal 一起挡掉，
+  # 判机领不到工单（dial tcp 192.168.65.254:18080: network is unreachable），所以默认不开。
+  # 提交程序与判机共用同一个网络命名空间，要单独掐掉提交的出口，得 per-run 开一个无网络
+  # 的命名空间（容器内 root + CAP_NET_ADMIN + unshare -n，再用 -run-as 降权），这条路
+  # 归到外部 sandbox 那一期一起做。
+  # 挡住的仍然是关键面：宿主的文件系统、进程、关机权限都拿不到。
   ojjudge:
     name: oj-judge
-    internal: true

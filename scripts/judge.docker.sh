@@ -17,11 +17,17 @@ mkdir -p "dist/linux_$ARCH"
 CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" "$GO" build -o "dist/linux_$ARCH/fast-judge" ./cmd/fast-judge
 
 echo "==> 构建镜像 fast-oj-judge:latest"
-docker build -f Dockerfile.judge -t fast-oj-judge .
+# 基础镜像要在 Docker Hub 上取元数据，网络不通时这一步会失败；本地已经有镜像就复用，
+# 需要重装工具链时用 REBUILD=1 强制重建。
+if [ "${REBUILD:-0}" = "1" ] || ! docker image inspect fast-oj-judge:latest >/dev/null 2>&1; then
+  docker build -f Dockerfile.judge -t fast-oj-judge .
+else
+  echo "    复用已有镜像（REBUILD=1 可强制重建）"
+fi
 
 echo "==> 起容器（$SERVER）"
 FASTOJ_SERVER="$SERVER" FASTOJ_JUDGE_TOKEN="$TOKEN" \
-  docker compose -f docker-compose.judge.yml up -d
+  docker compose -f docker-compose.judge.yml up -d --no-build
 
 sleep 2
 docker logs --tail 20 fast-oj-judge || true

@@ -19,6 +19,11 @@ const (
 	// floor keeps very small limits usable.
 	wallClockSlack = 2.0
 	minWallClock   = 2 * time.Second
+	// reapGrace is how long Run waits for a killed tree to actually go away before
+	// it reports the verdict anyway. A run that cannot be reaped (a judge without
+	// CAP_KILL signalling a dropped-uid child, or a grandchild holding the output
+	// pipe) must not be able to occupy the queue.
+	reapGrace = 5 * time.Second
 )
 
 // DropTo is the uid/gid a judged process should run as. Windows ignores it.
@@ -46,8 +51,10 @@ type Guard interface {
 	Configure(cmd *exec.Cmd) error
 	// Attach binds a running process to the limits.
 	Attach(p *os.Process) error
-	// Kill stops the whole tree.
-	Kill()
+	// Kill stops the whole tree and reports why it could not, which is a real
+	// possibility: a judge that dropped a submission to another uid cannot signal
+	// it without CAP_KILL.
+	Kill() error
 	// Measure reports accumulated CPU time in ms and peak memory in KB, or -1
 	// for either when the platform cannot tell.
 	Measure() (timeMS int, memKB int)
@@ -103,6 +110,14 @@ func exitCode(err error) int {
 	return 0
 }
 
+// killText turns a nil error into the only other explanation worth printing.
+func killText(err error) string {
+	if err == nil {
+		return "the signal was sent but the output never closed"
+	}
+	return err.Error()
+}
+
 // allowedEnvKeys is everything a judged program may inherit. SystemRoot/WINDIR
 // are what the loader needs to find the system DLLs; PATH is what reaches the
 // compiler. Nothing else survives, because none of it is the program's business.
@@ -148,6 +163,9 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 	stdout, stderr := newCappedBuffer(MaxOutput), newCappedBuffer(MaxStderr)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Stdin = bytes.NewReader(stdin)
+	// A grandchild that inherited the output pipe must not keep Wait busy after the
+	// run itself is over.
+	cmd.WaitDelay = reapGrace
 
 	g, err := newGuard(lim)
 	if err != nil {
@@ -207,8 +225,21 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 		return ex
 
 	case <-time.After(wallClockFor(lim.TimeMS)):
-		g.Kill()
-		w := <-done
+		kerr := g.Kill()
+		var w waitResult
+		select {
+		case w = <-done:
+		case <-time.After(reapGrace):
+			// The tree is still alive, so the judge must not sit on it forever:
+			// one unkillable run would take the queue with it. Report what the
+			// verdict was and why the cleanup did not finish.
+			_, memKB := g.Measure()
+			return Execution{
+				Verdict: TLE, TimeMS: lim.TimeMS, MemKB: memKB,
+				Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
+				Note: "wall clock limit exceeded and the run could not be reaped: " + killText(kerr),
+			}
+		}
 		_, memKB := g.Measure()
 		if memKB < 0 {
 			memKB = usageMemKB(w.state)

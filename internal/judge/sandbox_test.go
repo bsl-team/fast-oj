@@ -1,9 +1,49 @@
 package judge
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// spinSource burns CPU forever, which is what the timeout guard has to stop.
+const spinSource = `#include <cstdio>
+int main(){ volatile double x=1; for(;;) x*=1.0000001; printf("%f\n",x); return 0;}`
+
+// The uid drop only does anything when the judge runs as root (that is the
+// container's setup), so this is opt-in. It guards the failure that showed up in
+// the field: a dropped child that times out has to be killed *and* reaped, or the
+// judge hangs on the stdout pipe and stops serving the queue.
+func TestDroppedSubmissionStillTimesOut(t *testing.T) {
+	tool := requireToolchain(t)
+	raw := os.Getenv("FASTOJ_TEST_RUN_AS_UID")
+	if raw == "" {
+		t.Skip("set FASTOJ_TEST_RUN_AS_UID to exercise the uid drop (needs a root judge)")
+	}
+	uid, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Not t.TempDir: that parent is 0700, which a dropped child cannot traverse,
+	// and the failure would look like an execution problem instead.
+	dir := filepath.Join(os.TempDir(), "fastoj-drop-work")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	rep := Judge(Task{
+		SubmissionID: 1, PID: "P1", Language: "cpp", Source: spinSource,
+		TimeLimitMS: 300, MemLimitKB: 262144,
+		Cases: []Case{{Name: "1", Ordinal: 1, Expected: []byte("never\n")}},
+	}, tool, dir, &DropTo{UID: uint32(uid), GID: uint32(uid)})
+	if rep.Verdict != TLE {
+		t.Fatalf("verdict = %s (%s), want TLE", rep.Verdict, rep.Detail)
+	}
+}
 
 // The probe only prints "clean" when all three conditions hold at once, so it
 // cannot pass by accident: a scrubbed-away PATH or a leaked operator variable

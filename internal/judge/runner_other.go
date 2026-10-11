@@ -3,6 +3,7 @@
 package judge
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -52,13 +53,20 @@ func (g *plainGuard) Attach(p *os.Process) error {
 
 // Kill stops the process group. A program that forked before hanging would
 // otherwise orphan and keep burning the box while the judge moved on.
-func (g *plainGuard) Kill() {
+func (g *plainGuard) Kill() error {
 	if g.proc == nil {
-		return
+		return nil
 	}
-	if err := syscall.Kill(-g.proc.Pid, syscall.SIGKILL); err != nil {
-		_ = g.proc.Kill()
+	err := syscall.Kill(-g.proc.Pid, syscall.SIGKILL)
+	if err == nil {
+		return nil
 	}
+	// Root without CAP_KILL cannot signal a child it dropped to another uid, so the
+	// group kill is the one that fails first; fall back to the leader itself.
+	if err2 := g.proc.Kill(); err2 != nil {
+		return errors.Join(err, err2)
+	}
+	return nil
 }
 
 // Measure reports nothing: time and peak RSS come out of the wait status.

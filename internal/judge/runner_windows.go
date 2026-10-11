@@ -3,6 +3,7 @@
 package judge
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -88,10 +89,11 @@ func cpuMS(ru *syscall.Rusage) int {
 	return int((ticks(ru.UserTime) + ticks(ru.KernelTime)) / 10000)
 }
 
-func (g *jobGuard) Kill() {
-	if g.job != 0 {
-		windows.TerminateJobObject(g.job, 1)
+func (g *jobGuard) Kill() error {
+	if g.job == 0 {
+		return errors.New("job handle already closed")
 	}
+	return windows.TerminateJobObject(g.job, 1)
 }
 
 // Measure reports peak committed memory for the process tree from the job. CPU

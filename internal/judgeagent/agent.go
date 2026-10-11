@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/liangbinchen2013/fast-oj/internal/judge"
@@ -274,11 +275,20 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
 		Cases: cases,
 	}, tool, dir, a.cfg.RunAs)
-	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s",
+	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s%s",
 		task.SubmissionID, rep.Verdict, rep.Score, rep.TotalScore, rep.TimeMS, rep.MemKB,
-		time.Since(started).Truncate(time.Millisecond))
+		time.Since(started).Truncate(time.Millisecond), detailSuffix(rep.Detail))
 
 	return true, a.PostResult(ctx, task.SubmissionID, rep)
+}
+
+// detailSuffix keeps the judge-side reason in the log line: an IE verdict on its
+// own tells the operator nothing.
+func detailSuffix(detail string) string {
+	if detail == "" {
+		return ""
+	}
+	return " detail=" + strings.ReplaceAll(detail, "\n", " ")
 }
 
 func (a *Agent) reportInfra(ctx context.Context, submissionID int64, detail string) error {
