@@ -9,11 +9,19 @@ import (
 	"fmt"
 )
 
-const userColumns = `id, handle, role, created_at`
+// userColumns never selects passhash: a hash must not ride along in a struct
+// that might get marshalled to JSON.
+const userColumns = `id, handle, IFNULL(email, ''), display_name, bio, role, status,
+		(passhash <> '') AS has_password, created_at, IFNULL(last_login_at, 0)`
 
 func scanUser(row scanner) (User, error) {
-	var u User
-	err := row.Scan(&u.ID, &u.Handle, &u.Role, &u.CreatedAt)
+	var (
+		u       User
+		hasPass int
+	)
+	err := row.Scan(&u.ID, &u.Handle, &u.Email, &u.DisplayName, &u.Bio, &u.Role, &u.Status,
+		&hasPass, &u.CreatedAt, &u.LastLoginAt)
+	u.HasPassword = hasPass != 0
 	return u, notFound(err)
 }
 
@@ -103,6 +111,44 @@ func (db *DB) UserByToken(ctx context.Context, token string) (User, error) {
 		return User{}, notFound(err)
 	}
 	return db.GetUserByID(ctx, userID)
+}
+
+// TokenInfo is what a user may see about their own tokens: the digest prefix is
+// enough to tell two apart, and the digest itself is not a secret.
+type TokenInfo struct {
+	Digest    string `json:"digest"`
+	Label     string `json:"label"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func (db *DB) ListTokens(ctx context.Context, userID int64) ([]TokenInfo, error) {
+	rows, err := db.SQL.QueryContext(ctx,
+		`SELECT token, label, created_at FROM tokens WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TokenInfo
+	for rows.Next() {
+		var t TokenInfo
+		if err := rows.Scan(&t.Digest, &t.Label, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DeleteTokenDigest revokes by stored digest, which is what the settings page
+// can show without ever having the plaintext in hand.
+func (db *DB) DeleteTokenDigest(ctx context.Context, userID int64, digest string) (bool, error) {
+	res, err := db.SQL.ExecContext(ctx, `DELETE FROM tokens WHERE user_id=? AND token=?`, userID, digest)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 func (db *DB) DeleteToken(ctx context.Context, token string) (int64, error) {

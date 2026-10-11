@@ -1,0 +1,428 @@
+package api
+
+import (
+	"errors"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/liangbinchen2013/fast-oj/internal/store"
+)
+
+const (
+	loginWindow      = 15 * time.Minute
+	maxLoginFailures = 10
+	registerWindow   = time.Hour
+	maxRegistrations = 20
+)
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// validEmail is deliberately shallow: the mailbox is not verified yet, so this
+// only rejects shapes that could never be delivered, not throwaway domains.
+func validEmail(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < 3 || len(s) > 120 {
+		return false
+	}
+	at := strings.IndexByte(s, '@')
+	if at < 1 || at != strings.LastIndexByte(s, '@') || at == len(s)-1 {
+		return false
+	}
+	domain := s[at+1:]
+	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	for _, r := range s {
+		if r > 127 || r <= ' ' || strings.ContainsRune(`()<>[];:,"`, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// passwordPolicy is the minimum we will accept; length matters more than
+// composition rules that push people into "Password1!".
+func passwordProblem(pw string) string {
+	switch {
+	case len(pw) < store.MinPasswordLen:
+		return "密码至少 " + strconv.Itoa(store.MinPasswordLen) + " 位"
+	case len(pw) > store.MaxPasswordLen:
+		return "密码最长 " + strconv.Itoa(store.MaxPasswordLen) + " 字节"
+	case strings.Trim(pw, "0123456789") == "":
+		return "密码不能全是数字"
+	}
+	return ""
+}
+
+// safeNext only accepts an in-site path, so /login?next= cannot become an open
+// redirect to an attacker's page. Backslashes are rejected because some user
+// agents normalise them into a scheme-relative URL.
+func safeNext(raw string) string {
+	if raw == "" || strings.ContainsRune(raw, '\\') {
+		return "/"
+	}
+	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return "/"
+	}
+	if u, err := url.Parse(raw); err != nil || u.IsAbs() || u.Host != "" {
+		return "/"
+	}
+	return raw
+}
+
+func (s *Server) setSession(w http.ResponseWriter, id string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    id,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.cfg.Secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(ttl.Seconds()),
+	})
+}
+
+func (s *Server) clearSession(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.cfg.Secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	if a, err := s.authenticate(r); err == nil && a.User.ID != 0 {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	s.page(w, r, http.StatusOK, "登录", "login", nil, msgOf(r), map[string]any{"Next": r.URL.Query().Get("next")})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	key := "login:" + clientIP(r)
+	allowed, err := s.db.LoginAllowed(r.Context(), key, loginWindow, maxLoginFailures)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !allowed {
+		s.loginFailed(w, r, "失败次数过多，请 15 分钟后再试", http.StatusTooManyRequests)
+		return
+	}
+
+	identifier := r.FormValue("identifier")
+	password := r.FormValue("password")
+	u, hash, err := s.db.FindForLogin(r.Context(), identifier)
+	if err != nil || !store.CheckPassword(hash, password) {
+		if _, ferr := s.db.RegisterLoginFailure(r.Context(), key, loginWindow); ferr != nil {
+			s.log.Error("throttle", "err", ferr)
+		}
+		s.log.Warn("login failed", "identifier", identifier, "ip", clientIP(r))
+		// One message for unknown account and wrong password: no enumeration.
+		s.loginFailed(w, r, "账号或密码不正确", http.StatusUnauthorized)
+		return
+	}
+
+	sess, err := s.db.CreateSession(r.Context(), u.ID, clientIP(r), r.UserAgent(), store.SessionTTL)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if err := s.db.ClearLoginFailures(r.Context(), key); err != nil {
+		s.log.Error("throttle reset", "err", err)
+	}
+	if err := s.db.TouchLogin(r.Context(), u.ID); err != nil {
+		s.log.Error("touch login", "err", err)
+	}
+	s.setSession(w, sess.ID, store.SessionTTL)
+	s.log.Info("login", "user", u.Handle, "ip", clientIP(r))
+	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
+}
+
+// loginFailed re-renders the form instead of redirecting, so the typed handle
+// survives and the status code stays meaningful.
+func (s *Server) loginFailed(w http.ResponseWriter, r *http.Request, msg string, status int) {
+	s.page(w, r, status, "登录", "login", nil, msg, map[string]any{
+		"Next":       r.FormValue("next"),
+		"Identifier": r.FormValue("identifier"),
+	})
+}
+
+func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
+	if !s.registrationOpen(r) {
+		s.errorPage(w, r, http.StatusForbidden, "当前未开放注册")
+		return
+	}
+	s.page(w, r, http.StatusOK, "注册", "register", nil, msgOf(r), nil)
+}
+
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if !s.registrationOpen(r) {
+		s.errorPage(w, r, http.StatusForbidden, "当前未开放注册")
+		return
+	}
+	key := "register:" + clientIP(r)
+	allowed, err := s.db.LoginAllowed(r.Context(), key, registerWindow, maxRegistrations)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !allowed {
+		s.page(w, r, http.StatusTooManyRequests, "注册", "register", nil, "这台机器的注册次数已达上限，明天再试", nil)
+		return
+	}
+
+	handle := strings.TrimSpace(r.FormValue("handle"))
+	email := strings.TrimSpace(r.FormValue("email"))
+	display := strings.TrimSpace(r.FormValue("display_name"))
+	password := r.FormValue("password")
+
+	var problem string
+	switch {
+	case !validHandle(handle):
+		problem = "用户名只能是 1..32 个字母、数字、下划线、点或短横线"
+	case handle == "admin" || strings.EqualFold(handle, "system"):
+		problem = "这个用户名被保留了"
+	case !validEmail(email):
+		problem = "邮箱格式不正确"
+	case passwordProblem(password) != "":
+		problem = passwordProblem(password)
+	case display != "" && len(display) > 40:
+		problem = "昵称最长 40 个字符"
+	}
+	if problem != "" {
+		s.renderRegisterForm(w, r, http.StatusBadRequest, problem, handle, email, display)
+		return
+	}
+
+	u, err := s.db.CreateAccount(r.Context(), store.AccountInput{
+		Handle: handle, Email: email, Password: password, DisplayName: display, Cost: s.cfg.BCryptCost,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			s.renderRegisterForm(w, r, http.StatusConflict, "这个用户名或邮箱已经注册过了", handle, email, display)
+			return
+		}
+		if errors.Is(err, store.ErrWeakPassword) {
+			s.renderRegisterForm(w, r, http.StatusBadRequest, passwordProblem(password), handle, email, display)
+			return
+		}
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if _, err := s.db.RegisterLoginFailure(r.Context(), key, registerWindow); err != nil {
+		s.log.Error("register counter", "err", err)
+	}
+
+	sess, err := s.db.CreateSession(r.Context(), u.ID, clientIP(r), r.UserAgent(), store.SessionTTL)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.setSession(w, sess.ID, store.SessionTTL)
+	s.log.Info("registered", "user", u.Handle, "ip", clientIP(r))
+	http.Redirect(w, r, "/?msg="+url.QueryEscape("欢迎，"+u.Handle+"。邮箱尚未验证，可以先正常使用。"), http.StatusSeeOther)
+}
+
+func (s *Server) renderRegisterForm(w http.ResponseWriter, r *http.Request, status int, msg, handle, email, display string) {
+	s.page(w, r, status, "注册", "register", nil, msg, map[string]any{
+		"Handle": handle, "Email": email, "DisplayName": display,
+	})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+		if err := s.db.DropSession(r.Context(), c.Value); err != nil {
+			s.log.Error("drop session", "err", err)
+		}
+	}
+	s.clearSession(w)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// registrationOpen is the hook M10's site settings will drive; until then
+// registration is open unless the operator passes -no-register.
+func (s *Server) registrationOpen(r *http.Request) bool {
+	return s.cfg.AllowRegister
+}
+
+// --- settings: profile, password, API tokens ---
+
+type tokenRow struct {
+	Short   string
+	Label   string
+	Created string
+	Digest  string
+}
+
+type settingsData struct {
+	Email       string
+	DisplayName string
+	Bio         string
+	HasPassword bool
+	Joined      string
+	Tokens      []tokenRow
+	Issued      string
+}
+
+// buildSettings gathers everything the settings page shows. issued carries a
+// freshly minted plaintext token for exactly one response.
+func (s *Server) buildSettings(r *http.Request, a actor, issued string) (settingsData, error) {
+	tokens, err := s.db.ListTokens(r.Context(), a.User.ID)
+	if err != nil {
+		return settingsData{}, err
+	}
+	rows := make([]tokenRow, 0, len(tokens))
+	for _, t := range tokens {
+		short := t.Digest
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		rows = append(rows, tokenRow{Short: short, Label: t.Label, Created: agoMS(t.CreatedAt), Digest: t.Digest})
+	}
+	return settingsData{
+		Email: a.User.Email, DisplayName: a.User.DisplayName, Bio: a.User.Bio,
+		HasPassword: a.User.HasPassword, Joined: agoMS(a.User.CreatedAt),
+		Tokens: rows, Issued: issued,
+	}, nil
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next=/settings", http.StatusSeeOther)
+		return
+	}
+	data, err := s.buildSettings(r, a, r.URL.Query().Get("issued"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.page(w, r, http.StatusOK, "设置", "settings", a.viewer(), msgOf(r), data)
+}
+
+func (s *Server) handleProfileSave(w http.ResponseWriter, r *http.Request) {
+	a, err := s.requireSignedIn(w, r)
+	if err != nil {
+		return
+	}
+	display := strings.TrimSpace(r.FormValue("display_name"))
+	if len(display) > 40 {
+		http.Redirect(w, r, "/settings?msg="+url.QueryEscape("昵称最长 40 个字符"), http.StatusSeeOther)
+		return
+	}
+	if err := s.db.UpdateProfile(r.Context(), a.User.ID, display, r.FormValue("bio")); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, "/settings?msg="+url.QueryEscape("已保存"), http.StatusSeeOther)
+}
+
+func (s *Server) handlePasswordSave(w http.ResponseWriter, r *http.Request) {
+	a, err := s.requireSignedIn(w, r)
+	if err != nil {
+		return
+	}
+	back := "/settings?msg="
+	if a.User.HasPassword {
+		current, err := s.db.UserPasswordHash(r.Context(), a.User.ID)
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		if !store.CheckPassword(current, r.FormValue("current")) {
+			http.Redirect(w, r, back+url.QueryEscape("当前密码不正确"), http.StatusSeeOther)
+			return
+		}
+	}
+	pw := r.FormValue("password")
+	if problem := passwordProblem(pw); problem != "" {
+		http.Redirect(w, r, back+url.QueryEscape(problem), http.StatusSeeOther)
+		return
+	}
+	if err := s.db.SetPassword(r.Context(), a.User.ID, pw, s.cfg.BCryptCost); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	// Every session is gone, including this one, so start a fresh login.
+	s.clearSession(w)
+	s.log.Info("password changed", "user", a.User.Handle)
+	http.Redirect(w, r, "/login?msg="+url.QueryEscape("密码已修改，请重新登录"), http.StatusSeeOther)
+}
+
+func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request) {
+	a, err := s.requireSignedIn(w, r)
+	if err != nil {
+		return
+	}
+	label := strings.TrimSpace(r.FormValue("label"))
+	if len(label) > 40 {
+		label = label[:40]
+	}
+	token, err := store.NewToken()
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if err := s.db.CreateToken(r.Context(), a.User.ID, label, token); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("token issued", "user", a.User.Handle, "label", label)
+	// Rendered inline rather than redirected: the plaintext must not end up in a
+	// URL, access logs, or Referer headers.
+	data, err := s.buildSettings(r, a, token)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.page(w, r, http.StatusOK, "设置", "settings", a.viewer(), "", data)
+}
+
+func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
+	a, err := s.requireSignedIn(w, r)
+	if err != nil {
+		return
+	}
+	digest := strings.TrimSpace(r.FormValue("digest"))
+	ok, err := s.db.DeleteTokenDigest(r.Context(), a.User.ID, digest)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	msg := "已吊销"
+	if !ok {
+		msg = "那枚令牌不属于你"
+	}
+	http.Redirect(w, r, "/settings?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// handleAccountAlias keeps the old /account URL working after the settings page
+// replaced the token-binding flow.
+func (s *Server) handleAccountAlias(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/settings", http.StatusMovedPermanently)
+}
+
+// requireSignedIn is the shared gate for the settings pages.
+func (s *Server) requireSignedIn(w http.ResponseWriter, r *http.Request) (actor, error) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next=/settings", http.StatusSeeOther)
+		return actor{}, errNoCredentials
+	}
+	return a, nil
+}

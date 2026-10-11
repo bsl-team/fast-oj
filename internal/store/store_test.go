@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"testing"
 )
@@ -71,8 +72,13 @@ func TestOpenUsesWALAndIsIdempotent(t *testing.T) {
 	if err := db2.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 1 {
-		t.Fatalf("schema_migrations rows = %d, want 1", applied)
+	// Compare against the embedded set so adding a migration never needs a test edit.
+	files, err := fs.ReadDir(migrationFS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != len(files) {
+		t.Fatalf("schema_migrations rows = %d, want %d", applied, len(files))
 	}
 }
 

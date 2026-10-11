@@ -1,0 +1,244 @@
+package api
+
+import (
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/liangbinchen2013/fast-oj/internal/config"
+	"github.com/liangbinchen2013/fast-oj/internal/store"
+)
+
+func TestRegisterRejectsBadInput(t *testing.T) {
+	h := newHarness(t)
+
+	bad := []struct {
+		values url.Values
+		why    string
+	}{
+		{url.Values{"handle": {"ok"}, "email": {"not-an-email"}, "password": {testPassword}}, "邮箱"},
+		{url.Values{"handle": {"ok"}, "email": {"a@b.co"}, "password": {"short1"}}, "至少"},
+		{url.Values{"handle": {"ok"}, "email": {"a@b.co"}, "password": {"1234567890"}}, "全是数字"},
+		{url.Values{"handle": {"has space"}, "email": {"a@b.co"}, "password": {testPassword}}, "用户名"},
+		{url.Values{"handle": {"admin"}, "email": {"a@b.co"}, "password": {testPassword}}, "保留"},
+	}
+	for _, c := range bad {
+		code, body := h.formPage("/register", c.values)
+		if code == http.StatusSeeOther {
+			t.Errorf("%v accepted (%s)", c.values, c.why)
+		}
+		if c.why != "" && !strings.Contains(body, c.why) {
+			t.Errorf("%v: message lost %q:\n%s", c.values, c.why, body)
+		}
+	}
+
+	// Duplicates in either field collide instead of creating a second account.
+	if code, _, _ := h.postNoRedirect("/register",
+		url.Values{"handle": {"dup"}, "email": {"dup@example.com"}, "password": {testPassword}}, ""); code != http.StatusSeeOther {
+		t.Fatalf("first register = %d", code)
+	}
+	if _, body := h.formPage("/register", url.Values{"handle": {"dup"}, "email": {"other@example.com"}, "password": {testPassword}}); !strings.Contains(body, "已经注册过") {
+		t.Errorf("duplicate handle: %s", body)
+	}
+	if _, body := h.formPage("/register", url.Values{"handle": {"other"}, "email": {"dup@example.com"}, "password": {testPassword}}); !strings.Contains(body, "已经注册过") {
+		t.Errorf("duplicate email: %s", body)
+	}
+}
+
+// formPage posts a form and follows the redirect, returning the rendered page.
+func (h *harness) formPage(path string, values url.Values) (int, string) {
+	h.t.Helper()
+	code, body, _ := h.postForm(path, values, "", "")
+	return code, body
+}
+
+func TestLoginFailureIsIndistinguishable(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.db.CreateAccount(ctx(), store.AccountInput{
+		Handle: "target", Email: "target@example.com", Password: testPassword,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, wrongPassword := h.formPage("/login", url.Values{"identifier": {"target"}, "password": {"wrong-password-here"}})
+	_, unknownUser := h.formPage("/login", url.Values{"identifier": {"ghost"}, "password": {"wrong-password-here"}})
+	if !strings.Contains(wrongPassword, "账号或密码不正确") || !strings.Contains(unknownUser, "账号或密码不正确") {
+		t.Fatal("login errors must not differ")
+	}
+	if strings.Contains(unknownUser, "不存在") || strings.Contains(wrongPassword, "密码错误") {
+		t.Fatal("login error leaks which half was wrong")
+	}
+
+	// Email or handle both work, and the session cookie follows.
+	code, _, hdr := h.postNoRedirect("/login", url.Values{"identifier": {"target@example.com"}, "password": {testPassword}}, "")
+	if code != http.StatusSeeOther || cookieValue(hdr.Values("Set-Cookie"), "fastoj_session") == "" {
+		t.Fatalf("login by email = %d %v", code, hdr.Values("Set-Cookie"))
+	}
+}
+
+func TestLoginThrottlesRepeatedFailures(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < maxLoginFailures; i++ {
+		code, _ := h.formPage("/login", url.Values{"identifier": {"ghost"}, "password": {"wrong-password-here"}})
+		if code == http.StatusTooManyRequests && i < maxLoginFailures-1 {
+			t.Fatalf("locked out early at attempt %d", i+1)
+		}
+	}
+	locked, body := h.formPage("/login", url.Values{"identifier": {"ghost"}, "password": {"wrong-password-here"}})
+	if locked != http.StatusTooManyRequests || !strings.Contains(body, "15 分钟") {
+		t.Fatalf("after %d failures: %d %q", maxLoginFailures, locked, body)
+	}
+	// A successful login clears the counter for that client.
+	if err := h.db.ClearLoginFailures(ctx(), "login:127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := h.formPage("/login", url.Values{"identifier": {"ghost"}, "password": {"wrong"}}); code == http.StatusTooManyRequests {
+		t.Fatal("counter not cleared")
+	}
+}
+
+func TestNextParameterCannotEscapeTheSite(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.db.CreateAccount(ctx(), store.AccountInput{
+		Handle: "redirectee", Email: "redirectee@example.com", Password: testPassword,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, evil := range []string{
+		"https://evil.example/phish", "//evil.example", "/\\evil.example", "http://evil.example/x",
+	} {
+		code, _, hdr := h.postNoRedirect("/login",
+			url.Values{"identifier": {"redirectee"}, "password": {testPassword}, "next": {evil}}, "")
+		if code != http.StatusSeeOther {
+			t.Fatalf("%s login = %d", evil, code)
+		}
+		if got := hdr.Get("Location"); got != "/" {
+			t.Errorf("next=%s bounced to %q, want /", evil, got)
+		}
+	}
+	// A legitimate in-site target is honoured.
+	if _, _, hdr := h.postNoRedirect("/login",
+		url.Values{"identifier": {"redirectee"}, "password": {testPassword}, "next": {"/submissions?user=me"}}, ""); hdr.Get("Location") != "/submissions?user=me" {
+		t.Errorf("in-site next lost: %q", hdr.Get("Location"))
+	}
+}
+
+func TestCSRFGatesCookieWritesOnly(t *testing.T) {
+	h := newHarness(t)
+	h.readyProblem("P5000")
+	cookie, csrf := h.login("csrfuser", "csrf@example.com", testPassword)
+
+	// A cookie-authenticated POST with no token is refused...
+	if code, _, _ := h.postNoRedirect("/problems/P5000/submit",
+		url.Values{"language": {"cpp"}, "source": {"int main(){}"}}, cookie); code != http.StatusForbidden {
+		t.Fatalf("missing csrf = %d, want 403", code)
+	}
+	// ...with the wrong token...
+	if code, _, _ := h.postForm("/problems/P5000/submit",
+		url.Values{"language": {"cpp"}, "source": {"int main(){}"}}, cookie, "guessed"); code != http.StatusForbidden {
+		t.Fatalf("wrong csrf = %d, want 403", code)
+	}
+	// ...and with a token from someone else's session.
+	otherCookie, otherCSRF := h.login("other", "other@example.com", testPassword)
+	if code, _, _ := h.postForm("/problems/P5000/submit",
+		url.Values{"language": {"cpp"}, "source": {"int main(){}"}}, otherCookie, csrf); code != http.StatusForbidden {
+		t.Fatalf("cross-session csrf = %d, want 403", code)
+	}
+	// The right pair works, and the header form is accepted too.
+	if code, _, hdr := h.postForm("/problems/P5000/submit",
+		url.Values{"language": {"cpp"}, "source": {"int main(){}"}}, otherCookie, otherCSRF); code != http.StatusSeeOther {
+		t.Fatalf("valid csrf = %d", code)
+	} else if !strings.HasPrefix(hdr.Get("Location"), "/submissions/") {
+		t.Fatalf("no submission redirect: %q", hdr.Get("Location"))
+	}
+
+	// Bearer-authenticated API writes carry no cookie, so they need no token.
+	tok := h.userToken("apiuser")
+	if code, body := h.submit(tok, "P5000", "cpp", "int main(){}"); code != http.StatusCreated {
+		t.Fatalf("bearer submit without csrf = %d %q", code, body)
+	}
+}
+
+func TestRegistrationCanBeClosed(t *testing.T) {
+	h := newHarnessCfg(t, func(cfg *config.Config) { cfg.AllowRegister = false })
+	if code, _ := h.htmlGet("/register", ""); code != http.StatusForbidden {
+		t.Fatalf("register page = %d, want 403", code)
+	}
+	if code, _ := h.formPage("/register", url.Values{
+		"handle": {"late"}, "email": {"late@example.com"}, "password": {testPassword}}); code != http.StatusForbidden {
+		t.Fatalf("register post = %d, want 403", code)
+	}
+}
+
+func TestSessionAndTokenPathsAreIndependent(t *testing.T) {
+	h := newHarness(t)
+	cookie, _ := h.login("dual", "dual@example.com", testPassword)
+
+	// Signing in through the browser does not mint a bearer token, and holding a
+	// token does not create a session.
+	if _, page := h.htmlWithCookie(http.MethodGet, "/settings", cookie); !strings.Contains(page, "还没有令牌") {
+		t.Fatalf("fresh account should have no tokens:\n%s", page)
+	}
+	u, err := h.db.GetUserByHandle(ctx(), "dual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := store.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.CreateToken(ctx(), u.ID, "cli", tok); err != nil {
+		t.Fatal(err)
+	}
+	if code, who := h.get("/whoami", tok); code != http.StatusOK || !strings.Contains(who, "dual") {
+		t.Fatalf("token whoami = %d %q", code, who)
+	}
+
+	// Changing the password drops every session, which is the point.
+	if err := h.db.SetPassword(ctx(), u.ID, "another-good-password", 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, page := h.htmlWithCookie(http.MethodGet, "/settings", cookie); strings.Contains(page, "dual@example.com") {
+		t.Error("session survived a password change")
+	}
+	// ...but API tokens keep working, which is deliberate: revoking them is its
+	// own action on the settings page.
+	if code, _ := h.get("/whoami", tok); code != http.StatusOK {
+		t.Fatalf("token died with the password: %d", code)
+	}
+}
+
+func TestPasswordHelpers(t *testing.T) {
+	for _, good := range []string{"a@b.co", "user.name+tag@example.co.uk", "x_y@sub.domain.com"} {
+		if !validEmail(good) {
+			t.Errorf("%s should be valid", good)
+		}
+	}
+	for _, bad := range []string{"", "a", "no-at-sign", "@b.co", "a@", "a@@b.co", "a b@c.co", "a@b", "a@.co", "a@co.", "中文@例.com", "a<b>@c.co"} {
+		if validEmail(bad) {
+			t.Errorf("%s should be invalid", bad)
+		}
+	}
+	for pw, want := range map[string]string{
+		"short1":                "至少",
+		strings.Repeat("x", 80): "最长",
+		"1234567890":            "数字",
+		"correct-horse":         "",
+	} {
+		if got := passwordProblem(pw); (want == "") != (got == "") || (want != "" && !strings.Contains(got, want)) {
+			t.Errorf("passwordProblem(%q) = %q, want %q", pw, got, want)
+		}
+	}
+}
+
+func TestSafeNextOnlyAcceptsSitePaths(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "/", "/problems/P1": "/problems/P1", "/": "/",
+		"//evil.example": "/", "https://evil.example": "/", "/\\evil": "/",
+	} {
+		if got := safeNext(in); got != want {
+			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

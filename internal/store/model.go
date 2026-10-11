@@ -5,10 +5,16 @@ import "strings"
 type scanner interface{ Scan(dest ...any) error }
 
 type User struct {
-	ID        int64  `json:"id"`
-	Handle    string `json:"handle"`
-	Role      string `json:"role"`
-	CreatedAt int64  `json:"created_at"`
+	ID          int64  `json:"id"`
+	Handle      string `json:"handle"`
+	Email       string `json:"email,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Bio         string `json:"bio,omitempty"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+	HasPassword bool   `json:"has_password"`
+	CreatedAt   int64  `json:"created_at"`
+	LastLoginAt int64  `json:"last_login_at"`
 }
 
 type Problem struct {

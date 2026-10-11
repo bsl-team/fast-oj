@@ -15,8 +15,17 @@
   <a href="/">题目</a>
   <a href="/rank">排行榜</a>
   <a href="/submissions">提交</a>
-  {{if .Me}}<a href="/u/{{.Me.Handle}}">{{.Me.Handle}}</a>{{end}}
-  <a class="acct" href="/account">{{if .Me}}令牌{{else}}绑定令牌{{end}}</a>
+  {{if .Me}}
+  <a href="/u/{{.Me.Handle}}">{{.Me.Name}}</a>
+  <a href="/settings">设置</a>
+  <form class="inline" method="post" action="/logout">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <button type="submit">退出</button>
+  </form>
+  {{else}}
+  <a class="acct" href="/login">登录</a>
+  <a href="/register">注册</a>
+  {{end}}
 </nav>
 <main>
   {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}

@@ -61,9 +61,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.handleRoot)
 	mux.HandleFunc("GET /rank", s.handleRank)
 	mux.HandleFunc("GET /u/{handle}", s.handleUser)
-	mux.HandleFunc("GET /account", s.handleAccount)
-	mux.HandleFunc("POST /account/bind", s.handleBind)
-	mux.HandleFunc("POST /account/unbind", s.handleUnbind)
+	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("POST /login", s.handleLogin)
+	mux.HandleFunc("GET /register", s.handleRegisterPage)
+	mux.HandleFunc("POST /register", s.handleRegister)
+	mux.HandleFunc("POST /logout", s.handleLogout)
+
+	mux.HandleFunc("GET /settings", s.handleSettings)
+	mux.HandleFunc("POST /settings/profile", s.handleProfileSave)
+	mux.HandleFunc("POST /settings/password", s.handlePasswordSave)
+	mux.HandleFunc("POST /settings/tokens", s.handleTokenIssue)
+	mux.HandleFunc("POST /settings/tokens/revoke", s.handleTokenRevoke)
+	mux.HandleFunc("GET /account", s.handleAccountAlias)
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
@@ -135,7 +144,8 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /submissions/{id}        结果（?wait=秒 长轮询）",
 		"  GET  /rank                    排行榜",
 		"  GET  /u/{handle}              个人主页",
-		"  GET  /account                 绑定/解除 API 令牌",
+		"  GET  /login /register         登录 / 注册（邮箱+密码，邮箱暂不验证）",
+		"  GET  /settings                个人资料、密码、API 令牌",
 		"  GET  /whoami                  当前身份",
 		"  GET  /judges                  判机框列表（admin）",
 		"  POST /judge/claim             判机：心跳 + 领取",
@@ -210,6 +220,8 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	})
 }
 
+// wrap orders the chain: log first so a rejected request is still recorded,
+// then the CSRF gate, then the handler.
 func (s *Server) wrap(next http.Handler) http.Handler {
-	return s.logRequests(next)
+	return s.logRequests(s.guardCSRF(next))
 }

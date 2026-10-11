@@ -14,10 +14,6 @@ import (
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
-// tokenCookie holds the API token for the web UI so a browser and curl share one
-// credential instead of two parallel auth systems.
-const tokenCookie = "fastoj_token"
-
 // defaultLanguages is what the submit form offers when a problem does not
 // restrict languages; it mirrors judge.DefaultTools().
 var defaultLanguages = []string{"c", "cpp"}
@@ -31,17 +27,6 @@ func statusClass(status int) string {
 		return "bad"
 	}
 	return ""
-}
-
-func setTokenCookie(w http.ResponseWriter, token string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     tokenCookie,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   maxAge,
-	})
 }
 
 // --- formatting shared by pages ---
@@ -257,14 +242,6 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		Samples:   samples,
 		Recent:    rows,
 	})
-}
-
-// viewer turns an actor into the nav-bar identity.
-func (a actor) viewer() *viewer {
-	if a.User.ID == 0 {
-		return nil
-	}
-	return &viewer{Handle: a.User.Handle, Admin: a.Admin}
 }
 
 // --- submission list ---
@@ -523,30 +500,6 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- token binding for the web UI ---
-
-func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
-	s.page(w, r, http.StatusOK, "令牌", "account", s.viewerOf(r), msgOf(r), struct{}{})
-}
-
-func (s *Server) handleBind(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimSpace(r.FormValue("token"))
-	u, err := s.db.UserByToken(r.Context(), token)
-	if err != nil {
-		setTokenCookie(w, "", -1)
-		http.Redirect(w, r, "/account?msg="+url.QueryEscape("令牌无效，请核对后重试"), http.StatusSeeOther)
-		return
-	}
-	setTokenCookie(w, token, 30*24*3600)
-	s.log.Info("token bound", "user", u.Handle)
-	http.Redirect(w, r, "/account?msg="+url.QueryEscape("已绑定为 "+u.Handle), http.StatusSeeOther)
-}
-
-func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
-	setTokenCookie(w, "", -1)
-	http.Redirect(w, r, "/account?msg="+url.QueryEscape("已解除绑定"), http.StatusSeeOther)
-}
-
 // createSubmission is the single validation path for both the JSON API and the
 // web form, so the two front doors cannot drift.
 func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language, source string) (store.Submission, string, error) {
@@ -594,8 +547,9 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 // then a redirect to the result page instead of a body.
 func (s *Server) handleSubmitForm(w http.ResponseWriter, r *http.Request) {
 	a, err := s.authenticate(r)
-	if err != nil {
-		http.Redirect(w, r, "/account?msg="+url.QueryEscape("提交前请先绑定 API 令牌"), http.StatusSeeOther)
+	if err != nil || a.User.ID == 0 {
+		back := "/problems/" + url.PathEscape(r.PathValue("key"))
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(back)+"&msg="+url.QueryEscape("提交前请先登录"), http.StatusSeeOther)
 		return
 	}
 	if r.ContentLength > s.cfg.MaxSource {

@@ -22,6 +22,7 @@
 <h2>提交代码</h2>
 {{if .Me}}
 <form method="post" action="/problems/{{.Data.PID}}/submit">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
   <div class="row">
     <div>
       <label>语言</label>
@@ -35,7 +36,7 @@
   <p><input type="submit" value="提交判题"></p>
 </form>
 {{else}}
-<p class="flash">提交需要 API 令牌 —— 先到 <a href="/account">绑定令牌</a>。</p>
+<p class="flash">提交需要先登录 —— <a href="/login?next=/problems/{{.Data.PID}}">登录</a> 或 <a href="/register">注册</a>。</p>
 {{end}}
 
 {{if .Data.Recent}}

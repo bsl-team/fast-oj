@@ -1,0 +1,71 @@
+{{define "content"}}
+<h1>设置</h1>
+<p class="meta">{{.Me.Name}}（{{.Me.Handle}}） · 邮箱 {{.Data.Email}} · 注册于 {{.Data.Joined}}</p>
+
+{{if .Data.Issued}}
+<div class="flash">
+  新令牌只显示这一次，现在抄走：<code>{{.Data.Issued}}</code>
+  <pre><code>curl -s -H "Authorization: Bearer {{.Data.Issued}}" localhost:8080/whoami</code></pre>
+</div>
+{{end}}
+
+<h2>个人资料</h2>
+<form method="post" action="/settings/profile">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>昵称</label>
+  <input type="text" name="display_name" value="{{.Data.DisplayName}}" maxlength="40">
+  <label>个人简介（支持 Markdown 与 $KaTeX$，显示在你的主页）</label>
+  <textarea name="bio" spellcheck="false">{{.Data.Bio}}</textarea>
+  <p><input type="submit" value="保存"></p>
+</form>
+
+<h2>密码</h2>
+{{if .Data.HasPassword}}
+<form method="post" action="/settings/password">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>当前密码</label>
+  <input type="password" name="current" autocomplete="current-password" required>
+  <label>新密码（至少 10 位）</label>
+  <input type="password" name="password" autocomplete="new-password" required>
+  <p><input type="submit" value="修改密码（会退出其它设备）"></p>
+</form>
+{{else}}
+<form method="post" action="/settings/password">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>设置密码（至少 10 位）。这个账号是管理员建的，还没有密码。</label>
+  <input type="password" name="password" autocomplete="new-password" required>
+  <p><input type="submit" value="设置密码"></p>
+</form>
+{{end}}
+
+<h2>API 令牌</h2>
+<p class="meta">给命令行和脚本用，与网页登录互不影响。吊销后立即失效。</p>
+{{if .Data.Tokens}}
+<table>
+  <tr><th>指纹</th><th>备注</th><th>签发于</th><th></th></tr>
+  {{range .Data.Tokens}}
+  <tr>
+    <td><code>{{.Short}}…</code></td>
+    <td>{{.Label}}</td>
+    <td>{{.Created}}</td>
+    <td>
+      <form method="post" action="/settings/tokens/revoke" class="inline">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <input type="hidden" name="digest" value="{{.Digest}}">
+        <button type="submit">吊销</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+</table>
+{{else}}
+<p class="meta">还没有令牌。</p>
+{{end}}
+
+<form method="post" action="/settings/tokens">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>给新令牌起个备注名</label>
+  <input type="text" name="label" placeholder="laptop" maxlength="40">
+  <p><input type="submit" value="签发新令牌"></p>
+</form>
+{{end}}

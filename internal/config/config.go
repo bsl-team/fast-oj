@@ -16,7 +16,12 @@ type Config struct {
 	MaxSource  int64
 	MaxUpload  int64
 	MaxCase    int64
-	Verbose    bool
+	BCryptCost int
+	Secure     bool
+	// AllowRegister gates self-service signup; M10 moves the switch into the
+	// site settings the operator can edit in the browser.
+	AllowRegister bool
+	Verbose       bool
 }
 
 func envOr(key, fallback string) string {
@@ -53,6 +58,9 @@ func (c *Config) Validate() error {
 	if c.MaxCase > c.MaxUpload {
 		return fmt.Errorf("max-case must not exceed max-upload")
 	}
+	if c.BCryptCost < 10 || c.BCryptCost > 14 {
+		return fmt.Errorf("bcrypt cost must be 10..14")
+	}
 	abs, err := filepath.Abs(c.DataDir)
 	if err != nil {
 		return err
@@ -75,10 +83,14 @@ func Load(args []string) (Config, error) {
 	fs.Int64Var(&c.MaxSource, "max-source", 256<<10, "maximum accepted source/json body bytes")
 	fs.Int64Var(&c.MaxUpload, "max-upload", 64<<20, "maximum case archive upload bytes")
 	fs.Int64Var(&c.MaxCase, "max-case", 16<<20, "maximum single case file bytes")
+	fs.IntVar(&c.BCryptCost, "bcrypt-cost", 11, "password hash cost (10 is weak, 14 is slow on login)")
+	fs.BoolVar(&c.Secure, "secure-cookies", false, "mark session cookies Secure (enable when serving over TLS)")
+	noRegister := fs.Bool("no-register", false, "关闭自助注册")
 	fs.BoolVar(&c.Verbose, "v", false, "verbose request logging")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
+	c.AllowRegister = !*noRegister
 	c.DataDir, _ = filepath.Abs(c.DataDir)
 	if err := c.Validate(); err != nil {
 		return c, err

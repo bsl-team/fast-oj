@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/liangbinchen2013/fast-oj/internal/config"
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
@@ -21,14 +23,16 @@ func testConfig(t testing.TB) config.Config {
 	t.Helper()
 	dir := t.TempDir()
 	return config.Config{
-		Addr:       "127.0.0.1:0",
-		DataDir:    dir,
-		DBPath:     dir + "/test.db",
-		AdminToken: "admin-secret",
-		JudgeToken: "judge-secret",
-		MaxSource:  1 << 20,
-		MaxUpload:  1 << 20,
-		MaxCase:    1 << 20,
+		Addr:          "127.0.0.1:0",
+		DataDir:       dir,
+		DBPath:        dir + "/test.db",
+		AdminToken:    "admin-secret",
+		JudgeToken:    "judge-secret",
+		MaxSource:     1 << 20,
+		MaxUpload:     1 << 20,
+		MaxCase:       1 << 20,
+		BCryptCost:    bcrypt.MinCost, // test speed, never a production default
+		AllowRegister: true,
 	}
 }
 
@@ -43,7 +47,17 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessCfg(t, nil)
+}
+
+// newHarnessCfg builds a server with an adjusted config, for tests that need a
+// different operator setting (registration closed, smaller limits, ...).
+func newHarnessCfg(t *testing.T, mutate func(*config.Config)) *harness {
+	t.Helper()
 	cfg := testConfig(t)
+	if mutate != nil {
+		mutate(&cfg)
+	}
 	db, err := store.Open(ctx(), cfg.DBPath)
 	if err != nil {
 		t.Fatal(err)

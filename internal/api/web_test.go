@@ -71,9 +71,17 @@ func (h *harness) htmlForm(path string, values url.Values, cookie string) (int, 
 	return resp.StatusCode, readAll(h.t, resp), resp.Header
 }
 
-// noRedirectClient follows nothing, so a 303 target can be asserted.
+// postNoRedirect submits a form without following the redirect, so the 303
+// target and Set-Cookie headers stay observable.
 func (h *harness) postNoRedirect(path string, values url.Values, cookie string) (int, string, http.Header) {
+	return h.postForm(path, values, cookie, "")
+}
+
+func (h *harness) postForm(path string, values url.Values, cookie, csrf string) (int, string, http.Header) {
 	h.t.Helper()
+	if csrf != "" {
+		values.Set("csrf", csrf)
+	}
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, strings.NewReader(values.Encode()))
 	if err != nil {
 		h.t.Fatal(err)
@@ -94,6 +102,50 @@ func (h *harness) postNoRedirect(path string, values url.Values, cookie string) 
 	return resp.StatusCode, readAll(h.t, resp), resp.Header
 }
 
+// cookieValue pulls one cookie out of a Set-Cookie list.
+func cookieValue(headers []string, name string) string {
+	for _, line := range headers {
+		if strings.HasPrefix(line, name+"=") {
+			pair := strings.SplitN(line, ";", 2)[0]
+			return strings.TrimPrefix(pair, name+"=")
+		}
+	}
+	return ""
+}
+
+// extractCSRF reads the token the templates hide inside every form.
+func extractCSRF(page string) string { return hiddenValue(page, "csrf") }
+
+// login registers through the web form and returns the session cookie plus the
+// CSRF token from a signed-in page. Passwords must clear the policy minimum.
+func (h *harness) login(handle, email, password string) (cookie, csrf string) {
+	h.t.Helper()
+	code, body, hdr := h.postNoRedirect("/register", url.Values{
+		"handle": {handle}, "email": {email}, "display_name": {handle + " 同学"}, "password": {password},
+	}, "")
+	if code != http.StatusSeeOther {
+		h.t.Fatalf("register = %d %q", code, body)
+	}
+	set := hdr.Values("Set-Cookie")
+	id := cookieValue(set, "fastoj_session")
+	if id == "" {
+		h.t.Fatalf("no session cookie in %q", set)
+	}
+	for _, line := range set {
+		if strings.HasPrefix(line, "fastoj_session=") {
+			if !strings.Contains(line, "HttpOnly") || !strings.Contains(line, "SameSite=Lax") {
+				h.t.Fatalf("session cookie is not HttpOnly+Lax: %q", line)
+			}
+		}
+	}
+	cookie = "fastoj_session=" + id
+	_, page := h.htmlWithCookie(http.MethodGet, "/settings", cookie)
+	if csrf = extractCSRF(page); csrf == "" {
+		h.t.Fatal("settings page carried no CSRF token")
+	}
+	return cookie, csrf
+}
+
 func readAll(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	body, err := io.ReadAll(resp.Body)
@@ -103,27 +155,7 @@ func readAll(t *testing.T, resp *http.Response) string {
 	return string(body)
 }
 
-func (h *harness) bind(handle string) string {
-	h.t.Helper()
-	tok := h.userToken(handle)
-	// The bind reply is a 303 that carries the cookie, so the redirect must not
-	// be followed or the Set-Cookie header is lost.
-	code, body, hdr := h.postNoRedirect("/account/bind", url.Values{"token": {tok}}, "")
-	if code != http.StatusSeeOther {
-		h.t.Fatalf("bind = %d %q", code, body)
-	}
-	cookies := hdr.Values("Set-Cookie")
-	if len(cookies) == 0 {
-		h.t.Fatal("bind set no cookie")
-	}
-	if !strings.Contains(cookies[0], "HttpOnly") || !strings.Contains(cookies[0], "SameSite=Lax") {
-		h.t.Fatalf("token cookie is not HttpOnly+Lax: %q", cookies[0])
-	}
-	if !strings.Contains(cookies[0], tok) {
-		h.t.Fatalf("cookie does not carry the token: %q", cookies[0])
-	}
-	return "fastoj_token=" + tok
-}
+const testPassword = "correct-horse-battery"
 
 func TestProblemListViewForBrowsers(t *testing.T) {
 	h := newHarness(t)
@@ -212,7 +244,7 @@ $$ \frac{a+b}{2} $$
 	if strings.Contains(body, `<form method="post" action="/problems/P4002/submit"`) {
 		t.Error("submit form shown to an anonymous visitor")
 	}
-	bound := h.bind("webuser")
+	bound, _ := h.login("webuser", "webuser@example.com", testPassword)
 	code, page := h.htmlWithCookie(http.MethodGet, "/problems/P4002", bound)
 	if code != http.StatusOK || !strings.Contains(page, `<textarea name="source"`) {
 		t.Fatalf("bound browser should see the editor: %d", code)
@@ -245,11 +277,11 @@ func (h *harness) htmlWithCookie(method, path, cookie string) (int, string) {
 func TestWebSubmitEndToEndThroughTheForm(t *testing.T) {
 	h := newHarness(t)
 	h.readyProblem("P4003")
-	cookie := h.bind("solver")
+	cookie, csrf := h.login("solver", "solver@example.com", testPassword)
 
 	source := "#include <iostream>\nint main(){int a,b;std::cin>>a>>b;std::cout<<a+b;}\n"
-	code, body, hdr := h.postNoRedirect("/problems/P4003/submit",
-		url.Values{"language": {"cpp"}, "source": {source}}, cookie)
+	code, body, hdr := h.postForm("/problems/P4003/submit",
+		url.Values{"language": {"cpp"}, "source": {source}}, cookie, csrf)
 	if code != http.StatusSeeOther {
 		t.Fatalf("submit = %d %q", code, body)
 	}
@@ -292,11 +324,12 @@ func TestWebSubmitEndToEndThroughTheForm(t *testing.T) {
 		t.Error("anonymous page should explain the restriction")
 	}
 
-	// Anonymous form posts bounce to the binding page.
+	// Anonymous form posts bounce to the login page.
 	code, _, hdr = h.postNoRedirect("/problems/P4003/submit",
 		url.Values{"language": {"cpp"}, "source": {"x"}}, "")
-	if code != http.StatusSeeOther || !strings.Contains(hdr.Get("Location"), "/account?msg=") {
-		t.Fatalf("anonymous form = %d %q", code, hdr.Get("Location"))
+	anonLoc := hdr.Get("Location")
+	if code != http.StatusSeeOther || !strings.HasPrefix(anonLoc, "/login?") || !strings.Contains(anonLoc, "msg=") {
+		t.Fatalf("anonymous form = %d %q", code, anonLoc)
 	}
 }
 
@@ -318,7 +351,7 @@ func TestWebFormValidationMirrorsTheAPI(t *testing.T) {
 	h := newHarness(t)
 	h.readyProblem("P4004")
 	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"P4005","title":"no cases"}`))
-	cookie := h.bind("checker")
+	cookie, csrf := h.login("checker", "checker@example.com", testPassword)
 
 	cases := []struct{ pid, lang, source string }{
 		{"P4004", "pascal", "int main(){}"}, // language not accepted
@@ -328,8 +361,8 @@ func TestWebFormValidationMirrorsTheAPI(t *testing.T) {
 		{"MISSING", "cpp", "int main(){}"},  // unknown problem
 	}
 	for _, c := range cases {
-		code, _, hdr := h.postNoRedirect("/problems/"+c.pid+"/submit",
-			url.Values{"language": {c.lang}, "source": {c.source}}, cookie)
+		code, _, hdr := h.postForm("/problems/"+c.pid+"/submit",
+			url.Values{"language": {c.lang}, "source": {c.source}}, cookie, csrf)
 		if code != http.StatusSeeOther {
 			t.Fatalf("%+v = %d", c, code)
 		}
@@ -355,7 +388,7 @@ func TestUnrestrictedProblemFormStillOffersLanguages(t *testing.T) {
 	h := newHarness(t)
 	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"P4010","title":"语言不限"}`))
 	h.uploadCases("P4010")
-	cookie := h.bind("opener")
+	cookie, csrf := h.login("opener", "opener@example.com", testPassword)
 
 	_, page := h.htmlWithCookie(http.MethodGet, "/problems/P4010", cookie)
 	for _, want := range []string{`<option value="c">`, `<option value="cpp">`, "语言 <b>不限</b>"} {
@@ -364,8 +397,8 @@ func TestUnrestrictedProblemFormStillOffersLanguages(t *testing.T) {
 		}
 	}
 	// And the form actually works for an unrestricted problem.
-	code, _, hdr := h.postNoRedirect("/problems/P4010/submit",
-		url.Values{"language": {"Cpp"}, "source": {"int main(){}"}}, cookie)
+	code, _, hdr := h.postForm("/problems/P4010/submit",
+		url.Values{"language": {"Cpp"}, "source": {"int main(){}"}}, cookie, csrf)
 	if code != http.StatusSeeOther || !strings.HasPrefix(hdr.Get("Location"), "/submissions/") {
 		t.Fatalf("submit to unrestricted problem = %d %q", code, hdr.Get("Location"))
 	}
@@ -440,47 +473,109 @@ func TestHTMLNotFoundAndStaticAssets(t *testing.T) {
 	}
 }
 
-func TestAccountPageAndUnbind(t *testing.T) {
+func TestSettingsTokensAndLogout(t *testing.T) {
 	h := newHarness(t)
-	cookie := h.bind("wallet")
+	cookie, csrf := h.login("wallet", "wallet@example.com", testPassword)
 
-	// The bind is per cookie: an anonymous browser still sees the empty form.
-	if _, anonPage := h.htmlGet("/account", ""); strings.Contains(anonPage, "wallet") {
-		t.Fatal("anonymous visitor appeared bound")
+	// Anonymous visitors never see someone else's settings.
+	if _, anonPage := h.htmlGet("/settings", ""); strings.Contains(anonPage, "wallet@example.com") {
+		t.Fatal("anonymous visitor reached the settings page")
 	}
-	code, bound := h.htmlWithCookie(http.MethodGet, "/account", cookie)
-	if code != http.StatusOK || !strings.Contains(bound, "wallet") {
-		t.Fatalf("account page = %d %s", code, bound)
+	code, mine := h.htmlWithCookie(http.MethodGet, "/settings", cookie)
+	if code != http.StatusOK || !strings.Contains(mine, "wallet@example.com") {
+		t.Fatalf("settings = %d", code)
 	}
-	if !strings.Contains(bound, "退出这台机器上的绑定") {
-		t.Fatalf("no unbind button for a bound browser:\n%s", bound)
-	}
-
-	// A bound cookie authenticates the same way the header does.
-	if _, who := h.htmlWithCookie(http.MethodGet, "/whoami", ""); who == "" {
-		t.Fatal("whoami replied empty")
-	}
-	code, boundPage := h.htmlWithCookie(http.MethodGet, "/problems", cookie)
-	if code != http.StatusOK || !strings.Contains(boundPage, "wallet") {
-		t.Fatalf("cookie auth did not reach the page: %d", code)
+	if !strings.Contains(mine, "wallet 同学") {
+		t.Errorf("nickname lost from the page:\n%s", mine)
 	}
 
-	unboundCode, _, hdr := h.postNoRedirect("/account/unbind", url.Values{}, cookie)
-	if unboundCode != http.StatusSeeOther {
-		t.Fatalf("unbind = %d", unboundCode)
-	}
-	cleared := hdr.Get("Set-Cookie")
-	if !strings.Contains(cleared, "Max-Age=0") || !strings.Contains(cleared, "fastoj_token=;") {
-		t.Fatalf("unbind did not expire the cookie: %q", cleared)
+	// A cookie-authenticated write without the CSRF token is refused.
+	if code, _, _ := h.postNoRedirect("/settings/tokens", url.Values{"label": {"no-csrf"}}, cookie); code != http.StatusForbidden {
+		t.Fatalf("CSRF-less token issue = %d, want 403", code)
 	}
 
-	// A bad or empty token is refused and nothing is stored.
-	if _, _, bad := h.postNoRedirect("/account/bind", url.Values{"token": {"wrong"}}, ""); !strings.Contains(bad.Get("Location"), "msg=") {
-		t.Fatal("bad token should bounce with a message")
+	// Issuing a token shows the plaintext exactly once.
+	code, issuedPage, _ := h.postForm("/settings/tokens", url.Values{"label": {"laptop"}}, cookie, csrf)
+	if code != http.StatusOK {
+		t.Fatalf("issue token = %d", code)
 	}
-	if _, _, empty := h.postNoRedirect("/account/bind", url.Values{"token": {""}}, ""); !strings.Contains(empty.Get("Location"), "msg=") {
-		t.Fatal("empty token should bounce with a message")
+	token := plaintextToken(issuedPage)
+	if len(token) < 20 {
+		t.Fatalf("no plaintext token in:\n%s", issuedPage)
 	}
+	if !strings.Contains(issuedPage, "只显示这一次") {
+		t.Error("missing one-time warning")
+	}
+	// The plaintext works as a bearer credential.
+	if code, who := h.get("/whoami", token); code != http.StatusOK || !strings.Contains(who, "wallet") {
+		t.Fatalf("token auth = %d %q", code, who)
+	}
+
+	// Revoking by digest kills it.
+	digest := hiddenValue(issuedPage, "digest")
+	if digest == "" {
+		t.Fatal("no digest rendered")
+	}
+	if code, _, _ := h.postForm("/settings/tokens/revoke", url.Values{"digest": {digest}}, cookie, csrf); code != http.StatusSeeOther {
+		t.Fatalf("revoke = %d", code)
+	}
+	if code, _ := h.get("/whoami", token); code != http.StatusUnauthorized {
+		t.Fatalf("revoked token still works: %d", code)
+	}
+
+	// Profile edits stick.
+	if code, _, _ := h.postForm("/settings/profile",
+		url.Values{"display_name": {"钱包"}, "bio": {"刷题的人"}}, cookie, csrf); code != http.StatusSeeOther {
+		t.Fatalf("profile save = %d", code)
+	}
+	_, after := h.htmlWithCookie(http.MethodGet, "/settings", cookie)
+	if !strings.Contains(after, "钱包") || !strings.Contains(after, "刷题的人") {
+		t.Errorf("profile not saved:\n%s", after)
+	}
+	// The nav bar shows the new nickname everywhere.
+	if _, list := h.htmlWithCookie(http.MethodGet, "/problems", cookie); !strings.Contains(list, "钱包") {
+		t.Error("nav still shows the old name")
+	}
+
+	// Logout drops the session server-side, not just the cookie.
+	code, _, hdr := h.postForm("/logout", url.Values{}, cookie, csrf)
+	if code != http.StatusSeeOther {
+		t.Fatalf("logout = %d", code)
+	}
+	if cleared := hdr.Get("Set-Cookie"); !strings.Contains(cleared, "fastoj_session=;") {
+		t.Fatalf("session cookie not cleared: %q", cleared)
+	}
+	if _, page := h.htmlWithCookie(http.MethodGet, "/settings", cookie); strings.Contains(page, "wallet@example.com") {
+		t.Error("the old session still authenticates")
+	}
+}
+
+// hiddenValue pulls the value of a hidden input by name.
+func hiddenValue(page, name string) string {
+	marker := `name="` + name + `" value="`
+	i := strings.Index(page, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := page[i+len(marker):]
+	if j := strings.IndexByte(rest, '"'); j >= 0 {
+		return rest[:j]
+	}
+	return ""
+}
+
+// plaintextToken lifts the one-time token out of the settings banner.
+func plaintextToken(page string) string {
+	i := strings.Index(page, "<code>")
+	if i < 0 {
+		return ""
+	}
+	rest := page[i+len("<code>"):]
+	j := strings.Index(rest, "</code>")
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
 }
 
 func TestSubmissionListViewForBrowsers(t *testing.T) {

@@ -1,0 +1,21 @@
+{{define "content"}}
+<h1>注册</h1>
+
+<form method="post" action="/register">
+  <label>用户名（登录名，之后可用作个人主页地址）</label>
+  <input type="text" name="handle" value="{{.Data.Handle}}" autocomplete="username" required>
+
+  <label>邮箱（暂不验证，仅用于识别与以后找回密码）</label>
+  <input type="email" name="email" value="{{.Data.Email}}" autocomplete="email" required>
+
+  <label>昵称（可选，显示在题目记录与排行榜上）</label>
+  <input type="text" name="display_name" value="{{.Data.DisplayName}}" maxlength="40">
+
+  <label>密码（至少 10 位）</label>
+  <input type="password" name="password" autocomplete="new-password" required>
+
+  <p><input type="submit" value="注册并登录"></p>
+</form>
+
+<p class="meta">注册即表示同意判题结果以本系统记录为准。判题在本机以受限进程运行，详见 README 的隔离边界。</p>
+{{end}}

@@ -75,10 +75,12 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `GET` | `/rank` | 公开 | 排行榜 |
 | `GET` | `/u/{handle}` | 公开 | 个人主页 |
 | `GET` | `/whoami` | 令牌 | 当前身份 |
+| `GET` `/POST` | `/login` `/logout` | — | 邮箱或用户名 + 密码登录，session cookie |
+| `GET` `/POST` | `/register` | 公开（可关） | 自助注册，邮箱暂不验证 |
+| `GET` `/POST` | `/settings` `/settings/*` | 登录用户 | 资料、密码、API 令牌签发与吊销 |
 | `POST` | `/users` | admin | 建/取用户 |
 | `GET` | `/users` | admin | 用户列表 |
-| `POST` | `/users/{handle}/tokens` | admin | 签发 API 令牌 |
-| `GET` `/POST` | `/account` `/account/bind` `/account/unbind` | — | 网页令牌 cookie 绑定 |
+| `POST` | `/users/{handle}/tokens` | admin | 代用户签发 API 令牌 |
 | `POST` | `/judge/claim` | 判机 | 心跳 + 领取一条（空队列返回 404 `queue empty`） |
 | `GET` | `/judge/cases/{id}/{in\|out}` | 判机 | 取用例正文（含判题用例） |
 | `POST` | `/judge/submissions/{id}/status` | 判机 | 进度（`compiling` → `running`） |
@@ -138,16 +140,26 @@ curl -s -X POST -H "Authorization: Bearer ADM" --data-binary @cases.zip localhos
 
 | 凭证 | 怎么来 | 能干什么 |
 |------|--------|----------|
-| `-admin-token` | 启动参数 | 建题、看/改隐藏题、发令牌、看判题用例 |
+| `-admin-token` | 启动参数 | 建题、看/改隐藏题、建用户发令牌、看判题用例、驱动判机队列 |
 | `-judge-token` | 启动参数 | 领取任务、取用例正文、回报结果 |
-| 用户 API 令牌 | admin 用 `POST /users/{handle}/tokens` 签发 | 提交、看自己的源码与逐用例 |
+| 邮箱 + 密码 | `/register` 自助注册 | 登录成普通用户（session cookie） |
+| 用户 API 令牌 | 登录后在 `/settings` 自助签发，或 admin 代签 | 给 curl / 脚本用，与网页登录互不影响 |
 
-- 令牌**只存 SHA-256 摘要**，明文仅在签发那一次返回
-- 网页用同一枚令牌，存在 `fastoj_token` 的 `HttpOnly` + `SameSite=Lax` cookie 里（30 天）；不做第二套会话系统，Lax 保证跨站表单 POST 带不上它
-- 两个引导令牌都用常量时间比较
-- **没有口令登录**（`users.passhash` 列先留着），注册只能由 admin 完成
-- 隐藏题对非 admin 一律 404 而不是 403，避免被枚举
-- 提交的判定结果公开；源码、逐用例明细、判机附带的差异信息只有本人或 admin 能看
+登录与会话：
+
+- 注册要邮箱 + 用户名 + 密码（≥10 位，bcrypt cost 默认 11）；**邮箱暂不发送验证邮件**，注册即可用
+- 登录可用邮箱或用户名；失败提示统一为「账号或密码不正确」，不区分哪一步错，避免枚举账号
+- 同一来源 IP 在 15 分钟内失败 10 次返回 429；计数在库里，重启不会把锁定清零
+- session cookie `fastoj_session`：`HttpOnly` + `SameSite=Lax` + `Path=/`，30 天；上 TLS 时加 `-secure-cookies`
+- 每次登录新建 session；改密码吊销该用户全部 session（令牌不受牵连，吊销是 `/settings` 上的独立动作）
+- **CSRF**：非 GET 请求统一过闸门，只有「凭 cookie 认证」的请求被要求带 `csrf` 字段或 `X-CSRF-Token` 头，与 session 里的 token 常量时间比较；`Authorization: Bearer` 的 API 调用不带 cookie、天然免疫，不做要求
+- `/login?next=` 只认站内路径，`//evil`、`/\evil`、绝对 URL 一律回落到 `/`
+- 引导令牌常量时间比较；用户令牌只存 SHA-256 摘要，明文仅在签发那一次出现
+- 隐藏题对无权限者一律 404 而不是 403，避免被枚举
+- 提交的判定结果公开；源码、逐用例明细、判机差异信息只有本人或管理员可见
+- 关闭注册：`-no-register`（M10 会搬到后台开关）
+
+> 权限粒度现在只有 `user` / `admin` 两级；细粒度能力位（谁能出题、谁管比赛、谁管用户）在 M9 落地。
 
 ---
 
@@ -218,7 +230,10 @@ data/
 | `-max-source` | 262144 | 源码/JSON 请求体上限 |
 | `-max-upload` | 64 MiB | 用例包上限 |
 | `-max-case` | 16 MiB | 单个用例文件上限 |
-| `-v` | 关 | 记录每个请求（默认只记失败与 >50ms 的请求） |
+| `-bcrypt-cost` | 11 | 口令哈希强度（10 偏弱，14 登录会明显卡） |
+| `-secure-cookies` | 关 | 给 session cookie 加 `Secure`，上 TLS 后打开 |
+| `-no-register` | 关 | 关闭自助注册 |
+| `-v` | 关 | 记录每个请求（默认只记失败与 >50ms 的请求，以及登录失败） |
 
 判机端 `fast-judge`：
 
@@ -284,7 +299,7 @@ powershell -File build.ps1 -Test
 |------|------|
 | 语言 | 只有 C/C++；Python 判机的时间/内存测量另说 |
 | 判机隔离 | Windows 只限内存/CPU；Linux 外部 sandbox 待接 |
-| 账号 | 无自注册、无口令登录，令牌由 admin 签发 |
+| 账号 | 注册可关；邮箱验证与「忘记密码」重置链接还没做，忘了密码要管理员改库 |
 | 建题 | 只能走 API（网页管理界面未做） |
 | 竞赛/比赛 | 未做 |
 | 统计 | 排行榜只有「按去重 AC 题数」，无难度、标签、通过率排序 |

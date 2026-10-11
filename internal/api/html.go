@@ -17,9 +17,14 @@ var assetFS embed.FS
 // is allowed to stop the process rather than degrade one page at runtime.
 var views = mustLoadViews()
 
+// viewer is the nav-bar identity. Handle is the URL slug, Name what a human
+// reads; CSRF travels with it because every form a signed-in browser sees must
+// carry its token.
 type viewer struct {
 	Handle string
+	Name   string
 	Admin  bool
+	CSRF   string
 }
 
 // shell is the envelope every page template sees: layout fields plus the page
