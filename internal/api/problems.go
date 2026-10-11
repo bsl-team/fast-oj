@@ -101,7 +101,7 @@ func (s *Server) handleProblemCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var p store.Problem
 	if err := req.apply(&p, true); err != nil {
-		respondError(w, r, http.StatusBadRequest, err.Error())
+		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	created, err := s.db.CreateProblem(r.Context(), &p)
@@ -127,7 +127,7 @@ func (s *Server) handleProblemUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := req.apply(&p, false); err != nil {
-		respondError(w, r, http.StatusBadRequest, err.Error())
+		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	updated, err := s.db.UpdateProblem(r.Context(), p)
@@ -152,7 +152,7 @@ func (s *Server) handleProblemDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.cases.RemoveProblem(p.ID); err != nil {
-		respondError(w, r, http.StatusInternalServerError, "deleted row but case files remain: "+err.Error())
+		s.respondError(w, r, http.StatusInternalServerError, "deleted row but case files remain: "+err.Error())
 		return
 	}
 	respond(w, r, http.StatusOK, fmt.Sprintf("deleted %s (id=%d)\n", p.PID, p.ID),
@@ -162,11 +162,15 @@ func (s *Server) handleProblemDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleProblemList(w http.ResponseWriter, r *http.Request) {
 	a, _ := s.authenticate(r)
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	page, err := s.db.ListProblems(r.Context(), after, limit,
-		r.URL.Query().Get("q"), !a.Admin)
+	limit := pageLimit(r.URL.Query().Get("limit"))
+	search := r.URL.Query().Get("q")
+	page, err := s.db.ListProblems(r.Context(), after, limit, search, !a.Admin)
 	if err != nil {
 		s.writeStoreError(w, r, err)
+		return
+	}
+	if wantsHTML(r) {
+		s.problemsPage(w, r, a.viewer(), page, limit, search)
 		return
 	}
 
@@ -200,7 +204,11 @@ func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !p.Visible && !a.Admin {
-		respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
+		s.respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
+		return
+	}
+	if wantsHTML(r) {
+		s.problemPage(w, r, a, p)
 		return
 	}
 
@@ -323,26 +331,26 @@ func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request, dst any) boo
 func (s *Server) decodeBodyLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
 	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, "unreadable body")
+		s.respondError(w, r, http.StatusBadRequest, "unreadable body")
 		return false
 	}
 	if int64(len(body)) > limit {
-		respondError(w, r, http.StatusRequestEntityTooLarge,
+		s.respondError(w, r, http.StatusRequestEntityTooLarge,
 			fmt.Sprintf("body over %d bytes", limit))
 		return false
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
-		respondError(w, r, http.StatusBadRequest, "empty body")
+		s.respondError(w, r, http.StatusBadRequest, "empty body")
 		return false
 	}
 	// Reject invalid UTF-8 at the boundary: json.Unmarshal would silently turn
 	// each bad byte into U+FFFD and permanently corrupt statements on write.
 	if !utf8.Valid(body) {
-		respondError(w, r, http.StatusBadRequest, "body must be valid UTF-8 (Windows cmd: chcp 65001)")
+		s.respondError(w, r, http.StatusBadRequest, "body must be valid UTF-8 (Windows cmd: chcp 65001)")
 		return false
 	}
 	if err := json.Unmarshal(body, dst); err != nil {
-		respondError(w, r, http.StatusBadRequest, "bad json: "+err.Error())
+		s.respondError(w, r, http.StatusBadRequest, "bad json: "+err.Error())
 		return false
 	}
 	return true
@@ -351,12 +359,12 @@ func (s *Server) decodeBodyLimit(w http.ResponseWriter, r *http.Request, dst any
 func (s *Server) writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		respondError(w, r, http.StatusNotFound, "not found")
+		s.respondError(w, r, http.StatusNotFound, "not found")
 	case errors.Is(err, store.ErrConflict):
-		respondError(w, r, http.StatusConflict, err.Error())
+		s.respondError(w, r, http.StatusConflict, err.Error())
 	default:
 		s.log.Error("store", "err", err, "path", r.URL.Path)
-		respondError(w, r, http.StatusInternalServerError, "database error")
+		s.respondError(w, r, http.StatusInternalServerError, "database error")
 	}
 }
 
@@ -460,7 +468,7 @@ func (s *Server) handleCaseUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	pairs, err := s.collectCases(zipBody)
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, err.Error())
+		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -497,7 +505,7 @@ func (s *Server) handleCaseUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		relIn, relOut, err := s.cases.Put(p.ID, ordinal, pair.Input, pair.Output)
 		if err != nil {
-			respondError(w, r, http.StatusInternalServerError, "case write failed: "+err.Error())
+			s.respondError(w, r, http.StatusInternalServerError, "case write failed: "+err.Error())
 			return
 		}
 		_, err = s.db.PutTestcase(r.Context(), &store.Testcase{
@@ -526,7 +534,7 @@ func (s *Server) readUpload(w http.ResponseWriter, r *http.Request) ([]byte, boo
 	defer r.Body.Close()
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		if err := r.ParseMultipartForm(s.cfg.MaxUpload); err != nil {
-			respondError(w, r, http.StatusBadRequest, "bad multipart upload: "+err.Error())
+			s.respondError(w, r, http.StatusBadRequest, "bad multipart upload: "+err.Error())
 			return nil, false
 		}
 		file, _, err := r.FormFile("cases")
@@ -534,13 +542,13 @@ func (s *Server) readUpload(w http.ResponseWriter, r *http.Request) ([]byte, boo
 			file, _, err = r.FormFile("file")
 		}
 		if err != nil {
-			respondError(w, r, http.StatusBadRequest, "no file part named cases")
+			s.respondError(w, r, http.StatusBadRequest, "no file part named cases")
 			return nil, false
 		}
 		defer file.Close()
 		body, err := io.ReadAll(io.LimitReader(file, s.cfg.MaxUpload+1))
 		if err != nil || int64(len(body)) > s.cfg.MaxUpload {
-			respondError(w, r, http.StatusRequestEntityTooLarge, "upload too large")
+			s.respondError(w, r, http.StatusRequestEntityTooLarge, "upload too large")
 			return nil, false
 		}
 		return body, true
@@ -548,16 +556,16 @@ func (s *Server) readUpload(w http.ResponseWriter, r *http.Request) ([]byte, boo
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, s.cfg.MaxUpload+1))
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, "unreadable body")
+		s.respondError(w, r, http.StatusBadRequest, "unreadable body")
 		return nil, false
 	}
 	if int64(len(body)) > s.cfg.MaxUpload {
-		respondError(w, r, http.StatusRequestEntityTooLarge,
+		s.respondError(w, r, http.StatusRequestEntityTooLarge,
 			fmt.Sprintf("upload over %d bytes", s.cfg.MaxUpload))
 		return nil, false
 	}
 	if len(body) == 0 {
-		respondError(w, r, http.StatusBadRequest, "empty upload")
+		s.respondError(w, r, http.StatusBadRequest, "empty upload")
 		return nil, false
 	}
 	return body, true
@@ -615,7 +623,7 @@ func (s *Server) handleCaseWipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.cases.RemoveProblem(p.ID); err != nil {
-		respondError(w, r, http.StatusInternalServerError, "metadata removed but files remain: "+err.Error())
+		s.respondError(w, r, http.StatusInternalServerError, "metadata removed but files remain: "+err.Error())
 		return
 	}
 	respond(w, r, http.StatusOK, fmt.Sprintf("%s: removed %d cases\n", p.PID, n),
@@ -636,7 +644,7 @@ func (s *Server) handleCaseBody(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !tc.IsSample && !a.Admin {
-		respondError(w, r, http.StatusForbidden, "case "+tc.Name+" is not a sample")
+		s.respondError(w, r, http.StatusForbidden, "case "+tc.Name+" is not a sample")
 		return
 	}
 	rel := tc.OutputRel
@@ -645,7 +653,7 @@ func (s *Server) handleCaseBody(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := s.cases.Read(rel)
 	if err != nil {
-		respondError(w, r, http.StatusNotFound, "case file missing")
+		s.respondError(w, r, http.StatusNotFound, "case file missing")
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

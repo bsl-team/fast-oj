@@ -1,0 +1,61 @@
+{{define "content"}}
+<h1>{{.Data.PID}}　{{.Data.Title}}</h1>
+
+<p class="meta">
+  时限 <b>{{.Data.Time}}</b> · 内存 <b>{{.Data.Mem}}</b> · 语言 <b>{{.Data.LangText}}</b>
+  · 判题用例 <b>{{.Data.JudgedCases}}</b> · 分值 <b>{{.Data.TotalScore}}</b>
+  · 通过 <b>{{.Data.Solved}}</b> 人 / 提交 <b>{{.Data.Submits}}</b> 次
+  {{if .Data.Hidden}} · <span class="hidden">未公开</span>{{end}}
+</p>
+
+<article>{{.Data.Statement}}</article>
+
+{{if .Data.Samples}}
+<h2>样例</h2>
+{{range .Data.Samples}}
+<h3>{{.Name}}</h3>
+<pre><code>{{.In}}</code></pre>
+<pre><code>{{.Out}}</code></pre>
+{{end}}
+{{end}}
+
+<h2>提交代码</h2>
+{{if .Me}}
+<form method="post" action="/problems/{{.Data.PID}}/submit">
+  <div class="row">
+    <div>
+      <label>语言</label>
+      <select name="language">
+        {{range .Data.Langs}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+    </div>
+  </div>
+  <label>源代码</label>
+  <textarea name="source" spellcheck="false" autocomplete="off" required></textarea>
+  <p><input type="submit" value="提交判题"></p>
+</form>
+{{else}}
+<p class="flash">提交需要 API 令牌 —— 先到 <a href="/account">绑定令牌</a>。</p>
+{{end}}
+
+{{if .Data.Recent}}
+<h2>最近提交</h2>
+<table>
+  <tr><th>#</th><th>用户</th><th>语言</th><th>结果</th><th class="num">用时</th><th class="num">内存</th><th>时间</th></tr>
+  {{range .Data.Recent}}
+  <tr>
+    <td><a href="/submissions/{{.ID}}">{{.ID}}</a></td>
+    <td><a href="/u/{{.Handle}}">{{.Handle}}</a></td>
+    <td>{{.Language}}</td>
+    <td><span class="badge {{.Class}}">{{.Outcome}}</span></td>
+    <td class="num">{{.Time}}</td>
+    <td class="num">{{.Mem}}</td>
+    <td>{{.Ago}}</td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+
+<p class="meta"><a href="/problems/{{.Data.PID}}?format=text">纯文本题面</a> ·
+  <a href="/problems/{{.Data.PID}}?format=json">JSON</a></p>
+{{end}}

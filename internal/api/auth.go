@@ -76,17 +76,31 @@ func bearerToken(r *http.Request) string {
 	if len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
 		return strings.TrimSpace(h[7:])
 	}
+	// The web UI keeps the same API token in a cookie. SameSite=Lax means a form
+	// posted from another site cannot carry it, so the cookie is not a CSRF hole.
+	if c, err := r.Cookie(tokenCookie); err == nil {
+		return c.Value
+	}
 	return ""
+}
+
+// viewerOf reports who the request is for the page header; anonymous on error.
+func (s *Server) viewerOf(r *http.Request) *viewer {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		return nil
+	}
+	return &viewer{Handle: a.User.Handle, Admin: a.Admin}
 }
 
 // writeAuthError maps the auth failures onto 401/403.
 func (s *Server) writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errForbidden):
-		respondError(w, r, http.StatusForbidden, "admin access required")
+		s.respondError(w, r, http.StatusForbidden, "admin access required")
 	case errors.Is(err, errJudgeOnly):
-		respondError(w, r, http.StatusForbidden, "judge token required")
+		s.respondError(w, r, http.StatusForbidden, "judge token required")
 	default:
-		respondError(w, r, http.StatusUnauthorized, "invalid or missing bearer token")
+		s.respondError(w, r, http.StatusUnauthorized, "invalid or missing bearer token")
 	}
 }

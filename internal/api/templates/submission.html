@@ -1,0 +1,58 @@
+{{define "content"}}
+<h1>提交 #{{.Data.ID}}</h1>
+
+<p class="meta">
+  <a href="/u/{{.Data.Handle}}">{{.Data.Handle}}</a> →
+  <a href="/problems/{{.Data.PID}}">{{.Data.PID}}　{{.Data.Title}}</a>
+  · {{.Data.Language}} · <span class="badge {{.Data.Class}}">{{.Data.Outcome}}</span>
+</p>
+
+<h2 class="{{.Data.Class}}">{{.Data.Headline}}</h2>
+
+<table>
+  <tr>
+    <th>用时</th><th>内存</th><th>得分</th><th>失败用例</th><th>判机</th><th>提交于</th><th>判于</th>
+  </tr>
+  <tr>
+    <td>{{.Data.Time}}</td><td>{{.Data.Mem}}</td><td>{{.Data.Score}}</td>
+    <td>{{.Data.Failed}}</td><td>{{.Data.JudgeName}}</td>
+    <td>{{.Data.Created}}</td><td>{{.Data.Judged}}</td>
+  </tr>
+</table>
+
+{{if .Data.Full}}
+  {{if .Data.Runs}}
+  <h2>逐用例</h2>
+  <table>
+    <tr><th class="num">#</th><th>类型</th><th>用例</th><th>结果</th><th class="num">用时</th><th class="num">内存</th></tr>
+    {{range .Data.Runs}}
+    <tr>
+      <td class="num">{{.Ordinal}}</td>
+      <td>{{if .IsSample}}样例{{else}}判题{{end}}</td>
+      <td>{{.CaseName}}</td>
+      <td><span class="badge {{.Verdict}}">{{.Verdict}}</span></td>
+      <td class="num">{{.Time}}</td>
+      <td class="num">{{.Mem}}</td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+
+  {{if .Data.Detail}}
+  <h2>判机信息</h2>
+  <pre>{{.Data.Detail}}</pre>
+  {{end}}
+
+  <h2>源码</h2>
+  <pre><code>{{.Data.Source}}</code></pre>
+{{else}}
+  <p class="meta">逐用例结果与源码只有本人或管理员可见。<a href="/account">绑定令牌</a></p>
+{{end}}
+
+<p class="meta">
+  {{if .Data.Waiting}}判题中 —— 本页会自动刷新。{{end}}
+  <a href="/submissions/{{.Data.ID}}?format=text">纯文本结果</a> ·
+  <a href="/submissions/{{.Data.ID}}?format=json">JSON</a>
+</p>
+{{if .Data.Waiting}}<meta http-equiv="refresh" content="2">{{end}}
+{{end}}

@@ -39,14 +39,14 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Handle = strings.TrimSpace(req.Handle)
 	if !validHandle(req.Handle) {
-		respondError(w, r, http.StatusBadRequest, "handle must be 1..32 of [A-Za-z0-9_.-]")
+		s.respondError(w, r, http.StatusBadRequest, "handle must be 1..32 of [A-Za-z0-9_.-]")
 		return
 	}
 	if req.Role == "" {
 		req.Role = "user"
 	}
 	if req.Role != "user" && req.Role != "admin" {
-		respondError(w, r, http.StatusBadRequest, "role must be user or admin")
+		s.respondError(w, r, http.StatusBadRequest, "role must be user or admin")
 		return
 	}
 	u, err := s.db.EnsureUser(r.Context(), req.Handle, req.Role)
@@ -105,7 +105,7 @@ func (s *Server) handleTokenCreate(w http.ResponseWriter, r *http.Request) {
 
 	token, err := store.NewToken()
 	if err != nil {
-		respondError(w, r, http.StatusInternalServerError, "token generation failed")
+		s.respondError(w, r, http.StatusInternalServerError, "token generation failed")
 		return
 	}
 	if err := s.db.CreateToken(r.Context(), u.ID, label, token); err != nil {

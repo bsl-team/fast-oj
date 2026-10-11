@@ -1,0 +1,29 @@
+{{define "layout"}}<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · fast-oj</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="/static/math.js"></script>
+</head>
+<body>
+<nav class="top">
+  <a class="brand" href="/">fast-oj</a>
+  <a href="/">题目</a>
+  <a href="/rank">排行榜</a>
+  <a href="/submissions">提交</a>
+  {{if .Me}}<a href="/u/{{.Me.Handle}}">{{.Me.Handle}}</a>{{end}}
+  <a class="acct" href="/account">{{if .Me}}令牌{{else}}绑定令牌{{end}}</a>
+</nav>
+<main>
+  {{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+  {{block "content" .}}（空白页）{{end}}
+</main>
+<footer class="top">
+  这份页面同时是纯文本 API：<code>curl -s localhost:8080/problems</code>；机器可读加 <code>?format=json</code>。
+</footer>
+</body>
+</html>{{end}}

@@ -1,0 +1,618 @@
+package api
+
+import (
+	"errors"
+	"fmt"
+	"html/template"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/liangbinchen2013/fast-oj/internal/judge"
+	"github.com/liangbinchen2013/fast-oj/internal/store"
+)
+
+// tokenCookie holds the API token for the web UI so a browser and curl share one
+// credential instead of two parallel auth systems.
+const tokenCookie = "fastoj_token"
+
+// defaultLanguages is what the submit form offers when a problem does not
+// restrict languages; it mirrors judge.DefaultTools().
+var defaultLanguages = []string{"c", "cpp"}
+
+func statusLine(status int) string {
+	return strconv.Itoa(status) + " " + http.StatusText(status)
+}
+
+func statusClass(status int) string {
+	if status >= 400 {
+		return "bad"
+	}
+	return ""
+}
+
+func setTokenCookie(w http.ResponseWriter, token string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     tokenCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+	})
+}
+
+// --- formatting shared by pages ---
+
+// outcomeOf names what a reader should see as the result of a submission.
+func outcomeOf(status, verdict string) (string, string) {
+	if judge.Status(status).InFlight() {
+		return status, statusLabel(status)
+	}
+	if verdict != "" {
+		return verdict, verdict
+	}
+	return status, statusLabel(status)
+}
+
+func statusLabel(status string) string {
+	switch status {
+	case "queued":
+		return "排队中"
+	case "compiling":
+		return "编译中"
+	case "running":
+		return "运行中"
+	case "done":
+		return "已完成"
+	case "abandoned":
+		return "判机超时"
+	}
+	return status
+}
+
+func agoMS(ms int64) string {
+	if ms == 0 {
+		return "-"
+	}
+	d := time.Since(time.UnixMilli(ms))
+	if d < 0 {
+		return "刚刚"
+	}
+	switch {
+	case d < time.Minute:
+		return strconv.Itoa(int(d.Seconds())) + " 秒前"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + " 分钟前"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + " 小时前"
+	default:
+		return time.UnixMilli(ms).Local().Format("2006-01-02")
+	}
+}
+
+// subRow is the shared shape for any submission table.
+type subRow struct {
+	ID       int64
+	Handle   string
+	PID      string
+	Title    string
+	Language string
+	Class    string
+	Outcome  string
+	Time     string
+	Mem      string
+	Score    string
+	Ago      string
+}
+
+func rowOf(d store.SubmissionDetail) subRow {
+	class, outcome := outcomeOf(d.Status, d.Verdict)
+	score := "-"
+	if d.TotalScore > 0 {
+		score = fmt.Sprintf("%d/%d", d.Score, d.TotalScore)
+	}
+	return subRow{
+		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
+		Class: class, Outcome: outcome,
+		Time: formatMS(d.TimeMS), Mem: formatKB(d.MemKB), Score: score,
+		Ago: agoMS(d.CreatedAt),
+	}
+}
+
+// --- problem list ---
+
+type problemEntry struct {
+	PID, Title, Time, Mem  string
+	Cases, Solved, Submits int
+	Hidden                 bool
+}
+
+type problemsData struct {
+	Items []problemEntry
+	Total int
+	Limit int
+	Next  int64
+	Query string
+}
+
+func (s *Server) problemsPage(w http.ResponseWriter, r *http.Request, me *viewer, page store.ProblemPage, limit int, search string) {
+	ids := make([]int64, len(page.Items))
+	for i, p := range page.Items {
+		ids[i] = p.ID
+	}
+	cases, err := s.db.CaseCounts(r.Context(), ids)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	counts, err := s.db.ProblemCounts(r.Context(), ids)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+
+	rows := make([]problemEntry, 0, len(page.Items))
+	for _, p := range page.Items {
+		c := counts[p.ID]
+		rows = append(rows, problemEntry{
+			PID: p.PID, Title: p.Title,
+			Time: formatMS(p.TimeLimitMS), Mem: formatKB(p.MemLimitKB),
+			Cases: cases[p.ID], Solved: c.Solved, Submits: c.Submits,
+			Hidden: !p.Visible,
+		})
+	}
+	s.page(w, r, http.StatusOK, "题库", "problems", me, msgOf(r), problemsData{
+		Items: rows, Total: page.Total, Limit: limit, Next: page.NextAfter, Query: search,
+	})
+}
+
+func msgOf(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("msg"))
+}
+
+// --- problem detail ---
+
+type samplePair struct{ Name, In, Out string }
+
+type problemData struct {
+	PID, Title  string
+	Time, Mem   string
+	LangText    string
+	Langs       []string
+	JudgedCases int
+	TotalScore  int
+	Solved      int
+	Submits     int
+	Hidden      bool
+	Statement   template.HTML
+	Samples     []samplePair
+	Recent      []subRow
+}
+
+func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p store.Problem) {
+	cases, err := s.db.ListTestcases(r.Context(), p.ID, false)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	counts, err := s.db.ProblemCounts(r.Context(), []int64{p.ID})
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+
+	// Sample bodies are read from disk; judged cases are named but never shown.
+	var samples []samplePair
+	judged := 0
+	for _, tc := range cases {
+		if tc.IsSample {
+			in, errIn := s.cases.Read(tc.InputRel)
+			out, errOut := s.cases.Read(tc.OutputRel)
+			pair := samplePair{Name: tc.Name, In: "（用例文件缺失）"}
+			if errIn == nil && errOut == nil {
+				pair.In = string(in)
+				pair.Out = string(out)
+			}
+			samples = append(samples, pair)
+			continue
+		}
+		judged++
+	}
+
+	recent, err := s.db.ListSubmissionDetails(r.Context(), store.DetailFilter{ProblemID: p.ID, Limit: 10})
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	rows := make([]subRow, 0, len(recent))
+	for _, d := range recent {
+		rows = append(rows, rowOf(d))
+	}
+
+	langs := p.Languages
+	langText := joinOr(langs, "不限")
+	// An unrestricted problem still needs concrete choices in the form, so offer
+	// the languages the built-in judge can actually build.
+	options := langs
+	if len(options) == 0 {
+		options = defaultLanguages
+	}
+	c := counts[p.ID]
+	s.page(w, r, http.StatusOK, p.PID+" "+p.Title, "problem", a.viewer(), msgOf(r), problemData{
+		PID: p.PID, Title: p.Title,
+		Time: formatMS(p.TimeLimitMS), Mem: formatKB(p.MemLimitKB),
+		LangText: langText, Langs: options,
+		JudgedCases: judged, TotalScore: total,
+		Solved: c.Solved, Submits: c.Submits,
+		Hidden:    !p.Visible,
+		Statement: renderMarkdownHTML([]byte(p.Statement)),
+		Samples:   samples,
+		Recent:    rows,
+	})
+}
+
+// viewer turns an actor into the nav-bar identity.
+func (a actor) viewer() *viewer {
+	if a.User.ID == 0 {
+		return nil
+	}
+	return &viewer{Handle: a.User.Handle, Admin: a.Admin}
+}
+
+// --- submission list ---
+
+type submissionsData struct {
+	Rows          []subRow
+	Shown, Limit  int
+	Next          int64
+	UserFilter    string
+	ProblemFilter string
+}
+
+func (s *Server) submissionsPage(w http.ResponseWriter, r *http.Request, me *viewer, items []store.SubmissionDetail, limit int, userFilter, problemFilter string) {
+	rows := make([]subRow, 0, len(items))
+	for _, d := range items {
+		rows = append(rows, rowOf(d))
+	}
+	var next int64
+	if len(items) == limit && len(items) > 0 {
+		next = items[len(items)-1].ID
+	}
+	s.page(w, r, http.StatusOK, "提交记录", "submissions", me, msgOf(r), submissionsData{
+		Rows: rows, Shown: len(rows), Limit: limit, Next: next,
+		UserFilter: userFilter, ProblemFilter: problemFilter,
+	})
+}
+
+// --- submission detail ---
+
+type runRow struct {
+	Ordinal  int
+	CaseName string
+	Verdict  string
+	Time     string
+	Mem      string
+	IsSample bool
+}
+
+type submissionData struct {
+	ID        int64
+	Handle    string
+	PID       string
+	Title     string
+	Language  string
+	Class     string
+	Outcome   string
+	Headline  string
+	Time      string
+	Mem       string
+	Score     string
+	Failed    string
+	JudgeName string
+	Created   string
+	Judged    string
+	Runs      []runRow
+	Detail    string
+	Source    string
+	Full      bool
+	Waiting   bool
+}
+
+func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor, d store.SubmissionDetail, full bool, source, detail string, runs []store.Run) {
+	class, outcome := outcomeOf(d.Status, d.Verdict)
+	score := "-"
+	if d.TotalScore > 0 {
+		score = fmt.Sprintf("%d/%d", d.Score, d.TotalScore)
+	}
+	headline := d.Verdict
+	if headline == "" {
+		headline = outcome
+	}
+	if d.Verdict != "" {
+		headline = fmt.Sprintf("%s · 得分 %s · 用时 %s · 内存 %s", verdictSentence(d.Verdict), score, formatMS(d.TimeMS), formatKB(d.MemKB))
+	}
+
+	rows := make([]runRow, 0, len(runs))
+	for _, run := range runs {
+		rows = append(rows, runRow{
+			Ordinal: run.Ordinal, CaseName: run.CaseName, Verdict: run.Verdict,
+			Time: formatMS(run.TimeMS), Mem: formatKB(run.MemKB), IsSample: run.IsSample,
+		})
+	}
+	judgeName := "-"
+	if d.JudgeID != 0 {
+		judgeName = strconv.FormatInt(d.JudgeID, 10)
+	}
+
+	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
+		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
+		Class: class, Outcome: outcome, Headline: headline,
+		Time: formatMS(d.TimeMS), Mem: formatKB(d.MemKB), Score: score,
+		Failed: orDash(d.FailedCase), JudgeName: judgeName,
+		Created: agoMS(d.CreatedAt), Judged: agoMS(d.JudgedAt),
+		Runs: rows, Detail: detail, Source: source,
+		Full: full, Waiting: judge.Status(d.Status).InFlight(),
+	})
+}
+
+func verdictSentence(v string) string {
+	switch judge.Verdict(v) {
+	case judge.AC:
+		return "通过"
+	case judge.WA:
+		return "解答错误"
+	case judge.TLE:
+		return "用时超限"
+	case judge.MLE:
+		return "内存超限"
+	case judge.RE:
+		return "运行时错误"
+	case judge.CE:
+		return "编译错误"
+	case judge.IE:
+		return "判机故障"
+	}
+	return v
+}
+
+// --- leaderboard ---
+
+type rankRowView struct {
+	Rank    int
+	Handle  string
+	Solved  int
+	Submits int
+	LastAC  string
+}
+
+func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
+	if !wantsHTML(r) {
+		rank, err := s.db.Leaderboard(r.Context(), 100)
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		var b strings.Builder
+		b.WriteString("rank handle        solved submits last_ac\n")
+		for i, row := range rank {
+			fmt.Fprintf(&b, "%-4d %-13s %6d %8d %s\n", i+1, row.Handle, row.Solved, row.Submits, agoMS(row.LastAC))
+		}
+		fmt.Fprintf(&b, "ranked=%d\n", len(rank))
+		respond(w, r, http.StatusOK, b.String(), rank)
+		return
+	}
+
+	rank, err := s.db.Leaderboard(r.Context(), 100)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	rows := make([]rankRowView, 0, len(rank))
+	for i, row := range rank {
+		last := "-"
+		if row.LastAC != 0 {
+			last = agoMS(row.LastAC)
+		}
+		rows = append(rows, rankRowView{Rank: i + 1, Handle: row.Handle, Solved: row.Solved, Submits: row.Submits, LastAC: last})
+	}
+	s.page(w, r, http.StatusOK, "排行榜", "rank", s.viewerOf(r), "", map[string]any{"Rows": rows})
+}
+
+// --- user profile ---
+
+type tallyView struct {
+	Name, Class string
+	Count       int
+}
+type solvedView struct{ PID, Title, Time, When string }
+
+type userData struct {
+	Handle        string
+	Admin         bool
+	Joined        string
+	Solved        int
+	TotalProblems int
+	Submits       int
+	Tally         []tallyView
+	SolvedList    []solvedView
+	Recent        []subRow
+}
+
+func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	handle := r.PathValue("handle")
+	u, err := s.db.GetUserByHandle(ctx, handle)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	solved, err := s.db.SolvedProblems(ctx, u.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	tally, err := s.db.VerdictTally(ctx, u.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	recent, err := s.db.ListSubmissionDetails(ctx, store.DetailFilter{UserID: u.ID, Limit: 20})
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+
+	submits := 0
+	for _, n := range tally {
+		submits += n
+	}
+
+	if !wantsHTML(r) {
+		respond(w, r, http.StatusOK, "", map[string]any{
+			"user": u, "solved": solved, "tally": tally, "submits": submits, "recent": recent,
+		})
+		return
+	}
+
+	me := s.viewerOf(r)
+	totalProblems, err := s.db.CountProblems(ctx, me == nil || !me.Admin)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+
+	// Fixed order, so the two most common verdicts anchor the header.
+	var tallyRows []tallyView
+	seen := map[string]bool{}
+	for _, name := range []string{"AC", "WA", "TLE", "MLE", "RE", "CE", "IE",
+		"queued", "compiling", "running", "abandoned"} {
+		if n := tally[name]; n > 0 {
+			tallyRows = append(tallyRows, tallyView{Name: name, Class: name, Count: n})
+			seen[name] = true
+		}
+	}
+	for name, n := range tally {
+		if !seen[name] && n > 0 {
+			tallyRows = append(tallyRows, tallyView{Name: name, Class: name, Count: n})
+		}
+	}
+
+	solvedList := make([]solvedView, 0, len(solved))
+	for _, sp := range solved {
+		solvedList = append(solvedList, solvedView{
+			PID: sp.PID, Title: sp.Title, Time: formatMS(sp.BestTime), When: agoMS(sp.SolvedAt),
+		})
+	}
+	rows := make([]subRow, 0, len(recent))
+	for _, d := range recent {
+		rows = append(rows, rowOf(d))
+	}
+
+	s.page(w, r, http.StatusOK, u.Handle, "user", me, msgOf(r), userData{
+		Handle: u.Handle, Admin: u.Role == "admin", Joined: agoMS(u.CreatedAt),
+		Solved: len(solved), TotalProblems: totalProblems, Submits: submits,
+		Tally: tallyRows, SolvedList: solvedList, Recent: rows,
+	})
+}
+
+// --- token binding for the web UI ---
+
+func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
+	s.page(w, r, http.StatusOK, "令牌", "account", s.viewerOf(r), msgOf(r), struct{}{})
+}
+
+func (s *Server) handleBind(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.FormValue("token"))
+	u, err := s.db.UserByToken(r.Context(), token)
+	if err != nil {
+		setTokenCookie(w, "", -1)
+		http.Redirect(w, r, "/account?msg="+url.QueryEscape("令牌无效，请核对后重试"), http.StatusSeeOther)
+		return
+	}
+	setTokenCookie(w, token, 30*24*3600)
+	s.log.Info("token bound", "user", u.Handle)
+	http.Redirect(w, r, "/account?msg="+url.QueryEscape("已绑定为 "+u.Handle), http.StatusSeeOther)
+}
+
+func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
+	setTokenCookie(w, "", -1)
+	http.Redirect(w, r, "/account?msg="+url.QueryEscape("已解除绑定"), http.StatusSeeOther)
+}
+
+// createSubmission is the single validation path for both the JSON API and the
+// web form, so the two front doors cannot drift.
+func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language, source string) (store.Submission, string, error) {
+	key := strings.TrimSpace(problemKey)
+	lang := strings.ToLower(strings.TrimSpace(language))
+	if key == "" || lang == "" {
+		return store.Submission{}, "题目与语言都要填", errors.New("missing fields")
+	}
+	if strings.ContainsRune(source, 0) {
+		return store.Submission{}, "源代码不能包含空字节", errors.New("nul in source")
+	}
+	if len(strings.TrimSpace(source)) == 0 {
+		return store.Submission{}, "源代码是空的", errors.New("empty source")
+	}
+
+	p, err := s.db.FindProblem(r.Context(), key)
+	if err != nil {
+		return store.Submission{}, "找不到这道题", err
+	}
+	if !p.Visible && !a.Admin {
+		return store.Submission{}, "找不到这道题", store.ErrNotFound
+	}
+	if !languageAllowed(p.Languages, lang) {
+		return store.Submission{}, fmt.Sprintf("这道题只收 %s，不收 %s", strings.Join(p.Languages, "/"), lang), errors.New("language")
+	}
+	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
+	if err != nil {
+		return store.Submission{}, "数据库错误", err
+	}
+	if total == 0 {
+		return store.Submission{}, "这道题还没有判题用例", errors.New("no cases")
+	}
+
+	sub, err := s.db.CreateSubmission(r.Context(), &store.Submission{
+		UserID: a.User.ID, ProblemID: p.ID, Language: lang, Source: source, TotalScore: total,
+	})
+	if err != nil {
+		return store.Submission{}, "数据库错误", err
+	}
+	s.log.Info("submitted", "sid", sub.ID, "user", a.User.Handle, "pid", p.PID, "lang", lang)
+	return sub, "", nil
+}
+
+// handleSubmitForm is the browser side of submitting code: same validation,
+// then a redirect to the result page instead of a body.
+func (s *Server) handleSubmitForm(w http.ResponseWriter, r *http.Request) {
+	a, err := s.authenticate(r)
+	if err != nil {
+		http.Redirect(w, r, "/account?msg="+url.QueryEscape("提交前请先绑定 API 令牌"), http.StatusSeeOther)
+		return
+	}
+	if r.ContentLength > s.cfg.MaxSource {
+		s.errorPage(w, r, http.StatusRequestEntityTooLarge, "代码太长")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.errorPage(w, r, http.StatusBadRequest, "表单解析失败: "+err.Error())
+		return
+	}
+	sub, msg, err := s.createSubmission(r, a, r.PathValue("key"), r.FormValue("language"), r.FormValue("source"))
+	if err != nil {
+		if msg == "" {
+			msg = "提交失败"
+		}
+		http.Redirect(w, r, "/problems/"+url.PathEscape(r.PathValue("key"))+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/submissions/"+strconv.FormatInt(sub.ID, 10), http.StatusSeeOther)
+}

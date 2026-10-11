@@ -1,0 +1,33 @@
+{{define "content"}}
+<h1>提交记录</h1>
+
+<form class="row" method="get" action="/submissions">
+  <div><label>用户</label><input type="text" name="user" value="{{.Data.UserFilter}}"></div>
+  <div><label>题目</label><input type="text" name="problem" value="{{.Data.ProblemFilter}}"></div>
+  <input type="submit" value="筛选">
+</form>
+
+<table>
+  <tr><th>#</th><th>用户</th><th>题目</th><th>语言</th><th>结果</th><th class="num">用时</th><th class="num">内存</th><th class="num">得分</th><th>时间</th></tr>
+  {{range .Data.Rows}}
+  <tr>
+    <td><a href="/submissions/{{.ID}}">{{.ID}}</a></td>
+    <td><a href="/u/{{.Handle}}">{{.Handle}}</a></td>
+    <td><a href="/problems/{{.PID}}">{{.PID}}</a></td>
+    <td>{{.Language}}</td>
+    <td><span class="badge {{.Class}}">{{.Outcome}}</span></td>
+    <td class="num">{{.Time}}</td>
+    <td class="num">{{.Mem}}</td>
+    <td class="num">{{.Score}}</td>
+    <td>{{.Ago}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="9">还没有提交。</td></tr>
+  {{end}}
+</table>
+
+<p class="meta">
+  显示 {{.Data.Shown}} 条
+  {{if .Data.Next}}· <a href="/submissions?after={{.Data.Next}}&limit={{.Data.Limit}}{{with .Data.UserFilter}}&user={{.}}{{end}}{{with .Data.ProblemFilter}}&problem={{.}}{{end}}">更早 →</a>{{end}}
+</p>
+{{end}}

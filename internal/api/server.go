@@ -55,14 +55,43 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /judge/submissions/{id}/status", s.handleJudgeStatus)
 	mux.HandleFunc("POST /judge/submissions/{id}/result", s.handleJudgeResult)
 	mux.HandleFunc("GET /judges", s.handleJudgeList)
+
+	// The same URLs answer a browser with HTML, so the text API and the web UI
+	// never diverge on data or permissions.
+	mux.HandleFunc("GET /", s.handleRoot)
+	mux.HandleFunc("GET /rank", s.handleRank)
+	mux.HandleFunc("GET /u/{handle}", s.handleUser)
+	mux.HandleFunc("GET /account", s.handleAccount)
+	mux.HandleFunc("POST /account/bind", s.handleBind)
+	mux.HandleFunc("POST /account/unbind", s.handleUnbind)
+	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
+	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
+}
+
+// handleRoot serves the problem list at / and turns every other unmatched GET
+// into a 404 that a browser still sees as a page.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		s.notFound(w, r)
+		return
+	}
+	s.handleProblemList(w, r)
+}
+
+func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
+	if wantsHTML(r) {
+		s.errorPage(w, r, http.StatusNotFound, "没有这个页面："+r.URL.Path)
+		return
+	}
+	s.respondError(w, r, http.StatusNotFound, "no route for "+r.URL.Path)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
 	if err := s.db.PingContext(ctx); err != nil {
-		respondError(w, r, http.StatusServiceUnavailable, "database unreachable")
+		s.respondError(w, r, http.StatusServiceUnavailable, "database unreachable")
 		return
 	}
 	respond(w, r, http.StatusOK, "ok\n", map[string]any{"status": "ok"})
@@ -72,12 +101,12 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(s.started).Truncate(time.Second)
 	mode, err := s.db.JournalMode(r.Context())
 	if err != nil {
-		respondError(w, r, http.StatusInternalServerError, "database: "+err.Error())
+		s.respondError(w, r, http.StatusInternalServerError, "database: "+err.Error())
 		return
 	}
 	counts, err := s.db.Counts(r.Context())
 	if err != nil {
-		respondError(w, r, http.StatusInternalServerError, "database: "+err.Error())
+		s.respondError(w, r, http.StatusInternalServerError, "database: "+err.Error())
 		return
 	}
 
@@ -91,11 +120,28 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("counters problems=%d submissions=%d pending=%d users=%d judges=%d",
 			counts.Problems, counts.Submissions, counts.Pending, counts.Users, counts.Judges),
 		"",
-		"endpoints",
-		"  GET  /healthz            liveness",
-		"  GET  /about              this summary",
-		"",
-		"add ?format=json (or Accept: application/json) for machine output",
+		"routes  (浏览器拿 HTML，curl 拿纯文本，?format=json 拿 JSON)",
+		"  GET  /                        题库列表",
+		"  GET  /problems                题库列表（?q= &limit= &after=）",
+		"  GET  /problems/{key}          题面 + 样例 + 提交表单",
+		"  POST /problems                建题（admin）",
+		"  PUT  /problems/{key}          改题（admin）",
+		"  DELETE /problems/{key}        删题（admin）",
+		"  POST /problems/{key}/cases    上传用例 zip（admin）",
+		"  GET  /problems/{key}/cases    用例清单（admin）",
+		"  POST /problems/{key}/submit   网页表单提交代码",
+		"  POST /submissions             提交（bearer）",
+		"  GET  /submissions             提交列表（?user= &problem=）",
+		"  GET  /submissions/{id}        结果（?wait=秒 长轮询）",
+		"  GET  /rank                    排行榜",
+		"  GET  /u/{handle}              个人主页",
+		"  GET  /account                 绑定/解除 API 令牌",
+		"  GET  /whoami                  当前身份",
+		"  GET  /judges                  判机框列表（admin）",
+		"  POST /judge/claim             判机：心跳 + 领取",
+		"  GET  /judge/cases/{id}/{which} 判机：取用例正文",
+		"  POST /judge/submissions/{id}/status|result  判机：回报",
+		"  GET  /healthz  GET /about     运维",
 	}, "\n") + "\n"
 
 	respond(w, r, http.StatusOK, text, map[string]any{
@@ -141,7 +187,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 			if p := recover(); p != nil {
 				s.log.Error("panic", "path", r.URL.Path, "panic", p)
 				if rec.status == 0 {
-					respondError(rec.ResponseWriter, r, http.StatusInternalServerError, "internal error")
+					s.respondError(rec.ResponseWriter, r, http.StatusInternalServerError, "internal error")
 				}
 				return
 			}

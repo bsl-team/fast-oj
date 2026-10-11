@@ -151,6 +151,26 @@ func (db *DB) ListProblems(ctx context.Context, after int64, limit int, search s
 	return page, nil
 }
 
+// CountProblems is the cheap total for page headers, where pulling a page of
+// rows just to read .Total would be silly.
+func (db *DB) CountProblems(ctx context.Context, visibleOnly bool) (int, error) {
+	q := `SELECT COUNT(*) FROM problems`
+	if visibleOnly {
+		q += ` WHERE visible=1`
+	}
+	var n int
+	err := db.SQL.QueryRowContext(ctx, q).Scan(&n)
+	return n, err
+}
+
+// CountSolved counts distinct problems this user has AC'd.
+func (db *DB) CountSolved(ctx context.Context, userID int64) (int, error) {
+	var n int
+	err := db.SQL.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT problem_id) FROM submissions WHERE user_id=? AND verdict='AC'`, userID).Scan(&n)
+	return n, err
+}
+
 func (db *DB) DeleteProblem(ctx context.Context, id int64) error {
 	res, err := db.SQL.ExecContext(ctx, `DELETE FROM problems WHERE id=?`, id)
 	if err != nil {

@@ -42,15 +42,15 @@ func (s *Server) handleSubmitCreate(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(req.Problem)
 	lang := strings.ToLower(strings.TrimSpace(req.Language))
 	if key == "" || lang == "" {
-		respondError(w, r, http.StatusBadRequest, "problem and language are required")
+		s.respondError(w, r, http.StatusBadRequest, "problem and language are required")
 		return
 	}
 	if strings.ContainsRune(req.Source, 0) {
-		respondError(w, r, http.StatusBadRequest, "source must not contain NUL bytes")
+		s.respondError(w, r, http.StatusBadRequest, "source must not contain NUL bytes")
 		return
 	}
 	if len(strings.TrimSpace(req.Source)) == 0 {
-		respondError(w, r, http.StatusBadRequest, "source is empty")
+		s.respondError(w, r, http.StatusBadRequest, "source is empty")
 		return
 	}
 
@@ -60,11 +60,11 @@ func (s *Server) handleSubmitCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !p.Visible && !a.Admin {
-		respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
+		s.respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
 		return
 	}
 	if !languageAllowed(p.Languages, lang) {
-		respondError(w, r, http.StatusBadRequest,
+		s.respondError(w, r, http.StatusBadRequest,
 			fmt.Sprintf("problem %s accepts %s, not %s", p.PID, strings.Join(p.Languages, "/"), lang))
 		return
 	}
@@ -74,7 +74,7 @@ func (s *Server) handleSubmitCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if total == 0 {
-		respondError(w, r, http.StatusConflict, "problem "+p.PID+" has no judged test cases yet")
+		s.respondError(w, r, http.StatusConflict, "problem "+p.PID+" has no judged test cases yet")
 		return
 	}
 
@@ -136,7 +136,7 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 	a, _ := s.authenticate(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		respondError(w, r, http.StatusBadRequest, "submission id must be a positive number")
+		s.respondError(w, r, http.StatusBadRequest, "submission id must be a positive number")
 		return
 	}
 	d, err := s.awaitDetail(r, id, parseWait(r.URL.Query().Get("wait")))
@@ -147,10 +147,11 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 
 	full := a.Admin || (a.User.ID != 0 && a.User.ID == d.UserID)
 	var runs []store.Run
+	var source, detail string
 	if full {
 		// Source and judge detail stay out of the joined list view; they are
 		// loaded only for the one row someone is allowed to read.
-		source, detail, err := s.db.SubmissionPayload(r.Context(), d.ID)
+		source, detail, err = s.db.SubmissionPayload(r.Context(), d.ID)
 		if err != nil {
 			s.writeStoreError(w, r, err)
 			return
@@ -161,6 +162,10 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 			s.writeStoreError(w, r, err)
 			return
 		}
+	}
+	if wantsHTML(r) {
+		s.submissionPage(w, r, a, d, full, source, detail, runs)
+		return
 	}
 	respond(w, r, http.StatusOK, submissionText(d, runs, full),
 		map[string]any{"submission": d, "runs": runs})
@@ -270,6 +275,10 @@ func (s *Server) handleSubmitList(w http.ResponseWriter, r *http.Request) {
 	items, err := s.db.ListSubmissionDetails(r.Context(), f)
 	if err != nil {
 		s.writeStoreError(w, r, err)
+		return
+	}
+	if wantsHTML(r) {
+		s.submissionsPage(w, r, a.viewer(), items, f.Limit, q.Get("user"), q.Get("problem"))
 		return
 	}
 

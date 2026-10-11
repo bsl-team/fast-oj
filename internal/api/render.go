@@ -31,6 +31,12 @@ func respond(w http.ResponseWriter, r *http.Request, status int, text string, pa
 	_, _ = w.Write([]byte(text))
 }
 
-func respondError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+// respondError answers with text or JSON as usual, but a browser gets the
+// styled error page instead of a bare line of text.
+func (s *Server) respondError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	if wantsHTML(r) {
+		s.errorPage(w, r, status, msg)
+		return
+	}
 	respond(w, r, status, msg+"\n", map[string]any{"error": msg, "status": status})
 }

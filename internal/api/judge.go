@@ -55,7 +55,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	j, err := s.registerJudge(r, g)
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, err.Error())
+		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -100,7 +100,7 @@ func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		respondError(w, r, http.StatusBadRequest, "case id must be a positive number")
+		s.respondError(w, r, http.StatusBadRequest, "case id must be a positive number")
 		return
 	}
 	tc, err := s.db.GetTestcaseByID(r.Context(), id)
@@ -115,12 +115,12 @@ func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 		rel = tc.InputRel
 	case "out":
 	default:
-		respondError(w, r, http.StatusBadRequest, "which must be in or out")
+		s.respondError(w, r, http.StatusBadRequest, "which must be in or out")
 		return
 	}
 	body, err := s.cases.Read(rel)
 	if err != nil {
-		respondError(w, r, http.StatusNotFound, "case file missing")
+		s.respondError(w, r, http.StatusNotFound, "case file missing")
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -132,11 +132,11 @@ func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) resolveJudgeOwner(w http.ResponseWriter, r *http.Request, name string, sub store.Submission) (store.Judge, bool) {
 	j, err := s.db.GetJudge(r.Context(), strings.TrimSpace(name))
 	if err != nil {
-		respondError(w, r, http.StatusForbidden, "unknown judge box, claim the submission first")
+		s.respondError(w, r, http.StatusForbidden, "unknown judge box, claim the submission first")
 		return store.Judge{}, false
 	}
 	if sub.JudgeID != j.ID {
-		respondError(w, r, http.StatusForbidden,
+		s.respondError(w, r, http.StatusForbidden,
 			"judge "+j.Name+" does not own submission "+strconv.FormatInt(sub.ID, 10))
 		return store.Judge{}, false
 	}
@@ -154,7 +154,7 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := submissionID(r)
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, err.Error())
+		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	sub, err := s.db.GetSubmission(r.Context(), id)
@@ -169,11 +169,11 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 
 	to := judge.Status(req.State)
 	if to != judge.Compiling && to != judge.Running {
-		respondError(w, r, http.StatusBadRequest, "state must be compiling or running")
+		s.respondError(w, r, http.StatusBadRequest, "state must be compiling or running")
 		return
 	}
 	if !judge.Transition(judge.Status(sub.Status), to) {
-		respondError(w, r, http.StatusConflict,
+		s.respondError(w, r, http.StatusConflict,
 			fmt.Sprintf("cannot move submission %d from %s to %s", id, sub.Status, to))
 		return
 	}
@@ -183,7 +183,7 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		respondError(w, r, http.StatusConflict, "submission state changed under the judge")
+		s.respondError(w, r, http.StatusConflict, "submission state changed under the judge")
 		return
 	}
 	respond(w, r, http.StatusOK, fmt.Sprintf("sid=%d state=%s\n", id, to),
@@ -202,12 +202,12 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Runs) > maxJudgeRuns {
-		respondError(w, r, http.StatusBadRequest, "too many case rows")
+		s.respondError(w, r, http.StatusBadRequest, "too many case rows")
 		return
 	}
 	id, err := submissionID(r)
 	if err != nil {
-		respondError(w, r, http.StatusBadRequest, err.Error())
+		s.respondError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	sub, err := s.db.GetSubmission(r.Context(), id)
@@ -220,7 +220,7 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !judge.Transition(judge.Status(sub.Status), judge.Done) {
-		respondError(w, r, http.StatusConflict,
+		s.respondError(w, r, http.StatusConflict,
 			fmt.Sprintf("submission %d is already %s", id, sub.Status))
 		return
 	}

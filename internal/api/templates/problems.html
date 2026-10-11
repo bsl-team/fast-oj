@@ -1,0 +1,37 @@
+{{define "content"}}
+<h1>题库</h1>
+
+<form class="row" method="get" action="/problems">
+  <div style="flex:1 1 18rem">
+    <label>搜索</label>
+    <input type="text" name="q" placeholder="编号或标题" value="{{.Data.Query}}">
+  </div>
+  <input type="submit" value="搜索">
+</form>
+
+<table>
+  <tr>
+    <th>编号</th><th>标题</th>
+    <th class="num">时限</th><th class="num">内存</th>
+    <th class="num">用例</th><th class="num">通过</th><th class="num">提交</th>
+  </tr>
+  {{range .Data.Items}}
+  <tr>
+    <td><a href="/problems/{{.PID}}">{{.PID}}</a>{{if .Hidden}} <span class="hidden">未公开</span>{{end}}</td>
+    <td><a href="/problems/{{.PID}}">{{.Title}}</a></td>
+    <td class="num">{{.Time}}</td>
+    <td class="num">{{.Mem}}</td>
+    <td class="num">{{.Cases}}</td>
+    <td class="num">{{.Solved}}</td>
+    <td class="num">{{.Submits}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7">还没有题目。</td></tr>
+  {{end}}
+</table>
+
+<p class="meta">
+  共 {{.Data.Total}} 题
+  {{if .Data.Next}}· <a href="/problems?after={{.Data.Next}}&limit={{.Data.Limit}}{{with .Data.Query}}&q={{.}}{{end}}">下一页 →</a>{{end}}
+</p>
+{{end}}
