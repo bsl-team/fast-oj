@@ -1,0 +1,19 @@
+{{define "content"}}
+<h1>{{.Data.Name}} 的{{.Data.Title}}</h1>
+<p class="meta">
+  <a href="{{.Data.Back}}">返回主页</a> ·
+  <a href="{{.Data.OtherTo}}">{{if eq .Data.Direction "followers"}}关注{{else}}粉丝{{end}}</a>
+</p>
+
+<table>
+  <tr><th>用户</th><th>昵称</th></tr>
+  {{range .Data.People}}
+  <tr>
+    <td><a href="/u/{{.Handle}}">{{.Handle}}</a></td>
+    <td>{{.DisplayName}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="2">还没有人。</td></tr>
+  {{end}}
+</table>
+{{end}}

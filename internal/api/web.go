@@ -426,6 +426,12 @@ type userData struct {
 	Recent        []subRow
 	Posts         []postRow
 	IsSelf        bool
+	// Follow counts plus the viewer's own relation to this profile, which is what
+	// decides between the 关注 and 取消关注 buttons.
+	Following int
+	Followers int
+	IFollow   bool
+	Mutual    bool
 }
 
 func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
@@ -508,14 +514,37 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	following, followers, err := s.db.FollowCounts(ctx, u.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	iFollow, mutual := false, false
+	if a.User.ID != 0 && a.User.ID != u.ID {
+		if iFollow, err = s.db.IsFollowing(ctx, a.User.ID, u.ID); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		// Mutual only matters when we already follow them, so the second pair of
+		// lookups is skipped for the common case.
+		if iFollow {
+			if mutual, err = s.db.AreMutual(ctx, a.User.ID, u.ID); err != nil {
+				s.writeStoreError(w, r, err)
+				return
+			}
+		}
+	}
+
 	s.page(w, r, http.StatusOK, u.Handle, "user", me, msgOf(r), userData{
 		Handle: u.Handle, DisplayName: u.DisplayName,
 		Bio: renderMarkdownHTML(u.Bio), HasBio: strings.TrimSpace(u.Bio) != "",
 		Admin: u.Role == "admin", Joined: agoMS(u.CreatedAt),
 		Solved: len(solved), TotalProblems: totalProblems, Submits: submits,
 		Tally: tallyRows, SolvedList: solvedList, Recent: rows,
-		Posts:  postRows(myPosts, a),
-		IsSelf: a.User.ID == u.ID,
+		Posts:     postRows(myPosts, a),
+		IsSelf:    a.User.ID == u.ID,
+		Following: following, Followers: followers,
+		IFollow: iFollow, Mutual: mutual,
 	})
 }
 

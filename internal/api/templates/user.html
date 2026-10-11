@@ -11,6 +11,18 @@
 <section class="bio">{{.Data.Bio}}</section>
 {{end}}
 
+<p class="meta follow">
+  <a href="/u/{{.Data.Handle}}/following">关注 <b>{{.Data.Following}}</b></a> ·
+  <a href="/u/{{.Data.Handle}}/followers">粉丝 <b>{{.Data.Followers}}</b></a>
+  {{if .Data.Mutual}}<span class="badge">互相关注</span>{{end}}
+  {{if and .Me (not .Data.IsSelf)}}
+  <form class="inline" method="post" action="/u/{{.Data.Handle}}/{{if .Data.IFollow}}unfollow{{else}}follow{{end}}">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <button type="submit">{{if .Data.IFollow}}取消关注{{else}}关注{{end}}</button>
+  </form>
+  {{end}}
+</p>
+
 {{if .Data.Posts}}
 <h2>TA 的动态</h2>
 {{template "posts" .}}

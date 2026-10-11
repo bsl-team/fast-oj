@@ -71,6 +71,10 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /rank", s.handleRank)
 	mux.HandleFunc("GET /u/{handle}", s.handleUser)
+	mux.HandleFunc("GET /u/{handle}/following", s.followListHandler("following"))
+	mux.HandleFunc("GET /u/{handle}/followers", s.followListHandler("followers"))
+	mux.HandleFunc("POST /u/{handle}/follow", s.followHandler(true))
+	mux.HandleFunc("POST /u/{handle}/unfollow", s.followHandler(false))
 	mux.HandleFunc("GET /login", s.handleLoginPage)
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
