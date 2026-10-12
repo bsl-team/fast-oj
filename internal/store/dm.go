@@ -102,13 +102,24 @@ func (db *DB) MayMessage(ctx context.Context, senderID, recipientID int64) (bool
 	return false, nil
 }
 
-func (db *DB) SendDM(ctx context.Context, senderID, recipientID int64, body string) (DM, error) {
-	body = strings.TrimSpace(body)
+// CleanDMBody is the message content rule, split out so a caller can check the
+// text before spending a rate-limit slot: telling someone "too fast" when their
+// message was simply too long sends them off to fix the wrong thing.
+func CleanDMBody(raw string) (string, error) {
+	body := strings.TrimSpace(raw)
 	if body == "" {
-		return DM{}, ErrDMEmpty
+		return "", ErrDMEmpty
 	}
 	if len([]rune(body)) > MaxDMBody {
-		return DM{}, ErrDMTooLong
+		return "", ErrDMTooLong
+	}
+	return body, nil
+}
+
+func (db *DB) SendDM(ctx context.Context, senderID, recipientID int64, raw string) (DM, error) {
+	body, err := CleanDMBody(raw)
+	if err != nil {
+		return DM{}, err
 	}
 	res, err := db.SQL.ExecContext(ctx,
 		`INSERT INTO dms (sender_id, recipient_id, body, created_at) VALUES (?, ?, ?, ?)`,

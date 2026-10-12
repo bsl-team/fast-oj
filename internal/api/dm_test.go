@@ -139,8 +139,13 @@ func TestMessageValidationAndSelf(t *testing.T) {
 		t.Errorf("send to a missing user = %d, want 404", code)
 	}
 	h.login("penpal13", "penpal13@example.com", testPassword)
+	if _, page := h.postForm2("/messages/penpal13", url.Values{"body": {"先正常发一条"}}, cookie, csrf); !strings.Contains(page, "已发送") {
+		t.Fatalf("the first message did not land:\n%s", page)
+	}
+	// Content is checked before the rate limit, so a message that could never be
+	// stored says so even one second after a successful send.
 	if _, page := h.postForm2("/messages/penpal13", url.Values{"body": {strings.Repeat("字", store.MaxDMBody+1)}}, cookie, csrf); !strings.Contains(page, "太长") {
-		t.Error("oversized message was not reported")
+		t.Error("an oversized message was not reported as too long")
 	}
 }
 

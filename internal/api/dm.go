@@ -149,6 +149,17 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Content first: a message that could never be stored should not burn a slot
+	// in the rate limit, nor be reported as one.
+	if _, err := store.CleanDMBody(r.FormValue("body")); err != nil {
+		if errors.Is(err, store.ErrDMTooLong) {
+			s.replyBack(w, r, back, "太长了，每条私信最多 "+fmt.Sprint(store.MaxDMBody)+" 字")
+			return
+		}
+		s.replyBack(w, r, back, "写点什么再发")
+		return
+	}
+
 	may, err := s.db.MayMessage(r.Context(), a.User.ID, peer.ID)
 	if err != nil {
 		s.writeStoreError(w, r, err)
