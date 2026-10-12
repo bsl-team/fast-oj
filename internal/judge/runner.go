@@ -229,9 +229,14 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 	// letting it reach the container's ceiling and be OOM-killed on the way.
 	trip := make(chan int, 1)
 	stopWatch := make(chan struct{})
-	defer close(stopWatch)
+	watchDone := make(chan struct{})
+	// The watcher reads the guard's own accounting, so it has to be gone before the
+	// guard is closed: on Windows the job handle number gets reused by the next
+	// case, and a watcher still reading it would kill an unrelated run.
+	defer func() { close(stopWatch); <-watchDone }()
 	if lim.MemKB > 0 {
 		go func() {
+			defer close(watchDone)
 			ceiling := lim.MemKB + memTripKB
 			tick := time.NewTicker(memPollInterval)
 			defer tick.Stop()
@@ -248,6 +253,8 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 				}
 			}
 		}()
+	} else {
+		close(watchDone)
 	}
 
 	select {

@@ -140,7 +140,7 @@ func (db *DB) RecordResult(ctx context.Context, id int64, r Result, runs []Run) 
 		}
 		for _, run := range runs {
 			run.SubmissionID = id
-			if err := insertRun(ctx, tx, run); err != nil {
+			if err := writeRun(ctx, tx, run); err != nil {
 				return err
 			}
 		}
@@ -148,27 +148,30 @@ func (db *DB) RecordResult(ctx context.Context, id int64, r Result, runs []Run) 
 	})
 }
 
-func insertRun(ctx context.Context, tx *sql.Tx, run Run) error {
+// writeRun inserts or replaces one case row. A judge that reports the same ordinal
+// twice (retry after a lost response, or a progress report followed by the final
+// result) lands on the same row instead of duplicating it.
+func writeRun(ctx context.Context, tx *sql.Tx, run Run) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO runs (submission_id, ordinal, case_name, verdict, time_ms, mem_kb, is_sample,
 		                   time_min, mem_min)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(submission_id, ordinal) DO UPDATE SET
+			case_name=excluded.case_name, verdict=excluded.verdict, time_ms=excluded.time_ms,
+			mem_kb=excluded.mem_kb, is_sample=excluded.is_sample,
+			time_min=excluded.time_min, mem_min=excluded.mem_min`,
 		run.SubmissionID, run.Ordinal, run.CaseName, run.Verdict, run.TimeMS, run.MemKB, boolInt(run.IsSample),
 		boolInt(run.TimeMin), boolInt(run.MemMin))
 	return err
 }
 
+// AddRun records one finished case while the submission is still being judged, so
+// the detail page can show progress instead of a blank wait.
 func (db *DB) AddRun(ctx context.Context, run Run) (Run, error) {
-	res, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO runs (submission_id, ordinal, case_name, verdict, time_ms, mem_kb, is_sample,
-		                   time_min, mem_min)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.SubmissionID, run.Ordinal, run.CaseName, run.Verdict, run.TimeMS, run.MemKB, boolInt(run.IsSample),
-		boolInt(run.TimeMin), boolInt(run.MemMin))
+	err := db.InTx(ctx, func(tx *sql.Tx) error { return writeRun(ctx, tx, run) })
 	if err != nil {
 		return Run{}, err
 	}
-	run.ID, _ = res.LastInsertId()
 	return run, nil
 }
 

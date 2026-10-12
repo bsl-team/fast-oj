@@ -225,6 +225,23 @@ func (a *Agent) PostResult(ctx context.Context, submissionID int64, rep judge.Re
 	return err
 }
 
+// PostRun reports one finished case while the rest of the submission is still being
+// judged, which is what lets the detail page fill in as it goes. A failed progress
+// report is not worth stopping for: the final result carries every row anyway.
+func (a *Agent) PostRun(ctx context.Context, submissionID int64, detail string, row judge.RunRow) error {
+	_, err := a.request(ctx, http.MethodPost,
+		"/judge/submissions/"+strconv.FormatInt(submissionID, 10)+"/status",
+		protocol.Status{
+			Name: a.cfg.Name, State: string(judge.Running), Detail: detail,
+			Run: &protocol.RunRow{
+				Ordinal: row.Ordinal, CaseName: row.CaseName, Verdict: string(row.Verdict),
+				TimeMS: row.TimeMS, MemKB: row.MemKB, IsSample: row.IsSample,
+				TimeMin: row.TimeMin, MemMin: row.MemMin,
+			},
+		}, nil)
+	return err
+}
+
 // ProcessOnce handles a single claimed submission. It reports true when work was
 // found. Results are always reported, including "we could not do this at all",
 // so a submission never sits in compiling without an answer.
@@ -272,12 +289,17 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 		a.cfg.Logf("status report failed (continuing): %v", err)
 	}
 
+	total := len(cases)
+	progress := func(row judge.RunRow) {
+		a.reportProgress(ctx, task.SubmissionID, row, total)
+	}
+
 	started := time.Now()
 	rep := judge.Judge(judge.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
 		Cases: cases,
-	}, tool, dir, a.cfg.RunAs)
+	}, tool, dir, a.cfg.RunAs, judge.Progress(progress))
 	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s%s",
 		task.SubmissionID, rep.Verdict, rep.Score, rep.TotalScore, rep.TimeMS, rep.MemKB,
 		time.Since(started).Truncate(time.Millisecond), detailSuffix(rep.Detail))
@@ -292,6 +314,15 @@ func detailSuffix(detail string) string {
 		return ""
 	}
 	return " detail=" + strings.ReplaceAll(detail, "\n", " ")
+}
+
+// reportProgress publishes one case row with a "3/10 · case AC" note, so the
+// submission page and the queue both show how far the run got.
+func (a *Agent) reportProgress(ctx context.Context, submissionID int64, row judge.RunRow, total int) {
+	detail := fmt.Sprintf("%d/%d · %s %s", row.Ordinal, total, row.CaseName, row.Verdict)
+	if err := a.PostRun(ctx, submissionID, detail, row); err != nil {
+		a.cfg.Logf("progress report failed (continuing): %v", err)
+	}
 }
 
 func (a *Agent) reportInfra(ctx context.Context, submissionID int64, detail string) error {

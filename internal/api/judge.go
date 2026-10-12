@@ -177,7 +177,22 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("cannot move submission %d from %s to %s", id, sub.Status, to))
 		return
 	}
-	ok, err = s.db.ReportStatus(r.Context(), id, j.ID, sub.Status, string(to), req.Detail)
+	var progress *store.Run
+	if req.Run != nil {
+		v := judge.VerdictName(req.Run.Verdict)
+		// VerdictName folds the unknown into IE, so compare against the raw string
+		// to tell "the judge sent IE" apart from "the judge sent garbage".
+		if string(v) != req.Run.Verdict || req.Run.Ordinal <= 0 {
+			s.respondError(w, r, http.StatusBadRequest, "progress row needs a known verdict and a positive ordinal")
+			return
+		}
+		progress = &store.Run{
+			Ordinal: req.Run.Ordinal, CaseName: clip(req.Run.CaseName, 64), Verdict: string(v),
+			TimeMS: req.Run.TimeMS, MemKB: req.Run.MemKB, IsSample: req.Run.IsSample,
+			TimeMin: req.Run.TimeMin, MemMin: req.Run.MemMin,
+		}
+	}
+	ok, err = s.db.ReportProgress(r.Context(), id, j.ID, sub.Status, string(to), req.Detail, progress)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return

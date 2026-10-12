@@ -32,7 +32,7 @@ func judgeSourceAs(t *testing.T, tool Tool, source string, cases []Case, timeMS,
 		SubmissionID: 1, PID: "P1", Language: "cpp", Source: source,
 		TimeLimitMS: timeMS, MemLimitKB: memKB, Cases: cases,
 	}
-	return Judge(task, tool, filepath.Join(t.TempDir(), "work"), drop)
+	return Judge(task, tool, filepath.Join(t.TempDir(), "work"), drop, nil)
 }
 
 func sumCases() []Case {
@@ -114,6 +114,28 @@ func TestJudgeDetectsWrongAnswer(t *testing.T) {
 	}
 	if rep.Runs[1].Verdict != WA || rep.Runs[2].Verdict != AC {
 		t.Fatalf("per-case rows = %+v", rep.Runs)
+	}
+}
+
+// The submission page fills in as cases finish, which only works if the judge
+// hands each row over the moment it exists, in case order.
+func TestProgressReportsEachCaseAsItFinishes(t *testing.T) {
+	tool := requireToolchain(t)
+	var seen []RunRow
+	rep := Judge(Task{SubmissionID: 1, PID: "P1", Language: "cpp", Source: sumSource,
+		TimeLimitMS: 2000, MemLimitKB: 262144, Cases: sumCases()},
+		tool, filepath.Join(t.TempDir(), "work"), nil, func(row RunRow) { seen = append(seen, row) })
+
+	if len(seen) != len(rep.Runs) {
+		t.Fatalf("progress fired %d times for %d cases", len(seen), len(rep.Runs))
+	}
+	for i := range seen {
+		if seen[i].Ordinal != i+1 {
+			t.Fatalf("row %d arrived with ordinal %d", i, seen[i].Ordinal)
+		}
+		if seen[i].CaseName != rep.Runs[i].CaseName || seen[i].Verdict != rep.Runs[i].Verdict {
+			t.Errorf("row %d = %+v, want %+v", i, seen[i], rep.Runs[i])
+		}
 	}
 }
 
@@ -274,7 +296,7 @@ func TestWorkDirFailureIsInfrastructureError(t *testing.T) {
 	}
 	rep := Judge(Task{PID: "P", Language: "cpp", Source: "int main(){}",
 		Cases: []Case{{Name: "1", Input: []byte("a"), Expected: []byte("b")}}},
-		tool, filepath.Join(blocker, "work"), nil)
+		tool, filepath.Join(blocker, "work"), nil, nil)
 	if rep.Verdict != IE || !strings.Contains(rep.Detail, "workdir") {
 		t.Fatalf("verdict = %s %q, want IE from the workdir failure", rep.Verdict, rep.Detail)
 	}

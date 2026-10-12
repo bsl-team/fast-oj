@@ -84,10 +84,14 @@ func normalizeOutput(body []byte) string {
 	return strings.Join(lines, "\n")
 }
 
+// Progress receives each case row as soon as that case has been judged, so the
+// caller can publish partial results while the rest is still running.
+type Progress func(row RunRow)
+
 // Judge builds and runs one submission over all of its cases. It never talks to
 // the network: the caller has already fetched the case data. drop is the uid a
-// submission is run as, when the judge has one to give it.
-func Judge(task Task, tool Tool, dir string, drop *DropTo) Report {
+// submission is run as, when the judge has one to give it; onProgress may be nil.
+func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) Report {
 	rep := Report{Verdict: IE, TimeMS: -1, MemKB: -1}
 	if len(task.Cases) == 0 {
 		rep.Detail = "problem " + task.PID + " has no test cases"
@@ -138,6 +142,9 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo) Report {
 			TimeMS: ex.TimeMS, MemKB: ex.MemKB, IsSample: tc.IsSample,
 			TimeMin: ex.TimeMin, MemMin: ex.MemMin}
 		rep.Runs = append(rep.Runs, row)
+		if onProgress != nil {
+			onProgress(row)
+		}
 
 		// The headline numbers are the worst across cases, and they inherit that
 		// case's lower-bound flag: a max taken from a killed run is itself a bound.

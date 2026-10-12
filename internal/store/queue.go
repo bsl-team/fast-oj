@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -55,17 +57,45 @@ func (db *DB) ClaimNext(ctx context.Context, judgeID int64) (ClaimedTask, error)
 // ReportStatus moves a claimed submission along the state machine. Only the
 // judge that owns the row may report, and only from the state it is really in.
 // An empty detail leaves the previous note alone.
+// errStaleStatus is a control signal, not a failure: the row moved on while this
+// judge was working, so its report no longer applies.
+var errStaleStatus = errors.New("submission status moved on")
+
 func (db *DB) ReportStatus(ctx context.Context, submissionID, judgeID int64, from, to, detail string) (bool, error) {
-	res, err := db.SQL.ExecContext(ctx,
-		`UPDATE submissions
-		 SET status=?, detail=CASE WHEN ?='' THEN detail ELSE ? END
-		 WHERE id=? AND judge_id=? AND status=?`,
-		to, detail, detail, submissionID, judgeID, from)
+	return db.ReportProgress(ctx, submissionID, judgeID, from, to, detail, nil)
+}
+
+// ReportProgress moves the state and, when a finished case rides along, writes that
+// row in the same transaction. Either both land or neither does, so the detail page
+// can never show a case row belonging to a state the submission has moved past.
+func (db *DB) ReportProgress(ctx context.Context, submissionID, judgeID int64, from, to, detail string, run *Run) (bool, error) {
+	err := db.InTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE submissions
+			 SET status=?, detail=CASE WHEN ?='' THEN detail ELSE ? END
+			 WHERE id=? AND judge_id=? AND status=?`,
+			to, detail, detail, submissionID, judgeID, from)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return errStaleStatus
+		}
+		if run != nil {
+			run.SubmissionID = submissionID
+			if err := writeRun(ctx, tx, *run); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errStaleStatus) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
+	return true, nil
 }
 
 // ReapStale marks in-flight submissions that no judge is working on any more as
@@ -84,14 +114,39 @@ func (db *DB) ReapStale(ctx context.Context, leaseMS int64) (int64, error) {
 }
 
 // RequeueAbandoned puts an abandoned row back at the tail of the queue.
+// ClearRuns drops the case rows of an attempt that is about to be judged again,
+// so a re-run never shows rows from the attempt that died.
+func (db *DB) ClearRuns(ctx context.Context, submissionID int64) error {
+	_, err := db.SQL.ExecContext(ctx, `DELETE FROM runs WHERE submission_id=?`, submissionID)
+	return err
+}
+
+// RequeueAbandoned puts a dead attempt back in the queue and drops its case rows,
+// so a re-run never shows results from the attempt that died.
 func (db *DB) RequeueAbandoned(ctx context.Context, submissionID int64) (bool, error) {
-	res, err := db.SQL.ExecContext(ctx,
-		`UPDATE submissions SET status='queued', verdict='', judge_id=NULL, detail='',
-		           started_at=NULL, judged_at=NULL
-		 WHERE id=? AND status='abandoned'`, submissionID)
+	requeued := false
+	err := db.InTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE submissions SET status='queued', verdict='', judge_id=NULL, detail='',
+			           time_ms=-1, mem_kb=-1, score=0, started_at=NULL, judged_at=NULL
+			 WHERE id=? AND status='abandoned'`, submissionID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return errStaleStatus
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM runs WHERE submission_id=?`, submissionID); err != nil {
+			return err
+		}
+		requeued = true
+		return nil
+	})
+	if errors.Is(err, errStaleStatus) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
+	return requeued, nil
 }

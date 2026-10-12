@@ -39,7 +39,7 @@ func TestDroppedSubmissionStillTimesOut(t *testing.T) {
 		SubmissionID: 1, PID: "P1", Language: "cpp", Source: spinSource,
 		TimeLimitMS: 300, MemLimitKB: 262144,
 		Cases: []Case{{Name: "1", Ordinal: 1, Expected: []byte("never\n")}},
-	}, tool, dir, &DropTo{UID: uint32(uid), GID: uint32(uid)})
+	}, tool, dir, &DropTo{UID: uint32(uid), GID: uint32(uid)}, nil)
 	if rep.Verdict != TLE {
 		t.Fatalf("verdict = %s (%s), want TLE", rep.Verdict, rep.Detail)
 	}

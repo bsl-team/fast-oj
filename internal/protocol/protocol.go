@@ -34,6 +34,10 @@ type Status struct {
 	Name   string `json:"name"`
 	State  string `json:"state"`
 	Detail string `json:"detail,omitempty"`
+	// Run carries one finished case so the detail page can show results while the
+	// rest of the submission is still being judged. It is advisory: the server
+	// re-derives the verdict and score from the full set when the result arrives.
+	Run *RunRow `json:"run,omitempty"`
 }
 
 // RunRow is one case result.
