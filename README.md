@@ -73,7 +73,7 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/problems/{key}/submit` | 登录用户 | 网页表单提交 |
 | `POST` | `/submissions` | 用户令牌 | 提交代码 |
 | `GET` | `/submissions` | 公开 | 列表，`?user=`（或 `me`）`&problem=&limit=&after=` |
-| `GET` | `/submissions/{id}` | 公开 | 结果；`?wait=秒` 长轮询到出结论（上限 5 分钟） |
+| `GET` | `/submissions/{id}` | 公开 | 结果；`?wait=秒` 长轮询到出结论（上限 5 分钟）。判机每完成一个用例就回报一行，未判完时页面每 2 秒自动刷新，逐用例行会一条条冒出来 |
 | `GET` | `/rank` | 公开 | 排行榜 |
 | `GET` | `/feed` | 公开 | 动态时间线，`?user=` `?after=` `?limit=` |
 | `POST` | `/feed` | 登录用户 | 发一条动态（每人每小时 20 条） |
@@ -341,8 +341,14 @@ Windows 本地判机（`runner_windows.go` + `runner.go`）：
 ./dist/fast-oj.exe -addr 127.0.0.1:18080 -data data -admin-token ADM -judge-token JDG
 
 # 2. 交叉编译 + 构建镜像 + 起容器（只需出站连接，没暴露任何端口）
-FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh
+FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh          # 本地已有镜像时直接复用
+REBUILD=1 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh  # 装了新工具链时强制重建
 ```
+
+`docker build` 每次都要向 Docker Hub 取 `FROM` 的元数据，网络不通就整镜像失败；脚本
+因此带了一条离线回退：把新编译的二进制 `docker cp` 进临时容器再 `docker commit`
+（commit 时显式写回 `ENTRYPOINT`，否则会把临时容器的 `sleep` 提交进去）。等价于只重跑
+那一层 COPY，工具链没变时完全够用。
 
 容器里跑的约束（下面这套已在 Docker Desktop 29.7.2 / linux 引擎上实测）：
 
