@@ -169,7 +169,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /u/{handle}/follow       关注；/unfollow 取消（需登录）",
 		"  GET  /messages                我的私信会话列表（需登录）",
 		"  GET  /messages/{handle}       与某人的一对一对话（打开即标记已读）",
-		"  POST /messages/{handle}       发一条私信（受对方收信策略限制，每人每小时 30 条）",
+		"  POST /messages/{handle}       发一条私信（收信策略限制；每 2 秒 1 条，正文 300 字）",
 		"  GET  /login /register         登录 / 注册（邮箱+密码，邮箱暂不验证）",
 		"  GET  /settings                个人资料、密码、API 令牌",
 		"  POST /settings/privacy        谁可以给我发私信（everyone/mutual/following/off）",

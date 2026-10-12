@@ -12,10 +12,12 @@ import (
 )
 
 // Messages are rate limited per sender, not per conversation: the point is to make
-// flooding expensive, and a spammer opens as many threads as needed.
+// flooding expensive, and a spammer opens as many threads as needed. The throttle
+// table counts attempts inside a window, so "one per two seconds" is a one-second
+// window with a single allowance.
 const (
-	dmWindow   = time.Hour
-	maxDMsHour = 30
+	dmWindow     = 2 * time.Second
+	maxDMsWindow = 1
 )
 
 // requireMember is the page-level version of requireSignedIn: it sends the visitor
@@ -118,13 +120,13 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, messageRow{DM: m, When: agoMS(m.CreatedAt), Read: m.ReadAt != 0})
 	}
 	s.page(w, r, http.StatusOK, peer.Handle, "message_thread", a.viewer(), msgOf(r), map[string]any{
-		"Peer":       peer.Handle,
-		"PeerName":   nameOf(peer),
-		"Messages":   rows,
-		"CanSend":    may && peer.ID != a.User.ID,
-		"MaxBytes":   store.MaxDMBody,
-		"MaxPerHour": maxDMsHour,
-		"Inbox":      "/messages",
+		"Peer":     peer.Handle,
+		"PeerName": nameOf(peer),
+		"Messages": rows,
+		"CanSend":  may && peer.ID != a.User.ID,
+		"MaxBytes": store.MaxDMBody,
+		"RateNote": "每 2 秒最多 1 条",
+		"Inbox":    "/messages",
 	})
 }
 
@@ -158,13 +160,13 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fmt.Sprintf("dm:%d", a.User.ID)
-	allowed, err := s.db.LoginAllowed(r.Context(), key, dmWindow, maxDMsHour)
+	allowed, err := s.db.LoginAllowed(r.Context(), key, dmWindow, maxDMsWindow)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
 	if !allowed {
-		s.replyBack(w, r, back, "发得太快了，一小时最多 "+fmt.Sprint(maxDMsHour)+" 条")
+		s.replyBack(w, r, back, "发得太快了，每 2 秒最多一条")
 		return
 	}
 

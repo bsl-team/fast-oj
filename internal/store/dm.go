@@ -8,7 +8,7 @@ import (
 
 // MaxDMBody bounds one private message: shorter than a feed post on purpose, since
 // a conversation is not where a paste belongs.
-const MaxDMBody = 2000
+const MaxDMBody = 300
 
 // Who may write to a user. The recipient decides, the sender never does.
 const (

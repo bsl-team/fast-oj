@@ -23,7 +23,7 @@
 {{if .Data.CanSend}}
 <form method="post" action="/messages/{{.Data.Peer}}" class="composer">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
-  <label>发私信给 {{.Data.PeerName}}（最长 {{.Data.MaxBytes}} 字，一小时最多 {{.Data.MaxPerHour}} 条）</label>
+  <label>发私信给 {{.Data.PeerName}}（最长 {{.Data.MaxBytes}} 字，{{.Data.RateNote}}）</label>
   <textarea name="body" rows="3" maxlength="{{.Data.MaxBytes}}" placeholder="说点什么" required></textarea>
   <p><input type="submit" value="发送"></p>
 </form>

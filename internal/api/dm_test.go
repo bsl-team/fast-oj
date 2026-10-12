@@ -3,9 +3,11 @@ package api
 import (
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
 func TestMessagesNeedALogin(t *testing.T) {
@@ -137,7 +139,7 @@ func TestMessageValidationAndSelf(t *testing.T) {
 		t.Errorf("send to a missing user = %d, want 404", code)
 	}
 	h.login("penpal13", "penpal13@example.com", testPassword)
-	if _, page := h.postForm2("/messages/penpal13", url.Values{"body": {strings.Repeat("字", 2001)}}, cookie, csrf); !strings.Contains(page, "太长") {
+	if _, page := h.postForm2("/messages/penpal13", url.Values{"body": {strings.Repeat("字", store.MaxDMBody+1)}}, cookie, csrf); !strings.Contains(page, "太长") {
 		t.Error("oversized message was not reported")
 	}
 }
@@ -147,15 +149,22 @@ func TestMessageRateLimit(t *testing.T) {
 	aCookie, aCSRF := h.login("rapid13", "rapid13@example.com", testPassword)
 	h.login("target13", "target13@example.com", testPassword)
 
-	for i := 0; i < maxDMsHour; i++ {
-		if code, page := h.postForm2("/messages/target13", url.Values{"body": {"刷一下 " + strconv.Itoa(i)}}, aCookie, aCSRF); code != http.StatusOK ||
-			strings.Contains(page, "发得太快") {
-			t.Fatalf("message %d rejected: %d %s", i+1, code, page)
-		}
+	if code, page := h.postForm2("/messages/target13", url.Values{"body": {"第一条"}}, aCookie, aCSRF); code != http.StatusOK ||
+		!strings.Contains(page, "已发送") {
+		t.Fatalf("first message = %d %s", code, page)
 	}
-	if _, page := h.postForm2("/messages/target13", url.Values{"body": {"再刷一条"}}, aCookie, aCSRF); !strings.Contains(page, "发得太快") {
-		t.Error("rate limit not applied")
+	// One per two seconds: the very next attempt is refused.
+	if _, page := h.postForm2("/messages/target13", url.Values{"body": {"第二条"}}, aCookie, aCSRF); !strings.Contains(page, "发得太快") {
+		t.Error("a second message inside the window went through")
 	}
+	// A refused attempt does not use up the allowance, so the next one lands once
+	// the window has passed.
+	time.Sleep(2200 * time.Millisecond)
+	if code, page := h.postForm2("/messages/target13", url.Values{"body": {"等过两秒"}}, aCookie, aCSRF); code != http.StatusOK ||
+		!strings.Contains(page, "已发送") {
+		t.Fatalf("after the window = %d %s", code, page)
+	}
+
 	// A different sender is unaffected.
 	otherCookie, otherCSRF := h.login("bystander13", "bystander13@example.com", testPassword)
 	if code, _ := h.postForm2("/messages/target13", url.Values{"body": {"我的第一条"}}, otherCookie, otherCSRF); code != http.StatusOK {
