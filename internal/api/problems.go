@@ -227,7 +227,7 @@ func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s  %s\n", p.PID, p.Title)
 	fmt.Fprintf(&b, "id=%d  time=%s  mem=%s  languages=%s  visible=%v  score=%d\n",
-		p.ID, formatMS(p.TimeLimitMS), formatKB(p.MemLimitKB),
+		p.ID, formatMS(p.TimeLimitMS, false), formatKB(p.MemLimitKB, false),
 		joinOr(p.Languages, "*"), p.Visible, total)
 	b.WriteString("\n" + strings.TrimRight(p.Statement, "\n") + "\n")
 
@@ -265,7 +265,7 @@ func problemRow(p store.Problem, cases string) string {
 		status = "hid"
 	}
 	return fmt.Sprintf("%-10s %-40s %8s %8s %5s  %s",
-		p.PID, clip(p.Title, 40), formatMS(p.TimeLimitMS), formatKB(p.MemLimitKB), cases, status)
+		p.PID, clip(p.Title, 40), formatMS(p.TimeLimitMS, false), formatKB(p.MemLimitKB, false), cases, status)
 }
 
 func clip(s string, n int) string {
@@ -277,24 +277,33 @@ func clip(s string, n int) string {
 }
 
 // formatMS keeps every duration in milliseconds: a list that mixes "15ms" with
-// "1s" makes the numbers impossible to scan side by side.
-func formatMS(ms int) string {
+// "1s" makes the numbers impossible to scan side by side. A lower bound (the run
+// was killed before it finished) is printed as ">1050ms" rather than passed off as
+// a measurement.
+func formatMS(ms int, min bool) string {
 	if ms < 0 {
 		return "-"
 	}
-	return strconv.Itoa(ms) + "ms"
+	return prefixMin(strconv.Itoa(ms)+"ms", min)
 }
 
 // formatKB shows memory in K below a megabyte and in M above it, always to two
 // decimals so 6.73046875M never sprawls across the column.
-func formatKB(kb int) string {
+func formatKB(kb int, min bool) string {
 	if kb < 0 {
 		return "-"
 	}
 	if kb < 1024 {
-		return strconv.Itoa(kb) + "K"
+		return prefixMin(strconv.Itoa(kb)+"K", min)
 	}
-	return strconv.FormatFloat(float64(kb)/1024, 'f', 2, 64) + "M"
+	return prefixMin(strconv.FormatFloat(float64(kb)/1024, 'f', 2, 64)+"M", min)
+}
+
+func prefixMin(text string, min bool) string {
+	if min {
+		return ">" + text
+	}
+	return text
 }
 
 func joinOr(items []string, empty string) string {

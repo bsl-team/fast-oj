@@ -46,15 +46,19 @@ type Testcase struct {
 }
 
 type Submission struct {
-	ID         int64  `json:"id"`
-	UserID     int64  `json:"user_id"`
-	ProblemID  int64  `json:"problem_id"`
-	Language   string `json:"language"`
-	Source     string `json:"source,omitempty"`
-	Status     string `json:"status"`
-	Verdict    string `json:"verdict"`
-	TimeMS     int    `json:"time_ms"`
-	MemKB      int    `json:"mem_kb"`
+	ID        int64  `json:"id"`
+	UserID    int64  `json:"user_id"`
+	ProblemID int64  `json:"problem_id"`
+	Language  string `json:"language"`
+	Source    string `json:"source,omitempty"`
+	Status    string `json:"status"`
+	Verdict   string `json:"verdict"`
+	TimeMS    int    `json:"time_ms"`
+	MemKB     int    `json:"mem_kb"`
+	// TimeMin/MemMin: the headline numbers came from a run that was cut off, so
+	// they are lower bounds and the views prefix them with ">".
+	TimeMin    bool   `json:"time_min,omitempty"`
+	MemMin     bool   `json:"mem_min,omitempty"`
 	Score      int    `json:"score"`
 	TotalScore int    `json:"total_score"`
 	FailedCase string `json:"failed_case"`
@@ -74,6 +78,10 @@ type Run struct {
 	TimeMS       int    `json:"time_ms"`
 	MemKB        int    `json:"mem_kb"`
 	IsSample     bool   `json:"is_sample"`
+	// TimeMin/MemMin mark lower bounds: the run was cut off, so the real cost was
+	// at least this much. The views print a leading ">" for them.
+	TimeMin bool `json:"time_min,omitempty"`
+	MemMin  bool `json:"mem_min,omitempty"`
 }
 
 type Judge struct {

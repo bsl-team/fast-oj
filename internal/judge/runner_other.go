@@ -4,9 +4,12 @@ package judge
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -69,8 +72,30 @@ func (g *plainGuard) Kill() error {
 	return nil
 }
 
-// Measure reports nothing: time and peak RSS come out of the wait status.
-func (g *plainGuard) Measure() (int, int) { return -1, -1 }
+// Measure reports the leader's current resident set from /proc, which is what the
+// memory trip-wire polls while the run is alive. Time still comes from the wait
+// status. It gives up with -1 where /proc does not exist (macOS) or the process is
+// already gone, so the trip-wire simply never fires and the container's cgroup
+// stays the only hard cap. Child processes are not summed: a submission that forks
+// is bounded by --pids-limit anyway.
+func (g *plainGuard) Measure() (int, int) {
+	if g.proc == nil {
+		return -1, -1
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/statm", g.proc.Pid))
+	if err != nil {
+		return -1, -1
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return -1, -1
+	}
+	pages, err := strconv.Atoi(fields[1])
+	if err != nil || pages <= 0 {
+		return -1, -1
+	}
+	return -1, pages * os.Getpagesize() / 1024
+}
 
 func (g *plainGuard) Close() error { return nil }
 

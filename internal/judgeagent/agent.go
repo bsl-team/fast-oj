@@ -208,6 +208,8 @@ func (a *Agent) PostResult(ctx context.Context, submissionID int64, rep judge.Re
 		Verdict:    string(rep.Verdict),
 		TimeMS:     rep.TimeMS,
 		MemKB:      rep.MemKB,
+		TimeMin:    rep.TimeMin,
+		MemMin:     rep.MemMin,
 		FailedCase: rep.FailedCase,
 		Detail:     rep.Detail,
 	}
@@ -215,6 +217,7 @@ func (a *Agent) PostResult(ctx context.Context, submissionID int64, rep judge.Re
 		result.Runs = append(result.Runs, protocol.RunRow{
 			Ordinal: row.Ordinal, CaseName: row.CaseName, Verdict: string(row.Verdict),
 			TimeMS: row.TimeMS, MemKB: row.MemKB, IsSample: row.IsSample,
+			TimeMin: row.TimeMin, MemMin: row.MemMin,
 		})
 	}
 	_, err := a.request(ctx, http.MethodPost,

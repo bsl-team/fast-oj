@@ -44,6 +44,10 @@ type RunRow struct {
 	TimeMS   int    `json:"time_ms"`
 	MemKB    int    `json:"mem_kb"`
 	IsSample bool   `json:"is_sample"`
+	// TimeMin/MemMin say the number is a lower bound: the run was killed before it
+	// finished, so it cost at least that much.
+	TimeMin bool `json:"time_min,omitempty"`
+	MemMin  bool `json:"mem_min,omitempty"`
 }
 
 // Result is the final report for a submission. The server recomputes the score
@@ -53,6 +57,8 @@ type Result struct {
 	Verdict    string   `json:"verdict"`
 	TimeMS     int      `json:"time_ms"`
 	MemKB      int      `json:"mem_kb"`
+	TimeMin    bool     `json:"time_min,omitempty"`
+	MemMin     bool     `json:"mem_min,omitempty"`
 	FailedCase string   `json:"failed_case,omitempty"`
 	Detail     string   `json:"detail,omitempty"`
 	Runs       []RunRow `json:"runs,omitempty"`

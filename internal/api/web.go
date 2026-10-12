@@ -102,7 +102,7 @@ func rowOf(d store.SubmissionDetail) subRow {
 	return subRow{
 		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
 		Class: class, Outcome: outcome,
-		Time: formatMS(d.TimeMS), Mem: formatKB(d.MemKB), Score: score,
+		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Ago: agoMS(d.CreatedAt),
 	}
 }
@@ -144,7 +144,7 @@ func (s *Server) problemsPage(w http.ResponseWriter, r *http.Request, me *viewer
 		c := counts[p.ID]
 		rows = append(rows, problemEntry{
 			PID: p.PID, Title: p.Title,
-			Time: formatMS(p.TimeLimitMS), Mem: formatKB(p.MemLimitKB),
+			Time: formatMS(p.TimeLimitMS, false), Mem: formatKB(p.MemLimitKB, false),
 			Cases: cases[p.ID], Solved: c.Solved, Submits: c.Submits,
 			Hidden: !p.Visible,
 		})
@@ -233,7 +233,7 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 	c := counts[p.ID]
 	s.page(w, r, http.StatusOK, p.PID+" "+p.Title, "problem", a.viewer(), msgOf(r), problemData{
 		PID: p.PID, Title: p.Title,
-		Time: formatMS(p.TimeLimitMS), Mem: formatKB(p.MemLimitKB),
+		Time: formatMS(p.TimeLimitMS, false), Mem: formatKB(p.MemLimitKB, false),
 		LangText: langText, Langs: options,
 		JudgedCases: judged, TotalScore: total,
 		Solved: c.Solved, Submits: c.Submits,
@@ -314,14 +314,14 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 		headline = outcome
 	}
 	if d.Verdict != "" {
-		headline = fmt.Sprintf("%s · 得分 %s · 用时 %s · 内存 %s", verdictSentence(d.Verdict), score, formatMS(d.TimeMS), formatKB(d.MemKB))
+		headline = fmt.Sprintf("%s · 得分 %s · 用时 %s · 内存 %s", verdictSentence(d.Verdict), score, formatMS(d.TimeMS, d.TimeMin), formatKB(d.MemKB, d.MemMin))
 	}
 
 	rows := make([]runRow, 0, len(runs))
 	for _, run := range runs {
 		rows = append(rows, runRow{
 			Ordinal: run.Ordinal, CaseName: run.CaseName, Verdict: run.Verdict,
-			Time: formatMS(run.TimeMS), Mem: formatKB(run.MemKB), IsSample: run.IsSample,
+			Time: formatMS(run.TimeMS, run.TimeMin), Mem: formatKB(run.MemKB, run.MemMin), IsSample: run.IsSample,
 		})
 	}
 	judgeName := "-"
@@ -332,7 +332,7 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
 		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
 		Class: class, Outcome: outcome, Headline: headline,
-		Time: formatMS(d.TimeMS), Mem: formatKB(d.MemKB), Score: score,
+		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,
 		Created: agoMS(d.CreatedAt), Judged: agoMS(d.JudgedAt),
 		Runs: rows, Detail: detail, Source: source,
@@ -500,7 +500,7 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	solvedList := make([]solvedView, 0, len(solved))
 	for _, sp := range solved {
 		solvedList = append(solvedList, solvedView{
-			PID: sp.PID, Title: sp.Title, Time: formatMS(sp.BestTime), When: agoMS(sp.SolvedAt),
+			PID: sp.PID, Title: sp.Title, Time: formatMS(sp.BestTime, false), When: agoMS(sp.SolvedAt),
 		})
 	}
 	rows := make([]subRow, 0, len(recent))

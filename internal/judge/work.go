@@ -37,12 +37,18 @@ type RunRow struct {
 	TimeMS   int     `json:"time_ms"`
 	MemKB    int     `json:"mem_kb"`
 	IsSample bool    `json:"is_sample"`
+	// TimeMin and MemMin mark numbers that are lower bounds: the run was killed
+	// before it finished, so the views print them with a leading ">".
+	TimeMin bool `json:"time_min,omitempty"`
+	MemMin  bool `json:"mem_min,omitempty"`
 }
 
 type Report struct {
 	Verdict    Verdict
 	TimeMS     int
 	MemKB      int
+	TimeMin    bool
+	MemMin     bool
 	FailedCase string
 	Detail     string
 	Runs       []RunRow
@@ -129,14 +135,17 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo) Report {
 			v = WA
 		}
 		row := RunRow{Ordinal: tc.Ordinal, CaseName: tc.Name, Verdict: v,
-			TimeMS: ex.TimeMS, MemKB: ex.MemKB, IsSample: tc.IsSample}
+			TimeMS: ex.TimeMS, MemKB: ex.MemKB, IsSample: tc.IsSample,
+			TimeMin: ex.TimeMin, MemMin: ex.MemMin}
 		rep.Runs = append(rep.Runs, row)
 
+		// The headline numbers are the worst across cases, and they inherit that
+		// case's lower-bound flag: a max taken from a killed run is itself a bound.
 		if ex.TimeMS > rep.TimeMS {
-			rep.TimeMS = ex.TimeMS
+			rep.TimeMS, rep.TimeMin = ex.TimeMS, ex.TimeMin
 		}
 		if ex.MemKB > rep.MemKB {
-			rep.MemKB = ex.MemKB
+			rep.MemKB, rep.MemMin = ex.MemKB, ex.MemMin
 		}
 		if v == AC {
 			if !tc.IsSample {

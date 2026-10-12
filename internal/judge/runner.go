@@ -23,6 +23,12 @@ const (
 	// minWallClock covers process creation on a cold judge: a problem with a 10ms
 	// limit cannot be judged by a 10ms wall clock.
 	minWallClock = 250 * time.Millisecond
+	// memTripKB is how far past a problem's memory cap a run may grow before the
+	// judge stops it: close enough that a runaway allocation does not reach the
+	// container's ceiling, loose enough that a legitimate peak is still measured.
+	memTripKB = 16 * 1024
+	// memPollInterval is how often the guard is asked for the current peak.
+	memPollInterval = 20 * time.Millisecond
 	// reapGrace is how long Run waits for a killed tree to actually go away before
 	// it reports the verdict anyway. A run that cannot be reaped (a judge without
 	// CAP_KILL signalling a dropped-uid child, or a grandchild holding the output
@@ -73,6 +79,12 @@ type Execution struct {
 	Stderr  []byte
 	Exit    int
 	Note    string
+	// TimeMin and MemMin say the number is a lower bound: the run was killed
+	// before it finished, so it cost at least that much and we cannot say how much
+	// more. The views print those with a leading ">"; a number that ran to
+	// completion stays exact.
+	TimeMin bool
+	MemMin  bool
 }
 
 type limitedBuffer struct {
@@ -213,6 +225,31 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 		done <- waitResult{err: err, state: cmd.ProcessState}
 	}()
 
+	// The memory trip-wire stops a runaway allocation near its cap instead of
+	// letting it reach the container's ceiling and be OOM-killed on the way.
+	trip := make(chan int, 1)
+	stopWatch := make(chan struct{})
+	defer close(stopWatch)
+	if lim.MemKB > 0 {
+		go func() {
+			ceiling := lim.MemKB + memTripKB
+			tick := time.NewTicker(memPollInterval)
+			defer tick.Stop()
+			for {
+				select {
+				case <-stopWatch:
+					return
+				case <-tick.C:
+					if _, mem := g.Measure(); mem > ceiling {
+						_ = g.Kill()
+						trip <- mem
+						return
+					}
+				}
+			}
+		}()
+	}
+
 	select {
 	case w := <-done:
 		_, jobMemKB := g.Measure()
@@ -237,18 +274,35 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 		}
 		return ex
 
+	case mem := <-trip:
+		w, reaped := reap(done)
+		_, peak := g.Measure()
+		if peak < mem {
+			peak = mem
+		}
+		ex := Execution{
+			Verdict: MLE, MemKB: peak, MemMin: true, TimeMin: true,
+			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
+			Note: "memory over " + strconv.Itoa(lim.MemKB) + "KB by more than " + strconv.Itoa(memTripKB) + "KB",
+		}
+		if reaped {
+			ex.Exit = exitCode(w.err)
+			if t := usageMS(w.state); t > 0 {
+				ex.TimeMS = t
+			}
+		}
+		return ex
+
 	case <-time.After(wallClockFor(lim.TimeMS)):
 		kerr := g.Kill()
-		var w waitResult
-		select {
-		case w = <-done:
-		case <-time.After(reapGrace):
+		w, reaped := reap(done)
+		if !reaped {
 			// The tree is still alive, so the judge must not sit on it forever:
 			// one unkillable run would take the queue with it. Report what the
 			// verdict was and why the cleanup did not finish.
 			_, memKB := g.Measure()
 			return Execution{
-				Verdict: TLE, TimeMS: lim.TimeMS, MemKB: memKB,
+				Verdict: TLE, TimeMS: lim.TimeMS, TimeMin: true, MemKB: memKB,
 				Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
 				Note: "wall clock limit exceeded and the run could not be reaped: " + killText(kerr),
 			}
@@ -259,7 +313,8 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 		}
 		// Show what the run actually cost, floored at the limit: a CPU-bound program
 		// killed at 1050ms should not be reported as "1000ms", while a program that
-		// slept instead of computing has no meaningful CPU number to show.
+		// slept instead of computing has no meaningful CPU number to show. Either
+		// way the run was cut short, so the number is a lower bound.
 		measured := usageMS(w.state)
 		if measured < 0 {
 			_, measured = g.Measure()
@@ -268,7 +323,7 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 			measured = lim.TimeMS
 		}
 		return Execution{
-			Verdict: TLE, TimeMS: measured, MemKB: memKB,
+			Verdict: TLE, TimeMS: measured, TimeMin: true, MemKB: memKB,
 			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
 			Note: "wall clock limit " + strconv.Itoa(lim.TimeMS+timeSlackMS) + "ms exceeded",
 		}
@@ -305,6 +360,17 @@ func usageMemKB(state *os.ProcessState) int {
 		return -1
 	}
 	return memKB(ru)
+}
+
+// reap waits for the killed run to be collected, giving up after reapGrace so an
+// unkillable process cannot occupy the judge forever.
+func reap(done chan waitResult) (waitResult, bool) {
+	select {
+	case w := <-done:
+		return w, true
+	case <-time.After(reapGrace):
+		return waitResult{}, false
+	}
 }
 
 // wallClockFor turns a CPU limit into a hard deadline. Without one, a program

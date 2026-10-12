@@ -14,19 +14,22 @@ type SubmissionDetail struct {
 }
 
 const detailColumns = `s.id, s.user_id, s.problem_id, s.language, s.status, s.verdict,
-		s.time_ms, s.mem_kb, s.score, s.total_score, s.failed_case, IFNULL(s.judge_id, 0),
+		s.time_ms, s.mem_kb, s.time_min, s.mem_min, s.score, s.total_score, s.failed_case,
+		IFNULL(s.judge_id, 0),
 		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0),
 		p.pid, p.title, u.handle`
 
 func scanDetail(row scanner) (SubmissionDetail, error) {
 	var (
-		d       SubmissionDetail
-		judgeID int64
+		d               SubmissionDetail
+		judgeID         int64
+		timeMin, memMin int
 	)
 	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.Language, &d.Status, &d.Verdict,
-		&d.TimeMS, &d.MemKB, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
+		&d.TimeMS, &d.MemKB, &timeMin, &memMin, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
 		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle)
 	d.JudgeID = judgeID
+	d.TimeMin, d.MemMin = timeMin != 0, memMin != 0
 	return d, notFound(err)
 }
 

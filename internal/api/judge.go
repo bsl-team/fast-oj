@@ -88,7 +88,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 	respond(w, r, http.StatusOK, fmt.Sprintf(
 		"claimed sid=%d judge=%s problem=%s lang=%s cases=%d time=%s mem=%s\n",
 		task.SubmissionID, j.Name, task.PID, task.Language, len(work.Cases),
-		formatMS(task.TimeLimitMS), formatKB(task.MemLimitKB)), work)
+		formatMS(task.TimeLimitMS, false), formatKB(task.MemLimitKB, false)), work)
 }
 
 // handleJudgeCaseFile streams case data to a judge box. Unlike the public case
@@ -237,7 +237,8 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.db.RecordResult(r.Context(), id, store.Result{
-		Verdict: string(verdict), TimeMS: req.TimeMS, MemKB: req.MemKB, Score: score,
+		Verdict: string(verdict), TimeMS: req.TimeMS, MemKB: req.MemKB,
+		TimeMin: req.TimeMin, MemMin: req.MemMin, Score: score,
 		TotalScore: total, FailedCase: failed, Detail: req.Detail,
 	}, runs); err != nil {
 		s.writeStoreError(w, r, err)
@@ -247,7 +248,7 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 		"score", fmt.Sprintf("%d/%d", score, total), "time_ms", req.TimeMS)
 	respond(w, r, http.StatusOK, fmt.Sprintf(
 		"recorded sid=%d verdict=%s score=%d/%d time=%s mem=%s%s\n",
-		id, verdict, score, total, formatMS(req.TimeMS), formatKB(req.MemKB),
+		id, verdict, score, total, formatMS(req.TimeMS, req.TimeMin), formatKB(req.MemKB, req.MemMin),
 		orSuffix(failed, " failed=")),
 		map[string]any{"sid": id, "verdict": string(verdict), "score": score,
 			"total_score": total, "failed_case": failed, "cases": len(runs)})
@@ -298,6 +299,7 @@ func tallyResult(claimed judge.Verdict, reqRuns []protocol.RunRow, cases []store
 		runs = append(runs, store.Run{
 			Ordinal: ordinal, CaseName: rr.CaseName, Verdict: string(v),
 			TimeMS: rr.TimeMS, MemKB: rr.MemKB, IsSample: sample,
+			TimeMin: rr.TimeMin, MemMin: rr.MemMin,
 		})
 	}
 	// CE/IE fail the whole run without a judged case being implicated, so fall

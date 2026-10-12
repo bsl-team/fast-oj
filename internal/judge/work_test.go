@@ -159,6 +159,14 @@ func TestJudgeTimesOut(t *testing.T) {
 	if rep.Score != 0 {
 		t.Fatalf("a timeout scored %d points", rep.Score)
 	}
+	// The run was cut off mid-flight, so its time is a lower bound and has to be
+	// labelled one: ">=300ms" is what actually happened.
+	if !rep.TimeMin {
+		t.Error("a killed run reported its time as an exact measurement")
+	}
+	if rep.TimeMS < 300 {
+		t.Errorf("killed run reported %dms, below the 300ms limit it was cut at", rep.TimeMS)
+	}
 }
 
 func TestJudgeRefusesRunawayMemory(t *testing.T) {

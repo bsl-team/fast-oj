@@ -180,7 +180,7 @@ func submissionText(d store.SubmissionDetail, runs []store.Run, full bool) strin
 	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "time=%s  mem=%s  score=%d/%d  submitted=%s ago",
-		formatMS(d.TimeMS), formatKB(d.MemKB), d.Score, d.TotalScore, ago(d.CreatedAt))
+		formatMS(d.TimeMS, d.TimeMin), formatKB(d.MemKB, d.MemMin), d.Score, d.TotalScore, ago(d.CreatedAt))
 	if d.FailedCase != "" {
 		fmt.Fprintf(&b, "  failed_case=%s", d.FailedCase)
 	}
@@ -204,7 +204,7 @@ func submissionText(d store.SubmissionDetail, runs []store.Run, full bool) strin
 			}
 			fmt.Fprintf(&b, "%-4d %-8s %-18s %-7s %8s %8s\n",
 				run.Ordinal, kind, clip(run.CaseName, 18), run.Verdict,
-				formatMS(run.TimeMS), formatKB(run.MemKB))
+				formatMS(run.TimeMS, run.TimeMin), formatKB(run.MemKB, run.MemMin))
 		}
 	}
 	if d.Detail != "" {
@@ -304,5 +304,5 @@ func submissionListRow(d store.SubmissionDetail) string {
 	}
 	return fmt.Sprintf("%-6d %-11s %-13s %-6s %-10s %-9s %8s %6s %d/%d",
 		d.ID, d.Handle, d.PID, d.Language, d.Status, verdict,
-		formatMS(d.TimeMS), formatKB(d.MemKB), d.Score, d.TotalScore)
+		formatMS(d.TimeMS, d.TimeMin), formatKB(d.MemKB, d.MemMin), d.Score, d.TotalScore)
 }

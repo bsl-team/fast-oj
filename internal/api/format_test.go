@@ -3,24 +3,47 @@ package api
 import "testing"
 
 // The columns are compared by eye across rows, so a list that mixes "15ms" with
-// "1s", or prints 6.73046875M, is unusable.
+// "1s", or prints 6.73046875M, is unusable. A number from a run that was killed
+// mid-flight is a lower bound and has to look like one.
 func TestDurationsAndSizesReadConsistently(t *testing.T) {
-	times := map[int]string{
-		-1: "-", 0: "0ms", 15: "15ms", 999: "999ms", 1000: "1000ms", 1050: "1050ms",
+	times := []struct {
+		ms   int
+		min  bool
+		want string
+	}{
+		{-1, false, "-"},
+		{-1, true, "-"},
+		{0, false, "0ms"},
+		{15, false, "15ms"},
+		{999, false, "999ms"},
+		{1000, false, "1000ms"},
+		{1050, false, "1050ms"},
+		{1050, true, ">1050ms"},
 	}
-	for ms, want := range times {
-		if got := formatMS(ms); got != want {
-			t.Errorf("formatMS(%d) = %q, want %q", ms, got, want)
+	for _, c := range times {
+		if got := formatMS(c.ms, c.min); got != c.want {
+			t.Errorf("formatMS(%d, %v) = %q, want %q", c.ms, c.min, got, c.want)
 		}
 	}
 
-	sizes := map[int]string{
-		-1: "-", 0: "0K", 948: "948K", 1023: "1023K", 1024: "1.00M",
-		6892: "6.73M", 524940: "512.64M",
+	sizes := []struct {
+		kb   int
+		min  bool
+		want string
+	}{
+		{-1, false, "-"},
+		{0, false, "0K"},
+		{948, false, "948K"},
+		{1023, false, "1023K"},
+		{1024, false, "1.00M"},
+		{6892, false, "6.73M"},
+		{524940, false, "512.64M"},
+		{524940, true, ">512.64M"},
+		{900, true, ">900K"},
 	}
-	for kb, want := range sizes {
-		if got := formatKB(kb); got != want {
-			t.Errorf("formatKB(%d) = %q, want %q", kb, got, want)
+	for _, c := range sizes {
+		if got := formatKB(c.kb, c.min); got != c.want {
+			t.Errorf("formatKB(%d, %v) = %q, want %q", c.kb, c.min, got, c.want)
 		}
 	}
 }
