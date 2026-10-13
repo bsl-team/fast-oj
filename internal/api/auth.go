@@ -58,11 +58,6 @@ func (s *Server) authenticate(r *http.Request) (actor, error) {
 			// judge endpoints are its only surface.
 			return actor{Judge: true}, nil
 		}
-		u, err := s.db.UserByToken(r.Context(), token)
-		if err != nil {
-			return actor{}, err
-		}
-		return s.withPerms(r, u, u.Role == "admin", false)
 	}
 
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {

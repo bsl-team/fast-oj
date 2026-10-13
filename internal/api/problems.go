@@ -42,32 +42,7 @@ func (s *Server) handleProblemList(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	if wantsHTML(r) {
-		s.problemsPage(w, r, a.viewer(), page, limit, search)
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(problemHeader)
-	ids := make([]int64, len(page.Items))
-	for i, p := range page.Items {
-		ids[i] = p.ID
-	}
-	counts, err := s.db.CaseCounts(r.Context(), ids)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	for _, p := range page.Items {
-		b.WriteString(problemRow(p, strconv.Itoa(counts[p.ID])) + "\n")
-	}
-	fmt.Fprintf(&b, "shown=%d total=%d", len(page.Items), page.Total)
-	if page.NextAfter != 0 {
-		fmt.Fprintf(&b, " next_after=%d\n", page.NextAfter)
-	} else {
-		b.WriteString("\n")
-	}
-	respond(w, r, http.StatusOK, b.String(), page)
+	s.problemsPage(w, r, a.viewer(), page, limit, search)
 }
 
 func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
@@ -80,65 +55,11 @@ func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
 		return
 	}
-	if wantsHTML(r) {
-		s.problemPage(w, r, a, p)
-		return
-	}
-
-	cases, err := s.db.ListTestcases(r.Context(), p.ID, false)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s  %s\n", p.PID, p.Title)
-	fmt.Fprintf(&b, "id=%d  time=%s  mem=%s  languages=%s  visible=%v  score=%d\n",
-		p.ID, formatMS(p.TimeLimitMS, false), formatKB(p.MemLimitKB, false),
-		joinOr(p.Languages, "*"), p.Visible, total)
-	b.WriteString("\n" + strings.TrimRight(p.Statement, "\n") + "\n")
-
-	// Only sample data is public: hidden case sizes would leak the test set.
-	samples := []store.Testcase{}
-	for _, tc := range cases {
-		if tc.IsSample {
-			samples = append(samples, tc)
-		}
-	}
-	for _, tc := range samples {
-		input, errIn := s.cases.Read(tc.InputRel)
-		output, errOut := s.cases.Read(tc.OutputRel)
-		fmt.Fprintf(&b, "\n--- sample %s ---\n", tc.Name)
-		if errIn != nil || errOut != nil {
-			b.WriteString("(case file missing)\n")
-			continue
-		}
-		b.WriteString(tildeBlock("input", input) + tildeBlock("output", output))
-	}
-	if len(samples) == 0 {
-		b.WriteString("\n(no samples)\n")
-	}
-	respond(w, r, http.StatusOK, b.String(), map[string]any{
-		"problem": p, "samples": samples, "score_total": total,
-		"case_count": len(cases),
-	})
+	s.problemPage(w, r, a, p)
 }
 
-const problemHeader = "pid        title                                    time     mem  cases\n"
 
-func problemRow(p store.Problem, cases string) string {
-	status := "pub"
-	if !p.Visible {
-		status = "hid"
-	}
-	return fmt.Sprintf("%-10s %-40s %8s %8s %5s  %s",
-		p.PID, clip(p.Title, 40), formatMS(p.TimeLimitMS, false), formatKB(p.MemLimitKB, false), cases, status)
-}
+
 
 func clip(s string, n int) string {
 	r := []rune(s)
@@ -178,6 +99,14 @@ func prefixMin(text string, min bool) string {
 	return text
 }
 
+// orDash fills a table cell that would otherwise read as a blank.
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 func joinOr(items []string, empty string) string {
 	if len(items) == 0 {
 		return empty
@@ -185,16 +114,7 @@ func joinOr(items []string, empty string) string {
 	return strings.Join(items, ",")
 }
 
-func tildeBlock(label string, body []byte) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "~~~ %s\n", label)
-	lines := strings.Split(strings.TrimRight(string(body), "\r\n"), "\n")
-	for _, l := range lines {
-		b.WriteString("  " + l + "\n")
-	}
-	b.WriteString("~~~ end\n")
-	return b.String()
-}
+
 
 // problemByKey resolves /problems/{key} into a row or writes the error.
 func (s *Server) problemByKey(w http.ResponseWriter, r *http.Request) (store.Problem, bool) {

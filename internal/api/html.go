@@ -143,16 +143,6 @@ func (v *viewEngine) render(w http.ResponseWriter, status int, page string, data
 	return err
 }
 
-// wantsHTML is the browser-facing half of content negotiation: the same URL
-// serves text/plain to curl, JSON to ?format=json, and HTML to a browser.
-func wantsHTML(r *http.Request) bool {
-	if r.URL.Query().Get("format") != "" {
-		return false
-	}
-	accept := r.Header.Get("Accept")
-	return strings.Contains(accept, "text/html") || strings.Contains(accept, "application/xhtml+xml")
-}
-
 // page renders an HTML view, falling back to the text error shape if the
 // template blows up, so a rendering bug cannot turn into a blank 200.
 func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, title, name string, me *viewer, flash string, data any) {

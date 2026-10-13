@@ -352,7 +352,7 @@ func TestPermissionStoreRoundTrip(t *testing.T) {
 	ctx := ctx()
 	// Both accounts have to exist first: the admin row is created lazily by the
 	// first request that authenticates with the bootstrap token.
-	h.get("/whoami", h.admin)
+	h.htmlGet("/problems", h.admin)
 	h.login("plain", "plain@example.com", testPassword)
 
 	perms, err := h.db.ListPermissions(ctx)

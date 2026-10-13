@@ -60,11 +60,6 @@ func TestFollowFromTheProfile(t *testing.T) {
 	if !strings.Contains(following, "/u/star12") {
 		t.Error("following list missing the star")
 	}
-	if code, text := h.get("/u/star12/followers", ""); code != http.StatusOK ||
-		!strings.Contains(text, "fan12") || !strings.Contains(text, "shown=1") {
-		t.Errorf("text followers = %d %q", code, text)
-	}
-
 	// Mutual only after the second edge, and it shows on both sides.
 	if code, _ := h.postForm2("/u/fan12/follow", url.Values{}, starCookie, starCSRF); code != http.StatusOK {
 		t.Fatalf("star follow = %d", code)

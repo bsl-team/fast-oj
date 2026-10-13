@@ -71,11 +71,6 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
-	if !wantsHTML(r) {
-		s.handleProblemList(w, r)
-		return
-	}
-
 	a, _ := s.authenticate(r)
 	problems, err := s.db.ListProblems(r.Context(), 0, 6, "", !a.can(permProblemEditAny))
 	if err != nil {
@@ -208,10 +203,6 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	// A rejected save keeps what was typed: having to re-enter a whole home page
 	// because one link line was malformed is not a fair trade.
 	fail := func(msg string) {
-		if !wantsHTML(r) {
-			s.respondError(w, r, http.StatusBadRequest, msg)
-			return
-		}
 		s.page(w, r, http.StatusBadRequest, "站点设置", "admin_site", a.viewer(), msg, map[string]any{
 			"Site": in, "Links": rawLinks,
 		})

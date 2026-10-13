@@ -1,0 +1,19 @@
+{{define "content"}}
+<h1>判机</h1>
+<p class="meta">判机只出站连服务器，网页上没有它们的入口；下面是在线注册过的机器。</p>
+
+<table>
+  <tr><th class="num">id</th><th>名称</th><th>能判的语言</th><th>最近心跳</th><th>备注</th></tr>
+  {{range .Data.Rows}}
+  <tr>
+    <td class="num">{{.ID}}</td>
+    <td>{{.Name}}</td>
+    <td>{{.Languages}}</td>
+    <td>{{.Seen}}</td>
+    <td>{{.Note}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5">还没有判机连上来，提交会一直排队。</td></tr>
+  {{end}}
+</table>
+{{end}}

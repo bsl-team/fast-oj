@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/liangbinchen2013/fast-oj/internal/store"
@@ -55,16 +54,6 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	if !wantsHTML(r) {
-		var b strings.Builder
-		b.WriteString("peer        unread  last\n")
-		for _, t := range threads {
-			fmt.Fprintf(&b, "%-12s %-6d %s\n", t.Peer, t.Unread, clip(t.Last, 40))
-		}
-		fmt.Fprintf(&b, "shown=%d\n", len(threads))
-		respond(w, r, http.StatusOK, b.String(), threads)
-		return
-	}
 	rows := make([]threadRow, 0, len(threads))
 	for _, t := range threads {
 		rows = append(rows, threadRow{DMThread: t, When: agoMS(t.LastAt)})
@@ -99,17 +88,6 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 	for i := range messages {
 		messages[i].FromMe = messages[i].SenderID == a.User.ID
 	}
-	if !wantsHTML(r) {
-		var b strings.Builder
-		fmt.Fprintf(&b, "%s ↔ %s\n", a.User.Handle, peer.Handle)
-		for _, m := range messages {
-			fmt.Fprintf(&b, "%-12s %s\n", m.Sender, clip(m.Body, 60))
-		}
-		fmt.Fprintf(&b, "shown=%d\n", len(messages))
-		respond(w, r, http.StatusOK, b.String(), messages)
-		return
-	}
-
 	may, err := s.db.MayMessage(r.Context(), a.User.ID, peer.ID)
 	if err != nil {
 		s.writeStoreError(w, r, err)
@@ -213,12 +191,7 @@ func (s *Server) handlePrivacy(w http.ResponseWriter, r *http.Request) {
 	}
 	policy := r.FormValue("dm_policy")
 	if !store.ValidDMPolicy(policy) {
-		data, err := s.buildSettings(r, a, "")
-		if err != nil {
-			s.writeStoreError(w, r, err)
-			return
-		}
-		s.page(w, r, http.StatusBadRequest, "设置", "settings", a.viewer(), "不认识的消息策略", data)
+		s.page(w, r, http.StatusBadRequest, "设置", "settings", a.viewer(), "不认识的消息策略", s.buildSettings(a))
 		return
 	}
 	if err := s.db.SetDMPolicy(r.Context(), a.User.ID, policy); err != nil {

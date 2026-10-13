@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -95,17 +94,6 @@ func (s *Server) handleFollowList(w http.ResponseWriter, r *http.Request, direct
 	if direction == "followers" {
 		title = "粉丝"
 		other = "following"
-	}
-
-	if !wantsHTML(r) {
-		var b strings.Builder
-		fmt.Fprintf(&b, "%s 的%s\n", u.Handle, title)
-		for _, p := range people {
-			fmt.Fprintf(&b, "  %-20s %s\n", p.Handle, p.DisplayName)
-		}
-		fmt.Fprintf(&b, "shown=%d\n", len(people))
-		respond(w, r, http.StatusOK, b.String(), people)
-		return
 	}
 
 	a, _ := s.authenticate(r)

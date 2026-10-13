@@ -2,10 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 )
 
@@ -77,50 +73,6 @@ func (db *DB) ListUsers(ctx context.Context, limit int) ([]User, error) {
 	return out, rows.Err()
 }
 
-// NewToken makes an unguessable opaque bearer token.
-func NewToken() (string, error) {
-	var buf [24]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
-}
-
-// Tokens are stored as a SHA-256 digest so a stolen database file cannot be
-// replayed as credentials.
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-func (db *DB) CreateToken(ctx context.Context, userID int64, label, token string) error {
-	_, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO tokens (token, user_id, label, created_at) VALUES (?, ?, ?, ?)`,
-		hashToken(token), userID, label, nowMS())
-	return conflict(err, "token")
-}
-
-func (db *DB) UserByToken(ctx context.Context, token string) (User, error) {
-	if token == "" {
-		return User{}, ErrNotFound
-	}
-	var userID int64
-	err := db.SQL.QueryRowContext(ctx,
-		`SELECT user_id FROM tokens WHERE token=?`, hashToken(token)).Scan(&userID)
-	if err != nil {
-		return User{}, notFound(err)
-	}
-	return db.GetUserByID(ctx, userID)
-}
-
-// TokenInfo is what a user may see about their own tokens: the digest prefix is
-// enough to tell two apart, and the digest itself is not a secret.
-type TokenInfo struct {
-	Digest    string `json:"digest"`
-	Label     string `json:"label"`
-	CreatedAt int64  `json:"created_at"`
-}
-
 // SetUserRole changes the tier. Sessions stay valid; the effective capability
 // set is recomputed on the next request, which is what makes a demotion stick
 // immediately.
@@ -154,43 +106,4 @@ func (db *DB) SetUserStatus(ctx context.Context, userID int64, status string) er
 		return db.DropUserSessions(ctx, userID)
 	}
 	return nil
-}
-
-func (db *DB) ListTokens(ctx context.Context, userID int64) ([]TokenInfo, error) {
-	rows, err := db.SQL.QueryContext(ctx,
-		`SELECT token, label, created_at FROM tokens WHERE user_id=? ORDER BY created_at DESC`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []TokenInfo
-	for rows.Next() {
-		var t TokenInfo
-		if err := rows.Scan(&t.Digest, &t.Label, &t.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
-// DeleteTokenDigest revokes by stored digest, which is what the settings page
-// can show without ever having the plaintext in hand.
-func (db *DB) DeleteTokenDigest(ctx context.Context, userID int64, digest string) (bool, error) {
-	res, err := db.SQL.ExecContext(ctx, `DELETE FROM tokens WHERE user_id=? AND token=?`, userID, digest)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
-}
-
-func (db *DB) DeleteToken(ctx context.Context, token string) (int64, error) {
-	res, err := db.SQL.ExecContext(ctx, `DELETE FROM tokens WHERE token=?`, hashToken(token))
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
 }

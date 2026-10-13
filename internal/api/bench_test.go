@@ -125,7 +125,7 @@ func BenchmarkProblemListText(b *testing.B) {
 
 func BenchmarkProblemListJSON(b *testing.B) {
 	srv, _ := benchServer(b)
-	report(b, sample(b, srv, []string{"/problems?limit=50&format=json"}))
+	report(b, sample(b, srv, []string{"/problems?limit=50"}))
 }
 
 func BenchmarkProblemListDeepPage(b *testing.B) {

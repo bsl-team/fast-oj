@@ -29,6 +29,23 @@ func clientIP(r *http.Request) string {
 
 // validEmail is deliberately shallow: the mailbox is not verified yet, so this
 // only rejects shapes that could never be delivered, not throwaway domains.
+// validHandle keeps URLs safe: a handle travels in a path, so it may not contain
+// a slash, a space or any other character that would change what the URL means.
+func validHandle(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '_', r == '-', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func validEmail(s string) bool {
 	s = strings.TrimSpace(s)
 	if len(s) < 3 || len(s) > 120 {
@@ -256,14 +273,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// --- settings: profile, password, API tokens ---
-
-type tokenRow struct {
-	Short   string
-	Label   string
-	Created string
-	Digest  string
-}
+// --- settings: profile and password ---
 
 type settingsData struct {
 	Email       string
@@ -273,30 +283,14 @@ type settingsData struct {
 	Joined      string
 	// DMPolicy is who may send this person a private message.
 	DMPolicy string
-	Tokens   []tokenRow
-	Issued   string
 }
 
-// buildSettings gathers everything the settings page shows. issued carries a
-// freshly minted plaintext token for exactly one response.
-func (s *Server) buildSettings(r *http.Request, a actor, issued string) (settingsData, error) {
-	tokens, err := s.db.ListTokens(r.Context(), a.User.ID)
-	if err != nil {
-		return settingsData{}, err
-	}
-	rows := make([]tokenRow, 0, len(tokens))
-	for _, t := range tokens {
-		short := t.Digest
-		if len(short) > 12 {
-			short = short[:12]
-		}
-		rows = append(rows, tokenRow{Short: short, Label: t.Label, Created: agoMS(t.CreatedAt), Digest: t.Digest})
-	}
+func (s *Server) buildSettings(a actor) settingsData {
 	return settingsData{
 		Email: a.User.Email, DisplayName: a.User.DisplayName, Bio: a.User.Bio,
 		HasPassword: a.User.HasPassword, Joined: agoMS(a.User.CreatedAt),
-		DMPolicy: a.User.DMPolicy, Tokens: rows, Issued: issued,
-	}, nil
+		DMPolicy: a.User.DMPolicy,
+	}
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -305,12 +299,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?next=/settings", http.StatusSeeOther)
 		return
 	}
-	data, err := s.buildSettings(r, a, r.URL.Query().Get("issued"))
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	s.page(w, r, http.StatusOK, "设置", "settings", a.viewer(), msgOf(r), data)
+	s.page(w, r, http.StatusOK, "设置", "settings", a.viewer(), msgOf(r), s.buildSettings(a))
 }
 
 func (s *Server) handleProfileSave(w http.ResponseWriter, r *http.Request) {
@@ -360,59 +349,6 @@ func (s *Server) handlePasswordSave(w http.ResponseWriter, r *http.Request) {
 	s.clearSession(w)
 	s.log.Info("password changed", "user", a.User.Handle)
 	http.Redirect(w, r, "/login?msg="+url.QueryEscape("密码已修改，请重新登录"), http.StatusSeeOther)
-}
-
-func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request) {
-	a, err := s.requireSignedIn(w, r)
-	if err != nil {
-		return
-	}
-	label := strings.TrimSpace(r.FormValue("label"))
-	if len(label) > 40 {
-		label = label[:40]
-	}
-	token, err := store.NewToken()
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	if err := s.db.CreateToken(r.Context(), a.User.ID, label, token); err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	s.log.Info("token issued", "user", a.User.Handle, "label", label)
-	// Rendered inline rather than redirected: the plaintext must not end up in a
-	// URL, access logs, or Referer headers.
-	data, err := s.buildSettings(r, a, token)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	s.page(w, r, http.StatusOK, "设置", "settings", a.viewer(), "", data)
-}
-
-func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
-	a, err := s.requireSignedIn(w, r)
-	if err != nil {
-		return
-	}
-	digest := strings.TrimSpace(r.FormValue("digest"))
-	ok, err := s.db.DeleteTokenDigest(r.Context(), a.User.ID, digest)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	msg := "已吊销"
-	if !ok {
-		msg = "那枚令牌不属于你"
-	}
-	http.Redirect(w, r, "/settings?msg="+url.QueryEscape(msg), http.StatusSeeOther)
-}
-
-// handleAccountAlias keeps the old /account URL working after the settings page
-// replaced the token-binding flow.
-func (s *Server) handleAccountAlias(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/settings", http.StatusMovedPermanently)
 }
 
 // requireSignedIn is the shared gate for the settings pages.

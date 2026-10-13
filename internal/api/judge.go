@@ -61,7 +61,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 
 	task, err := s.db.ClaimNext(r.Context(), j.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		respond(w, r, http.StatusNotFound, "queue empty\n", map[string]any{"queue": "empty", "judge": j.Name})
+		writeJSON(w, http.StatusNotFound, map[string]any{"queue": "empty", "judge": j.Name})
 		return
 	}
 	if err != nil {
@@ -85,10 +85,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.log.Info("claimed", "sid", task.SubmissionID, "judge", j.Name, "pid", task.PID)
-	respond(w, r, http.StatusOK, fmt.Sprintf(
-		"claimed sid=%d judge=%s problem=%s lang=%s cases=%d time=%s mem=%s\n",
-		task.SubmissionID, j.Name, task.PID, task.Language, len(work.Cases),
-		formatMS(task.TimeLimitMS, false), formatKB(task.MemLimitKB, false)), work)
+	writeJSON(w, http.StatusOK, work)
 }
 
 // handleJudgeCaseFile streams case data to a judge box. Unlike the public case
@@ -201,8 +198,7 @@ func (s *Server) handleJudgeStatus(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusConflict, "submission state changed under the judge")
 		return
 	}
-	respond(w, r, http.StatusOK, fmt.Sprintf("sid=%d state=%s\n", id, to),
-		map[string]any{"sid": id, "state": string(to)})
+	writeJSON(w, http.StatusOK, map[string]any{"sid": id, "state": string(to)})
 }
 
 func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
@@ -261,12 +257,8 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("judged", "sid", id, "judge", j.Name, "verdict", string(verdict),
 		"score", fmt.Sprintf("%d/%d", score, total), "time_ms", req.TimeMS)
-	respond(w, r, http.StatusOK, fmt.Sprintf(
-		"recorded sid=%d verdict=%s score=%d/%d time=%s mem=%s%s\n",
-		id, verdict, score, total, formatMS(req.TimeMS, req.TimeMin), formatKB(req.MemKB, req.MemMin),
-		orSuffix(failed, " failed=")),
-		map[string]any{"sid": id, "verdict": string(verdict), "score": score,
-			"total_score": total, "failed_case": failed, "cases": len(runs)})
+	writeJSON(w, http.StatusOK, map[string]any{"sid": id, "verdict": string(verdict),
+		"score": score, "total_score": total, "failed_case": failed, "cases": len(runs)})
 }
 
 // tallyResult treats the judge as untrusted arithmetic: the score is recomputed
@@ -330,12 +322,7 @@ func tallyResult(claimed judge.Verdict, reqRuns []protocol.RunRow, cases []store
 	return verdict, runs, score, total, failed
 }
 
-func orSuffix(value, label string) string {
-	if value == "" {
-		return ""
-	}
-	return " " + label + value
-}
+
 
 func submissionID(r *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -343,6 +330,15 @@ func submissionID(r *http.Request) (int64, error) {
 		return 0, fmt.Errorf("submission id must be a positive number")
 	}
 	return id, nil
+}
+
+// judgeRow is one box in the registry the operator watches.
+type judgeRow struct {
+	ID        int64
+	Name      string
+	Languages string
+	Seen      string
+	Note      string
 }
 
 func (s *Server) handleJudgeList(w http.ResponseWriter, r *http.Request) {
@@ -354,12 +350,11 @@ func (s *Server) handleJudgeList(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	var b strings.Builder
-	b.WriteString("id     name             seen              languages\n")
+	rows := make([]judgeRow, 0, len(judges))
 	for _, j := range judges {
-		fmt.Fprintf(&b, "%-6d %-16s %-17s %s\n",
-			j.ID, clip(j.Name, 16), ago(j.LastSeenAt), joinOr(j.Languages, "-"))
+		rows = append(rows, judgeRow{
+			ID: j.ID, Name: j.Name, Languages: joinOr(j.Languages, "不限"), Seen: ago(j.LastSeenAt), Note: j.Note,
+		})
 	}
-	fmt.Fprintf(&b, "judges=%d\n", len(judges))
-	respond(w, r, http.StatusOK, b.String(), judges)
+	s.page(w, r, http.StatusOK, "判机", "judges", s.viewerOf(r), msgOf(r), map[string]any{"Rows": rows})
 }

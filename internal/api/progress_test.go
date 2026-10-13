@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,9 +11,9 @@ import (
 // going, and that a retried report cannot duplicate a row.
 func TestProgressRowsShowBeforeTheRunFinishes(t *testing.T) {
 	h := newHarness(t)
-	alice := h.userToken("alice")
+	alice := h.signIn("alice")
 	h.readyProblem("P3010")
-	if code, _ := h.submit(alice, "P3010", "cpp", "int main(){}"); code != http.StatusCreated {
+	if code, _ := h.submitCode(alice, "P3010", "cpp", "int main(){}"); code != http.StatusOK {
 		t.Fatalf("submit = %d", code)
 	}
 	task := h.claimTask(t, "box-p")
@@ -33,7 +32,7 @@ func TestProgressRowsShowBeforeTheRunFinishes(t *testing.T) {
 		t.Fatalf("first progress = %d %s", code, body)
 	}
 
-	code, page, _ := h.html(http.MethodGet, "/submissions/"+sid, alice, nil, "")
+	code, page := h.getAs(alice, "/submissions/"+sid)
 	if code != http.StatusOK {
 		t.Fatalf("detail page = %d", code)
 	}
@@ -48,18 +47,12 @@ func TestProgressRowsShowBeforeTheRunFinishes(t *testing.T) {
 	if code, _ := h.postJSON(status, h.judge, row(1, "sample1", "WA")); code != http.StatusOK {
 		t.Fatalf("retried progress = %d", code)
 	}
-	_, runs := h.get("/submissions/"+sid+"?format=json", alice)
-	var payload struct {
-		Runs []struct {
-			Ordinal int    `json:"ordinal"`
-			Verdict string `json:"verdict"`
-		} `json:"runs"`
-	}
-	if err := json.Unmarshal([]byte(runs), &payload); err != nil {
+	live, err := h.db.ListRuns(ctx(), task.SubmissionID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Runs) != 1 || payload.Runs[0].Verdict != "WA" {
-		t.Fatalf("runs after the retry = %s", runs)
+	if len(live) != 1 || live[0].Verdict != "WA" {
+		t.Fatalf("rows after the retry = %+v, want one WA", live)
 	}
 
 	// Garbage verdicts and ordinals are refused rather than folded into IE.
@@ -75,14 +68,14 @@ func TestProgressRowsShowBeforeTheRunFinishes(t *testing.T) {
 		{"ordinal":1,"case_name":"sample1","verdict":"AC","time_ms":12,"mem_kb":1024,"is_sample":true},
 		{"ordinal":2,"case_name":"1","verdict":"AC","time_ms":12,"mem_kb":1024},
 		{"ordinal":3,"case_name":"2","verdict":"AC","time_ms":12,"mem_kb":1024}]}`
-	if code, body := h.postJSON("/judge/submissions/"+sid+"/result?format=json", h.judge, result); code != http.StatusOK {
+	if code, body := h.postJSON("/judge/submissions/"+sid+"/result", h.judge, result); code != http.StatusOK {
 		t.Fatalf("result = %d %s", code, body)
 	}
-	_, done, _ := h.html(http.MethodGet, "/submissions/"+sid, alice, nil, "")
+	_, done := h.getAs(alice, "/submissions/"+sid)
 	if strings.Contains(done, "判题中") || !strings.Contains(done, "通过") {
 		t.Error("the finished submission did not settle")
 	}
-	if _, body := h.get("/submissions/"+sid+"?format=json", alice); strings.Count(body, `"ordinal":1`) != 1 {
-		t.Errorf("partial rows survived the final result:\n%s", body)
+	if final, err := h.db.ListRuns(ctx(), task.SubmissionID); err != nil || len(final) != 3 {
+		t.Errorf("partial rows survived the final result: %+v %v", final, err)
 	}
 }

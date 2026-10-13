@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/url"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 )
 
 func (h *harness) claim(name string) (int, string) {
-	return h.json(http.MethodPost, "/judge/claim?format=json", h.judge,
+	return h.json(http.MethodPost, "/judge/claim", h.judge,
 		[]byte(`{"name":"`+name+`","languages":["cpp"],"note":"test box"}`))
 }
 
@@ -35,25 +36,29 @@ func (h *harness) postJSON(path, token string, body string) (int, string) {
 
 func TestJudgeClaimWorkOrder(t *testing.T) {
 	h := newHarness(t)
-	alice := h.userToken("alice")
+	alice := h.signIn("alice")
 	h.readyProblem("P3000")
 
 	// An empty queue is a 404, not an error.
 	if code, body := h.claim("box-1"); code != http.StatusNotFound || !strings.Contains(body, `"queue":"empty"`) {
 		t.Fatalf("empty claim = %d %q", code, body)
 	}
-	if code, _ := h.postJSON("/judge/claim?format=json", "", `{"name":"box-1"}`); code != http.StatusUnauthorized {
+	if code, _ := h.postJSON("/judge/claim", "", `{"name":"box-1"}`); code != http.StatusUnauthorized {
 		t.Fatalf("anonymous claim = %d", code)
 	}
-	if code, _ := h.postJSON("/judge/claim?format=json", alice, `{"name":"box-1"}`); code != http.StatusForbidden {
-		t.Fatalf("user token claim = %d, want 403", code)
+	if code, _ := h.postJSON("/judge/claim", "not-a-token", `{"name":"box-1"}`); code != http.StatusUnauthorized {
+		t.Fatalf("unknown bearer = %d, want 401", code)
+	}
+	// A logged-in browser is not a judge box, cookie included.
+	if code, _ := h.postAs(alice, "/judge/claim", url.Values{"name": {"box-1"}}); code != http.StatusForbidden {
+		t.Fatalf("signed-in user claimed queue work = %d, want 403", code)
 	}
 	// The admin token may drive the queue by hand.
 	if code, _ := h.json(http.MethodPost, "/judge/claim", h.admin, []byte(`{"name":""}`)); code != http.StatusBadRequest {
 		t.Fatalf("blank judge name = %d, want 400", code)
 	}
 
-	if code, body := h.submit(alice, "P3000", "cpp", "int main(){}"); code != http.StatusCreated {
+	if code, body := h.submitCode(alice, "P3000", "cpp", "int main(){}"); code != http.StatusOK {
 		t.Fatalf("submit = %d %q", code, body)
 	}
 	task := h.claimTask(t, "box-1")
@@ -98,7 +103,7 @@ func TestJudgeClaimWorkOrder(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(listed, "box-1") || !strings.Contains(listed, "cpp") {
 		t.Fatalf("judges = %d %q", code, listed)
 	}
-	if code, _ := h.get("/judges", alice); code != http.StatusForbidden {
+	if code, _ := h.getAs(alice, "/judges"); code != http.StatusForbidden {
 		t.Fatalf("user may not list judges = %d", code)
 	}
 	// Nothing else is queued.
@@ -111,9 +116,9 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 func TestJudgeStatusTransitions(t *testing.T) {
 	h := newHarness(t)
-	alice := h.userToken("alice")
+	alice := h.signIn("alice")
 	h.readyProblem("P3001")
-	h.submit(alice, "P3001", "cpp", "x")
+	h.submitCode(alice, "P3001", "cpp", "x")
 	task := h.claimTask(t, "box-1")
 	path := "/judge/submissions/" + itoa(int(task.SubmissionID)) + "/status"
 
@@ -131,20 +136,20 @@ func TestJudgeStatusTransitions(t *testing.T) {
 	if code, body := h.postJSON(path, h.judge, `{"name":"box-1","state":"compiling"}`); code != http.StatusConflict {
 		t.Fatalf("running -> compiling = %d %q", code, body)
 	}
-	_, view := h.get("/submissions/"+itoa(int(task.SubmissionID)), alice)
-	if !strings.Contains(view, "status=running") {
+	_, view := h.getAs(alice, "/submissions/"+itoa(int(task.SubmissionID)))
+	if !strings.Contains(view, "判题中") {
 		t.Fatalf("progress not visible to the owner: %q", view)
 	}
-	if code, _ := h.postJSON(path, alice, `{"name":"box-1","state":"running"}`); code != http.StatusForbidden {
-		t.Fatalf("user token may not report = %d", code)
+	if code, _ := h.postAs(alice, path, url.Values{"name": {"box-1"}, "state": {"running"}}); code != http.StatusForbidden {
+		t.Fatalf("a signed-in browser may not report judgements = %d", code)
 	}
 }
 
 func TestJudgeResultAndScoring(t *testing.T) {
 	h := newHarness(t)
-	alice := h.userToken("alice")
+	alice := h.signIn("alice")
 	h.readyProblem("P3002")
-	h.submit(alice, "P3002", "cpp", "int main(){}")
+	h.submitCode(alice, "P3002", "cpp", "int main(){}")
 	task := h.claimTask(t, "box-1")
 	sid := itoa(int(task.SubmissionID))
 	result := "/judge/submissions/" + sid + "/result"
@@ -158,13 +163,13 @@ func TestJudgeResultAndScoring(t *testing.T) {
 		`{"ordinal":2,"case_name":"` + judged + `","verdict":"AC","time_ms":12,"mem_kb":3072},` +
 		`{"ordinal":3,"case_name":"` + other + `","verdict":"AC","time_ms":9,"mem_kb":3000}]}`
 	code, out := h.postJSON(result, h.judge, body)
-	if code != http.StatusOK || !strings.Contains(out, "verdict=AC") || !strings.Contains(out, "score=2/2") {
+	if code != http.StatusOK || !strings.Contains(out, `"verdict":"AC"`) || !strings.Contains(out, `"score":2`) {
 		t.Fatalf("AC result = %d %q", code, out)
 	}
-	_, view := h.get("/submissions/"+sid, alice)
-	for _, want := range []string{"status=done", "verdict=AC", "score=2/2", "time=12ms", "mem=3.00M"} {
+	_, view := h.getAs(alice, "/submissions/"+sid)
+	for _, want := range []string{"AC", "2/2", "12ms", "3.00M"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("owner view missing %q: %q", want, view)
+			t.Fatalf("owner view missing %q:\n%s", want, view)
 		}
 	}
 
@@ -174,7 +179,7 @@ func TestJudgeResultAndScoring(t *testing.T) {
 	}
 
 	// An AC claim with a failing judged row is downgraded by the server.
-	h.submit(alice, "P3002", "cpp", "int main(){return 0;}")
+	h.submitCode(alice, "P3002", "cpp", "int main(){return 0;}")
 	task2 := h.claimTask(t, "box-1")
 	sid2 := itoa(int(task2.SubmissionID))
 	bad := `{"name":"box-1","verdict":"AC","time_ms":30,"mem_kb":2048,"runs":[` +
@@ -182,22 +187,22 @@ func TestJudgeResultAndScoring(t *testing.T) {
 		`{"case_name":"` + judged + `","verdict":"WA"},` +
 		`{"case_name":"` + other + `","verdict":"AC"}]}`
 	code, out = h.postJSON("/judge/submissions/"+sid2+"/result", h.judge, bad)
-	if code != http.StatusOK || !strings.Contains(out, "verdict=WA") || !strings.Contains(out, "score=1/2") ||
-		!strings.Contains(out, "failed="+judged) {
+	if code != http.StatusOK || !strings.Contains(out, `"verdict":"WA"`) || !strings.Contains(out, `"score":1`) ||
+		!strings.Contains(out, `"failed_case":"`+judged+`"`) {
 		t.Fatalf("downgrade = %d %q", code, out)
 	}
 
 	// Unknown verdict strings become IE.
-	h.submit(alice, "P3002", "cpp", "x")
+	h.submitCode(alice, "P3002", "cpp", "x")
 	task3 := h.claimTask(t, "box-2")
 	sid3 := itoa(int(task3.SubmissionID))
 	code, out = h.postJSON("/judge/submissions/"+sid3+"/result", h.judge,
 		`{"name":"box-2","verdict":"MEMORY_EXPLODED","time_ms":-1,"mem_kb":-1}`)
-	if code != http.StatusOK || !strings.Contains(out, "verdict=IE") {
+	if code != http.StatusOK || !strings.Contains(out, `"verdict":"IE"`) {
 		t.Fatalf("unknown verdict = %d %q", code, out)
 	}
 	// box-2 owns that row, so box-1 must not be able to report on it.
-	h.submit(alice, "P3002", "cpp", "x")
+	h.submitCode(alice, "P3002", "cpp", "x")
 	task4 := h.claimTask(t, "box-3")
 	if code, out := h.postJSON("/judge/submissions/"+itoa(int(task4.SubmissionID))+"/result", h.judge,
 		`{"name":"box-1","verdict":"AC"}`); code != http.StatusForbidden {

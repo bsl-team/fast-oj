@@ -213,7 +213,7 @@ func TestTestcasesAreOrderedAndScored(t *testing.T) {
 	}
 }
 
-func TestUsersAndTokens(t *testing.T) {
+func TestUserHandlesAreCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
 
@@ -227,42 +227,6 @@ func TestUsersAndTokens(t *testing.T) {
 	}
 	if _, err := db.EnsureUser(ctx, "bob", "root"); err == nil {
 		t.Fatal("unknown role accepted")
-	}
-
-	token, err := NewToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(token) < 20 {
-		t.Fatalf("token too short: %q", token)
-	}
-	if err := db.CreateToken(ctx, u.ID, "cli", token); err != nil {
-		t.Fatal(err)
-	}
-	owner, err := db.UserByToken(ctx, token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if owner.Handle != "alice" {
-		t.Fatalf("owner = %+v", owner)
-	}
-	if _, err := db.UserByToken(ctx, token+"x"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("wrong token err = %v", err)
-	}
-	if _, err := db.UserByToken(ctx, ""); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("empty token err = %v", err)
-	}
-
-	// The plaintext token must never reach the database.
-	var stored string
-	if err := db.SQL.QueryRowContext(ctx, `SELECT token FROM tokens`).Scan(&stored); err != nil {
-		t.Fatal(err)
-	}
-	if stored == token {
-		t.Fatal("token stored in plaintext")
-	}
-	if n, err := db.DeleteToken(ctx, token); err != nil || n != 1 {
-		t.Fatalf("delete token = %d, %v", n, err)
 	}
 
 	users, err := db.ListUsers(ctx, 10)

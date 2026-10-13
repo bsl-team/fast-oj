@@ -65,10 +65,10 @@ func TestMessageThreadAndUnreadBadge(t *testing.T) {
 		t.Error("the badge survived opening the conversation")
 	}
 
-	// Text view for scripts.
-	if code, text := h.get("/messages", h.userToken("reader13")); code != http.StatusOK ||
-		!strings.Contains(text, "sender13") {
-		t.Fatalf("text inbox = %d %q", code, text)
+	// The inbox a person sees in the browser lists the conversation and who sent it.
+	if code, page := h.htmlWithCookie(http.MethodGet, "/messages", recvCookie); code != http.StatusOK ||
+		!strings.Contains(page, "sender13") {
+		t.Fatalf("inbox page = %d:\n%s", code, page)
 	}
 }
 

@@ -377,22 +377,6 @@ type rankRowView struct {
 }
 
 func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
-	if !wantsHTML(r) {
-		rank, err := s.db.Leaderboard(r.Context(), 100)
-		if err != nil {
-			s.writeStoreError(w, r, err)
-			return
-		}
-		var b strings.Builder
-		b.WriteString("rank handle        solved submits last_ac\n")
-		for i, row := range rank {
-			fmt.Fprintf(&b, "%-4d %-13s %6d %8d %s\n", i+1, row.Handle, row.Solved, row.Submits, agoMS(row.LastAC))
-		}
-		fmt.Fprintf(&b, "ranked=%d\n", len(rank))
-		respond(w, r, http.StatusOK, b.String(), rank)
-		return
-	}
-
 	rank, err := s.db.Leaderboard(r.Context(), 100)
 	if err != nil {
 		s.writeStoreError(w, r, err)
@@ -470,13 +454,6 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	submits := 0
 	for _, n := range tally {
 		submits += n
-	}
-
-	if !wantsHTML(r) {
-		respond(w, r, http.StatusOK, "", map[string]any{
-			"user": u, "solved": solved, "tally": tally, "submits": submits, "recent": recent,
-		})
-		return
 	}
 
 	a, _ := s.authenticate(r)

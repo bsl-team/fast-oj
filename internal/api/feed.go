@@ -75,17 +75,6 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	if !wantsHTML(r) {
-		var b string
-		b += "id      author       when            body\n"
-		for _, p := range posts {
-			b += fmt.Sprintf("%-7d %-12s %-15s %s\n", p.ID, p.Author, agoMS(p.CreatedAt), clip(p.Body, 40))
-		}
-		b += fmt.Sprintf("shown=%d\n", len(posts))
-		respond(w, r, http.StatusOK, b, posts)
-		return
-	}
-
 	s.page(w, r, http.StatusOK, "动态", "feed", a.viewer(), msgOf(r), map[string]any{
 		"Posts":    postRows(posts, a),
 		"SignedIn": a.User.ID != 0,

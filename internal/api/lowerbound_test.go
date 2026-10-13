@@ -44,10 +44,6 @@ func TestKilledRunsAreShownAsLowerBounds(t *testing.T) {
 		t.Error("a run that finished is marked as a lower bound")
 	}
 
-	_, text := h.get("/submissions/1", cookie)
-	if !strings.Contains(text, ">1050ms") || !strings.Contains(text, ">512.64M") {
-		t.Errorf("text view lost the bounds:\n%s", text)
-	}
 	if _, list := h.htmlGet("/submissions", ""); !strings.Contains(list, "&gt;1050ms") {
 		t.Error("the list view lost the bound")
 	}

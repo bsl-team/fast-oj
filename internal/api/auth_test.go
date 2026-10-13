@@ -153,10 +153,10 @@ func TestCSRFGatesCookieWritesOnly(t *testing.T) {
 		t.Fatalf("no submission redirect: %q", hdr.Get("Location"))
 	}
 
-	// Bearer-authenticated API writes carry no cookie, so they need no token.
-	tok := h.userToken("apiuser")
-	if code, body := h.submit(tok, "P5000", "cpp", "int main(){}"); code != http.StatusCreated {
-		t.Fatalf("bearer submit without csrf = %d %q", code, body)
+	// The operator token authenticates without a cookie, so it needs no CSRF token
+	// either: there is no browser session for a cross-site request to ride.
+	if code, body := h.postBearer("/problems", problemValues("P9100", "运维建的题"), h.admin); code != http.StatusOK {
+		t.Fatalf("operator post without csrf = %d %s", code, body)
 	}
 }
 
@@ -171,41 +171,21 @@ func TestRegistrationCanBeClosed(t *testing.T) {
 	}
 }
 
-func TestSessionAndTokenPathsAreIndependent(t *testing.T) {
+func TestPasswordChangeDropsSessions(t *testing.T) {
 	h := newHarness(t)
 	cookie, _ := h.login("dual", "dual@example.com", testPassword)
-
-	// Signing in through the browser does not mint a bearer token, and holding a
-	// token does not create a session.
-	if _, page := h.htmlWithCookie(http.MethodGet, "/settings", cookie); !strings.Contains(page, "还没有令牌") {
-		t.Fatalf("fresh account should have no tokens:\n%s", page)
-	}
 	u, err := h.db.GetUserByHandle(ctx(), "dual")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, err := store.NewToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.db.CreateToken(ctx(), u.ID, "cli", tok); err != nil {
-		t.Fatal(err)
-	}
-	if code, who := h.get("/whoami", tok); code != http.StatusOK || !strings.Contains(who, "dual") {
-		t.Fatalf("token whoami = %d %q", code, who)
-	}
 
-	// Changing the password drops every session, which is the point.
+	// A browser session is the only credential a person holds, so changing the
+	// password has to end every one of them.
 	if err := h.db.SetPassword(ctx(), u.ID, "another-good-password", 4); err != nil {
 		t.Fatal(err)
 	}
 	if _, page := h.htmlWithCookie(http.MethodGet, "/settings", cookie); strings.Contains(page, "dual@example.com") {
 		t.Error("session survived a password change")
-	}
-	// ...but API tokens keep working, which is deliberate: revoking them is its
-	// own action on the settings page.
-	if code, _ := h.get("/whoami", tok); code != http.StatusOK {
-		t.Fatalf("token died with the password: %d", code)
 	}
 }
 

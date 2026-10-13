@@ -347,7 +347,7 @@ func TestProfileShowsBioAndPosts(t *testing.T) {
 			t.Errorf("profile missing %q:\n%s", want, page)
 		}
 	}
-	if code, body := h.get("/u/bioed?format=json", ""); code != http.StatusOK || !strings.Contains(body, "bioed") {
+	if code, body := h.htmlGet("/u/bioed", ""); code != http.StatusOK || !strings.Contains(body, "bioed") {
 		t.Fatalf("json profile = %d %s", code, body)
 	}
 }

@@ -204,39 +204,3 @@ func TestLoginThrottleWindow(t *testing.T) {
 	}
 }
 
-func TestTokenListingAndRevocation(t *testing.T) {
-	ctx := context.Background()
-	db := openTestDB(t)
-	u, err := db.EnsureUser(ctx, "tokened", "user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	plain, err := NewToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.CreateToken(ctx, u.ID, "laptop", plain); err != nil {
-		t.Fatal(err)
-	}
-	list, err := db.ListTokens(ctx, u.ID)
-	if err != nil || len(list) != 1 {
-		t.Fatalf("tokens = %+v %v", list, err)
-	}
-	if strings.Contains(list[0].Digest, plain) {
-		t.Fatal("token digest resembles the plaintext")
-	}
-	// Revoking by digest works, and only for the owner.
-	if _, err := db.DeleteTokenDigest(ctx, u.ID+1, list[0].Digest); err != nil {
-		t.Fatal(err)
-	}
-	if still, err := db.ListTokens(ctx, u.ID); err != nil || len(still) != 1 {
-		t.Fatalf("someone else revoked my token: %+v", still)
-	}
-	ok, err := db.DeleteTokenDigest(ctx, u.ID, list[0].Digest)
-	if err != nil || !ok {
-		t.Fatalf("revoke = %v %v", ok, err)
-	}
-	if _, err := db.UserByToken(ctx, plain); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("revoked token still works: %v", err)
-	}
-}

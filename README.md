@@ -1,12 +1,12 @@
 # fast-oj
 
-超级无敌简洁的 OJ，UI 极少。同一个 URL 对浏览器给 HTML、对 `curl` 给纯文本、对程序给 JSON —— 权限判定只有一条代码路径，网页不会比 API 多泄露任何东西。
+超级无敌简洁的 OJ，UI 极少。**只有网页**：人是唯一的使用者，出题、用例、判题、私信、后台全在浏览器里点。
 
 - 单个可执行文件，零外部服务依赖（SQLite 内嵌，纯 Go 驱动）
-- 判机与服务器分离，判机只需要一个出站 HTTP 连接
+- 判机与服务器分离，判机只需要一个出站 HTTP 连接（那是判机的内部协议，网页上没有入口）
 - 题面、动态、个人简介、首页语统一走 Markdown + KaTeX 数学公式
 - 首页内容（站名、首页语、友情链接、页脚、页脚 API 提示、注册开关）在网页后台改，不用重启
-- 读接口每次请求的处理时间在 0.2–1.2 ms 之间（200 题 / 500 提交规模，见[性能](#性能)）
+- 页面每次请求的处理时间在 0.2–3 ms 之间（200 题 / 500 提交规模，见[性能](#性能)）
 
 ---
 
@@ -24,43 +24,49 @@ powershell -File build.ps1        # 产出 dist\fast-oj.exe dist\fast-judge.exe
 ./dist/fast-judge.exe -server http://127.0.0.1:8080 -token JDG -name box1 -v
 ```
 
-浏览器打开 <http://127.0.0.1:8080>，命令行：
+浏览器打开 <http://127.0.0.1:8080>。命令行只留一件事——探活：
 
 ```bash
 curl -s localhost:8080/healthz          # ok
-curl -s localhost:8080/about            # 版本、数据目录、WAL、各项计数
-curl -s localhost:8080/problems         # 纯文本题库列表
 ```
+
+运行概览（版本、数据目录、WAL、各项计数、页面清单）现在是网页 `/about`，判机在线情况是网页 `/judges`。
 
 现成的演示脚本：
 
-| 脚本 | 作用 |
-|------|------|
-| `bash scripts/smoke.sh` | 两个 exe + curl 走完整流程：建题 → 传用例 → 发令牌 → 提交 → 看 AC/WA |
-| `bash scripts/seed_web.sh` | 起一套带中文题面 + KaTeX 公式的示例库并在 18080 留着，供浏览器查看 |
+没有 curl 演示脚本了：以前那些脚本走的正是被撤掉的 API。想试完整流程就在浏览器里注册两个账号 → 导航栏「出题」建题 → 用例页加数据 → 提交代码。
 
 ---
 
-## 三种视图
+## 没有对外 API
 
-| 请求 | 结果 |
+以前同一个 URL 会按 `Accept` 与 `?format=` 给浏览器 HTML、给 curl 纯文本、给脚本 JSON，还有「用户 API 令牌」让脚本代替人提交。这套全部撤掉了：
+
+| 撤掉 | 换成 |
 |------|------|
-| 浏览器（`Accept: text/html`） | HTML 页面 |
-| `curl`（默认） | `text/plain` |
-| `?format=json` 或 `Accept: application/json` | JSON |
-| `?format=text` | 强制纯文本 |
+| `?format=json` / `?format=text` / `Accept` 协商 | 每个页面只出 HTML |
+| 用户 API 令牌（`/settings` 签发、`/account`、`/whoami`） | 浏览器会话，`tokens` 表已删 |
+| `POST /submissions`（脚本提交代码） | 题面页的提交表单 |
+| `POST` / `PUT` / `DELETE /problems`（JSON 建题改题） | 网页出题：`/problems/new`、`/problems/{pid}/edit` |
+| `POST` / `DELETE /problems/{pid}/cases`（JSON + zip 清单） | 网页用例管理：逐条增删改，zip 只做批量导入 |
+| `GET` / `POST /users`、`POST /users/{handle}/tokens` | 注册页 + `/admin/perms` 权限控制台 |
+| `?wait=秒` 长轮询 | 提交详情页判题中每 2 秒自动刷新 |
 
-网页版页面：首页 `/`（站名 + 首页语 + 统计 + 最新题目 + 动态；curl 与 `?format=json` 拿到的仍是题库列表）、题库 `/problems`、题面 `/problems/{pid}`、动态 `/feed`、提交列表 `/submissions`、提交详情 `/submissions/{id}`、排行榜 `/rank`、个人主页 `/u/{handle}`、登录注册 `/login` `/register`、设置 `/settings`、站点设置 `/admin/site`、权限控制台 `/admin/perms`、令牌绑定 `/account`。
+保留的两处不是给人用的：`/healthz`（一行 `ok`，给 Docker / 反代探活）和 `/judge/*`（判机协议，只有判机令牌能访问，网页里没有任何入口）。少了一套视图就少一条代码路径：页面和权限判定从此只有一条，浏览器不会比谁多看到一点东西。
+
+网页版页面：首页 `/`（站名 + 首页语 + 统计 + 最新题目 + 动态 + 打卡）、题库 `/problems`、题面 `/problems/{pid}`、出题 `/problems/new`、改题 `/problems/{pid}/edit`、用例 `/problems/{pid}/cases`、动态 `/feed`、提交列表 `/submissions`、提交详情 `/submissions/{id}`、排行榜 `/rank`、个人主页 `/u/{handle}`、关注与粉丝 `/u/{handle}/following` `/followers`、私信 `/messages`、登录注册 `/login` `/register`、设置 `/settings`、站点设置 `/admin/site`、权限控制台 `/admin/perms`、判机 `/judges`、运行概览 `/about`。
 
 ---
 
-## 接口一览
+## 页面与操作一览
+
+没有对外 API：下面每一个路径都只出 HTML，浏览器会话是唯一的人用凭据。
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
 | `GET` | `/healthz` | 公开 | 探活，会真连一次数据库 |
-| `GET` | `/about` | 公开 | 运行摘要与全部路由 |
-| `GET` | `/` | 公开 | 浏览器给首页，curl/JSON 给题库列表 |
+| `GET` | `/about` | 公开 | 运行概览页：版本、数据目录、WAL、各项计数、页面清单 |
+| `GET` | `/` | 公开 | 首页：站名 + 首页语 + 统计 + 最新题目 + 动态 + 打卡 |
 | `GET` | `/problems` | 公开 | 列表，`?q=` `?limit=` `?after=` |
 | `GET` | `/problems/{key}` | 公开 | 题面 + 样例（`key` 可为编号或数字 id） |
 | `GET` `/POST` | `/problems/new` `/problems` | `problem.create` | 网页出题：编号、标题、题面（可预览）、时限、内存、语言、可见性 |
@@ -74,16 +80,15 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/problems/{key}/cases/wipe` | 同上 | 清空用例 |
 | `GET` | `/problems/{key}/cases/{name}/{in\|out}` | 样例公开，判题需 admin/判机 | 取单个用例正文 |
 | `POST` | `/problems/{key}/submit` | 登录用户 | 网页表单提交 |
-| `POST` | `/submissions` | 用户令牌 | 提交代码 |
 | `GET` | `/submissions` | 公开 | 列表，`?user=`（或 `me`）`&problem=&limit=&after=` |
-| `GET` | `/submissions/{id}` | 公开 | 结果；`?wait=秒` 长轮询到出结论（上限 5 分钟）。判机每完成一个用例就回报一行，未判完时页面每 2 秒自动刷新，逐用例行会一条条冒出来 |
+| `GET` | `/submissions/{id}` | 公开 | 结果。判机每完成一个用例就回报一行，未判完时页面每 2 秒自动刷新，逐用例行一条条冒出来 |
 | `GET` | `/rank` | 公开 | 排行榜 |
 | `GET` | `/feed` | 公开 | 动态时间线，`?user=` `?after=` `?limit=` |
 | `POST` | `/feed` | 登录用户 | 发一条动态（每人每小时 20 条） |
 | `POST` | `/feed/{id}/delete` | 本人或 `feed.moderate` | 删除 |
 | `POST` | `/feed/{id}/hide` | `feed.moderate` | 隐藏 / 恢复（不删数据） |
 | `GET` | `/u/{handle}` | 公开 | 个人主页 |
-| `GET` | `/u/{handle}/following` | 公开 | 关注名单（`?format=json` 给脚本） |
+| `GET` | `/u/{handle}/following` | 公开 | 关注名单 |
 | `GET` | `/u/{handle}/followers` | 公开 | 粉丝名单 |
 | `POST` | `/u/{handle}/follow` | 登录用户 | 关注；`/unfollow` 取消 |
 | `GET` | `/messages` | 登录用户 | 我的私信会话列表（未读数在最后一条那列） |
@@ -91,17 +96,13 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/messages/{handle}` | 登录用户 | 发一条私信（受对方收信策略限制） |
 | `POST` | `/settings/privacy` | 登录用户 | 设置谁可以给我发私信 |
 | `POST` | `/checkin` | 登录用户 | 每日打卡，返回连续天数 |
-| `GET` | `/whoami` | 令牌 | 当前身份 |
 | `GET` `/POST` | `/login` `/logout` | — | 邮箱或用户名 + 密码登录，session cookie |
 | `GET` `/POST` | `/register` | 公开（可关） | 自助注册，邮箱暂不验证 |
-| `GET` `/POST` | `/settings` `/settings/*` | 登录用户 | 资料、密码、API 令牌签发与吊销 |
-| `POST` | `/users` | `user.manage` | 建/取用户 |
-| `GET` | `/users` | `user.manage` | 用户列表 |
-| `POST` | `/users/{handle}/tokens` | `user.manage` | 代用户签发 API 令牌 |
-| `POST` | `/judge/claim` | 判机 | 心跳 + 领取一条（空队列返回 404 `queue empty`） |
-| `GET` | `/judge/cases/{id}/{in\|out}` | 判机 | 取用例正文（含判题用例） |
-| `POST` | `/judge/submissions/{id}/status` | 判机 | 进度（`compiling` → `running`） |
-| `POST` | `/judge/submissions/{id}/result` | 判机 | 回报判定与逐用例结果 |
+| `GET` `/POST` | `/settings` `/settings/*` | 登录用户 | 资料、密码、私信策略 |
+| `POST` | `/judge/claim` | 判机令牌 | 心跳 + 领取一条（空队列返回 404 `queue empty`） |
+| `GET` | `/judge/cases/{id}/{in\|out}` | 判机令牌 | 取用例正文（含判题用例） |
+| `POST` | `/judge/submissions/{id}/status` | 判机令牌 | 进度 + 逐用例回报（`compiling` → `running`） |
+| `POST` | `/judge/submissions/{id}/result` | 判机令牌 | 终局判定与逐用例结果 |
 | `GET` | `/judges` | `judge.view` | 判机框清单 |
 | `GET` `/POST` | `/admin/site` | `site.settings` | 站名、首页语、友情链接、页脚、API 提示、注册开关 |
 | `GET` | `/admin/perms` | `permission.manage` | 账号列表与权限控制台 |
@@ -110,14 +111,9 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/admin/users/{handle}/role` | `user.manage` | 改角色 |
 | `POST` | `/admin/users/{handle}/status` | `user.manage` | 封禁 / 解封（封禁踢掉会话） |
 
-建题示例：
-
-```bash
-curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/json" \
-  -d '{"pid":"P1001","title":"A+B","statement":"输入 $a,b$，输出 $a+b$。",
-       "time_limit_ms":1000,"mem_limit_kb":262144,"languages":["c","cpp"]}' \
-  localhost:8080/problems
-```
+出题在浏览器里走：导航栏「出题」→ 填编号、标题、题面（可以「预览」看渲染效果，不保存）→ 保存后直接落到用例页，
+逐条加输入输出或用 zip 批量导入。表格里最后四行是判机协议：只有判机令牌能用，网页上没有任何入口，
+`/healthz` 与它们是两个非 HTML 的端点。
 
 ---
 
@@ -221,16 +217,18 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/jso
 zip 里按 `<名字>.in` + `<名字>.out` 成对给出，目录层级会被压平（只取文件名）。
 
 - 名字以 `sample` 开头 → 判为**样例**，展示在题面上且不计分
-- 其余为**判题用例**，默认每题 1 分（可用 `PUT` 改分值）
+- 其余为**判题用例**，默认每条 1 分，分值在用例管理页逐条改
 - 重复上传按名字替换，**序号保持稳定**，判机顺序不会漂移
 - 只有 `.in` 没有 `.out` → 整个包拒收并列出缺哪些
 - 单文件上限 `-max-case`（默认 16 MiB），整包上限 `-max-upload`（默认 64 MiB）
 
+zip 只是批量入口：用例页「批量导入 zip」选一个包即可，同名覆盖、新名排在后面。
+
 ```bash
 zip -j cases.zip 1.in 1.out sample1.in sample1.out
-curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/zip" \
-  --data-binary @cases.zip localhost:8080/problems/P1001/cases
 ```
+
+日常加一两条不用打包：用例页「加一条」里直接填输入输出。
 
 `Content-Type: application/zip` 不能省：`--data-binary` 默认发 `text/plain`，端点按 zip 读体就会一条用例都收不到，而提交只会回报「本题还没有测试数据」。
 
@@ -240,10 +238,9 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/zip
 
 | 凭证 | 怎么来 | 能干什么 |
 |------|--------|----------|
-| `-admin-token` | 启动参数 | 建题、看/改隐藏题、建用户发令牌、看判题用例、驱动判机队列 |
+| `-admin-token` | 启动参数 | 运维引导凭据：给第一个账号发权限、手动驱动判机队列。不是人用的登录方式 |
 | `-judge-token` | 启动参数 | 领取任务、取用例正文、回报结果 |
 | 邮箱 + 密码 | `/register` 自助注册 | 登录成普通用户（session cookie） |
-| 用户 API 令牌 | 登录后在 `/settings` 自助签发，或 admin 代签 | 给 curl / 脚本用，与网页登录互不影响 |
 
 登录与会话：
 
@@ -251,10 +248,10 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/zip
 - 登录可用邮箱或用户名；失败提示统一为「账号或密码不正确」，不区分哪一步错，避免枚举账号
 - 同一来源 IP 在 15 分钟内失败 10 次返回 429；计数在库里，重启不会把锁定清零
 - session cookie `fastoj_session`：`HttpOnly` + `SameSite=Lax` + `Path=/`，30 天；上 TLS 时加 `-secure-cookies`
-- 每次登录新建 session；改密码吊销该用户全部 session（令牌不受牵连，吊销是 `/settings` 上的独立动作）
+- 每次登录新建 session；改密码吊销该用户全部 session
 - **CSRF**：非 GET 请求统一过闸门，只有「凭 cookie 认证」的请求被要求带 `csrf` 字段或 `X-CSRF-Token` 头，与 session 里的 token 常量时间比较；`Authorization: Bearer` 的 API 调用不带 cookie、天然免疫，不做要求
 - `/login?next=` 只认站内路径，`//evil`、`/\evil`、绝对 URL 一律回落到 `/`
-- 引导令牌常量时间比较；用户令牌只存 SHA-256 摘要，明文仅在签发那一次出现
+- 引导令牌与判机令牌都做常量时间比较；除此之外系统里没有第二种凭据
 - 隐藏题对无权限者一律 404 而不是 403，避免被枚举
 - 提交的判定结果公开；源码、逐用例明细、判机差异信息只有本人或管理员可见
 - 关闭注册：`-no-register` 与后台 `/admin/site` 的「允许自助注册」取与，任一方关掉后 `/register` 即 403

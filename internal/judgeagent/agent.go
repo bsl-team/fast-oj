@@ -159,7 +159,7 @@ func indexOf(s string, b byte) int {
 // doubles as the heartbeat that keeps this box listed on the server.
 func (a *Agent) Claim(ctx context.Context) (*protocol.Task, error) {
 	var task protocol.Task
-	code, err := a.request(ctx, http.MethodPost, "/judge/claim?format=json", a.greeting(), &task)
+	code, err := a.request(ctx, http.MethodPost, "/judge/claim", a.greeting(), &task)
 	if code == http.StatusNotFound {
 		return nil, nil
 	}

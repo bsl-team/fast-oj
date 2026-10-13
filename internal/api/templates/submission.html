@@ -49,10 +49,6 @@
   <p class="meta">逐用例结果与源码只有本人或管理员可见。<a href="/login?next=/submissions/{{.Data.ID}}">登录</a></p>
 {{end}}
 
-<p class="meta">
-  {{if .Data.Waiting}}判题中 —— 本页会自动刷新。{{end}}
-  <a href="/submissions/{{.Data.ID}}?format=text">纯文本结果</a> ·
-  <a href="/submissions/{{.Data.ID}}?format=json">JSON</a>
-</p>
+{{if .Data.Waiting}}<p class="meta">判题中 —— 本页会自动刷新，每判完一个用例就多出一行。</p>{{end}}
 {{if .Data.Waiting}}<meta http-equiv="refresh" content="2">{{end}}
 {{end}}

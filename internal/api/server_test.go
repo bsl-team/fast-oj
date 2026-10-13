@@ -116,45 +116,20 @@ func TestHealthzIsPlainText(t *testing.T) {
 	}
 }
 
-func TestAboutTextAndJSON(t *testing.T) {
+func TestAboutIsAPage(t *testing.T) {
 	h := newHarness(t)
-	code, body := h.get("/about", "")
-	if code != http.StatusOK || !strings.Contains(body, "fast-oj") || !strings.Contains(body, "uptime") {
-		t.Fatalf("text about = %d %q", code, body)
-	}
-	if !strings.Contains(body, "counters problems=0") || !strings.Contains(body, "(wal)") {
-		t.Fatalf("about missing db status: %q", body)
-	}
-	if strings.Contains(body, "\"uptime\":") {
-		t.Fatal("text response leaked json")
-	}
-
-	code, body = h.get("/about?format=json", "")
-	if code != http.StatusOK || !strings.Contains(body, `"uptime"`) {
-		t.Fatalf("json about = %d %q", code, body)
-	}
-
-	code, body = h.get("/about", "")
+	code, body := h.htmlGet("/about", "")
 	if code != http.StatusOK {
-		t.Fatalf("status = %d", code)
+		t.Fatalf("about = %d", code)
 	}
-}
-
-func TestAboutNegotiatesJSONByAccept(t *testing.T) {
-	h := newHarness(t)
-	req, err := http.NewRequest(http.MethodGet, h.srv.URL+"/about", nil)
-	if err != nil {
-		t.Fatal(err)
+	for _, want := range []string{"运行概览", "已运行", "wal", "POST /judge/claim", "/problems/new"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("about page missing %q", want)
+		}
 	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := h.srv.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
-		t.Fatalf("negotiated json = %d %q", resp.StatusCode, body)
+	// It is a page, not a data dump: no request can shake a JSON document out of it.
+	if strings.Contains(body, `"uptime":`) {
+		t.Fatalf("about leaked json:\n%s", body)
 	}
 }
 

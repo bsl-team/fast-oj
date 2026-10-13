@@ -2,11 +2,9 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/liangbinchen2013/fast-oj/internal/casefs"
@@ -48,12 +46,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /problems/{key}/cases/{id}/delete", s.handleCaseDelete)
 	mux.HandleFunc("GET /problems/{key}/cases/{name}/{which}", s.handleCaseBody)
 
-	mux.HandleFunc("GET /whoami", s.handleWhoami)
-	mux.HandleFunc("GET /users", s.handleUserList)
-	mux.HandleFunc("POST /users", s.handleUserCreate)
-	mux.HandleFunc("POST /users/{handle}/tokens", s.handleTokenCreate)
-
-	mux.HandleFunc("POST /submissions", s.handleSubmitCreate)
 	mux.HandleFunc("GET /submissions", s.handleSubmitList)
 	mux.HandleFunc("GET /submissions/{id}", s.handleSubmitGet)
 
@@ -96,9 +88,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings/profile", s.handleProfileSave)
 	mux.HandleFunc("POST /settings/password", s.handlePasswordSave)
-	mux.HandleFunc("POST /settings/tokens", s.handleTokenIssue)
-	mux.HandleFunc("POST /settings/tokens/revoke", s.handleTokenRevoke)
-	mux.HandleFunc("GET /account", s.handleAccountAlias)
 
 	mux.HandleFunc("GET /admin/perms", s.handleAdminUsers)
 	mux.HandleFunc("GET /admin/perms/u/{handle}", s.handleAdminUser)
@@ -111,21 +100,20 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
-	if wantsHTML(r) {
-		s.errorPage(w, r, http.StatusNotFound, "没有这个页面："+r.URL.Path)
-		return
-	}
-	s.respondError(w, r, http.StatusNotFound, "no route for "+r.URL.Path)
+	s.errorPage(w, r, http.StatusNotFound, "没有这个页面："+r.URL.Path)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
 	if err := s.db.PingContext(ctx); err != nil {
-		s.respondError(w, r, http.StatusServiceUnavailable, "database unreachable")
+		http.Error(w, "database unreachable\n", http.StatusServiceUnavailable)
 		return
 	}
-	respond(w, r, http.StatusOK, "ok\n", map[string]any{"status": "ok"})
+	// A health check is read by a supervisor, not by a person, so it stays one
+	// line of text. Everything a human reads is HTML.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ok\n"))
 }
 
 func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
@@ -141,18 +129,10 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text := strings.Join([]string{
-		"fast-oj",
-		"uptime   " + uptime.String(),
-		fmt.Sprintf("go       %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH),
-		"listen   " + s.cfg.Addr,
-		"data     " + s.cfg.DataDir,
-		"db       " + s.db.Path + " (" + mode + ")",
-		fmt.Sprintf("counters problems=%d submissions=%d pending=%d users=%d judges=%d",
-			counts.Problems, counts.Submissions, counts.Pending, counts.Users, counts.Judges),
-		"",
-		"routes  (浏览器拿 HTML，curl 拿纯文本，?format=json 拿 JSON)",
-		"  GET  /                        首页：站名+首页语+动态+最新题目（文本视图=题库列表）",
+	// The inventory is what an operator reads when they forget a route, so it
+	// lives here rather than in a document that can drift.
+	routes := []string{
+		"  GET  /                        首页：站名 + 首页语 + 动态 + 最新题目",
 		"  GET  /problems                题库列表（?q= &limit= &after=）",
 		"  GET  /problems/{key}          题面 + 样例 + 提交表单",
 		"  GET  /problems/new            出题表单（problem.create）",
@@ -161,52 +141,49 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /problems/{key}          保存题目（owner 或 problem.edit.any）",
 		"  POST /problems/{key}/delete   删题（owner 或 problem.edit.any）",
 		"  GET  /problems/{key}/cases    用例管理页（owner 或 testcase.manage）",
-		"  POST /problems/{key}/cases    加一条用例（同上）",
+		"  POST /problems/{key}/cases    加一条用例",
 		"  POST /problems/{key}/cases/upload  批量导入用例 zip",
 		"  POST /problems/{key}/cases/{id}/edit|delete  改用例 / 删用例",
 		"  POST /problems/{key}/cases/wipe    清空用例",
-		"  POST /problems/{key}/submit   网页表单提交代码",
-		"  POST /submissions             提交（bearer）",
+		"  GET  /problems/{key}/cases/{name}/{in|out}  用例正文（样例公开）",
+		"  POST /problems/{key}/submit   提交代码",
 		"  GET  /submissions             提交列表（?user= &problem=）",
-		"  GET  /submissions/{id}        结果（?wait=秒 长轮询）",
-		"  GET  /feed                    动态（?user= &after= &limit=）",
-		"  POST /feed                    发一条动态（需登录）",
+		"  GET  /submissions/{id}        结果；判题中每 2 秒自动刷新，逐用例行一条条冒出来",
+		"  GET  /feed                    动态（?user= &after= &limit=）；POST /feed 发一条",
 		"  POST /feed/{id}/delete        删动态（本人，或持 feed.moderate 删别人的）",
 		"  POST /feed/{id}/hide          隐藏/恢复动态（feed.moderate）",
 		"  GET  /rank                    排行榜",
-		"  GET  /u/{handle}              个人主页：简介 + 动态 + 战绩",
-		"  GET  /u/{handle}/following    关注列表（?format=json 给脚本）",
-		"  GET  /u/{handle}/followers    粉丝列表",
-		"  POST /u/{handle}/follow       关注；/unfollow 取消（需登录）",
-		"  GET  /messages                我的私信会话列表（需登录）",
-		"  GET  /messages/{handle}       与某人的一对一对话（打开即标记已读）",
-		"  POST /messages/{handle}       发一条私信（收信策略限制；每 2 秒 1 条，正文 300 字）",
-		"  GET  /login /register         登录 / 注册（邮箱+密码，邮箱暂不验证）",
-		"  GET  /settings                个人资料、密码、API 令牌",
-		"  POST /settings/privacy        谁可以给我发私信（everyone/mutual/following/off）",
-		"  POST /checkin                 每日打卡（连续天数；漏卡 n 天扣 3^n）",
-		"  GET  /whoami                  当前身份",
+		"  GET  /u/{handle}              个人主页：简介 + 动态 + 战绩 + 连续打卡",
+		"  GET  /u/{handle}/following    关注列表；/followers 粉丝",
+		"  POST /u/{handle}/follow       关注；/unfollow 取消",
+		"  GET  /messages                私信收件箱；/messages/{handle} 一对一对话",
+		"  POST /messages/{handle}       发一条私信（受收信策略限制）",
+		"  GET  /login /register         登录 / 注册",
+		"  GET  /settings                个人资料、密码、私信策略",
+		"  POST /checkin                 每日打卡（漏卡 n 天扣 3^n 连续天数）",
 		"  GET  /admin/site              站点设置（site.settings）",
 		"  GET  /admin/perms             权限控制台（permission.manage）",
 		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
 		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁",
 		"  GET  /judges                  判机框列表（judge.view）",
-		"  POST /judge/claim             判机：心跳 + 领取",
-		"  GET  /judge/cases/{id}/{which} 判机：取用例正文",
-		"  POST /judge/submissions/{id}/status|result  判机：回报",
-		"  GET  /healthz  GET /about     运维",
-	}, "\n") + "\n"
+		"  GET  /healthz                 探活",
+		"",
+		"  判机内部协议（只有判机令牌能用，网页上没有入口）：",
+		"  POST /judge/claim             心跳 + 领取工单",
+		"  GET  /judge/cases/{id}/{which} 取用例正文",
+		"  POST /judge/submissions/{id}/status|result  逐用例回报 / 终局结果",
+	}
 
-	respond(w, r, http.StatusOK, text, map[string]any{
-		"uptime":   uptime.String(),
-		"go":       runtime.Version(),
-		"os":       runtime.GOOS,
-		"arch":     runtime.GOARCH,
-		"listen":   s.cfg.Addr,
-		"data":     s.cfg.DataDir,
-		"db":       s.db.Path,
-		"journal":  mode,
-		"counters": counts,
+	s.page(w, r, http.StatusOK, "运行概览", "about", s.viewerOf(r), msgOf(r), map[string]any{
+		"Uptime":   uptime.String(),
+		"Go":       runtime.Version(),
+		"Platform": runtime.GOOS + "/" + runtime.GOARCH,
+		"Listen":   s.cfg.Addr,
+		"Data":     s.cfg.DataDir,
+		"DB":       s.db.Path,
+		"Journal":  mode,
+		"Counts":   counts,
+		"Routes":   routes,
 	})
 }
 

@@ -303,10 +303,6 @@ func TestProblemListViewForBrowsers(t *testing.T) {
 	if _, mine := h.htmlGet("/", h.admin); !strings.Contains(mine, "P4001") {
 		t.Error("admin browser list lost the hidden problem")
 	}
-	// The same URL still serves text to curl.
-	if code, text := h.get("/problems", ""); code != http.StatusOK || strings.Contains(text, "<html") {
-		t.Fatalf("text negotiation broke: %d %q", code, text)
-	}
 }
 
 func TestProblemDetailViewRendersMarkdownAndMath(t *testing.T) {
@@ -372,9 +368,9 @@ $$ \frac{a+b}{2} $$
 	if !strings.Contains(page, "webuser") {
 		t.Errorf("nav lost the bound handle: %s", page)
 	}
-	// Text mode must not gain a form.
-	if _, text := h.get("/problems/P4002", ""); strings.Contains(text, "<textarea") {
-		t.Error("text view started emitting HTML")
+	// The page it lands on is the same one a browser gets, form and all.
+	if _, page := h.htmlGet("/problems/P4002", h.admin); !strings.Contains(page, "<textarea") {
+		t.Error("the problem page lost its editor for someone who may edit it")
 	}
 }
 
@@ -499,8 +495,8 @@ func TestWebFormValidationMirrorsTheAPI(t *testing.T) {
 	}
 
 	// Nothing was created.
-	if _, list := h.get("/submissions", ""); !strings.Contains(list, "shown=0") {
-		t.Fatalf("rejected forms created rows: %s", list)
+	if _, list := h.htmlGet("/submissions", ""); !strings.Contains(list, "还没有提交") {
+		t.Fatalf("rejected forms created rows:\n%s", list)
 	}
 }
 
@@ -527,10 +523,10 @@ func TestUnrestrictedProblemFormStillOffersLanguages(t *testing.T) {
 func TestRankAndUserPages(t *testing.T) {
 	h := newHarness(t)
 	h.readyProblem("P4006")
-	tok := h.userToken("champion")
+	champion := h.signIn("champion")
 
-	h.submit(tok, "P4006", "cpp", "int main(){}")
-	h.submit(tok, "P4006", "cpp", "int main(){return 1;}")
+	h.submitCode(champion, "P4006", "cpp", "int main(){}")
+	h.submitCode(champion, "P4006", "cpp", "int main(){return 1;}")
 	h.finishSubmission(1, store.Result{Verdict: "AC", TimeMS: 9, MemKB: 2048, Score: 2, TotalScore: 2}, nil)
 	h.finishSubmission(2, store.Result{Verdict: "RE", TimeMS: 5, MemKB: 2048, Score: 0, TotalScore: 2, FailedCase: "1"}, nil)
 
@@ -540,10 +536,6 @@ func TestRankAndUserPages(t *testing.T) {
 	}
 	if !strings.Contains(body, "<td class=\"num\">1</td>") {
 		t.Errorf("rank number missing:\n%s", body)
-	}
-	// JSON mode stays available for tooling.
-	if code, text := h.get("/rank", ""); code != http.StatusOK || strings.Contains(text, "<table") {
-		t.Fatalf("rank text mode = %d %q", code, text)
 	}
 
 	code, body = h.htmlGet("/u/champion", "")
@@ -593,7 +585,7 @@ func TestHTMLNotFoundAndStaticAssets(t *testing.T) {
 	}
 }
 
-func TestSettingsTokensAndLogout(t *testing.T) {
+func TestSettingsSavesAndLogout(t *testing.T) {
 	h := newHarness(t)
 	cookie, csrf := h.login("wallet", "wallet@example.com", testPassword)
 
@@ -610,37 +602,8 @@ func TestSettingsTokensAndLogout(t *testing.T) {
 	}
 
 	// A cookie-authenticated write without the CSRF token is refused.
-	if code, _, _ := h.postNoRedirect("/settings/tokens", url.Values{"label": {"no-csrf"}}, cookie); code != http.StatusForbidden {
-		t.Fatalf("CSRF-less token issue = %d, want 403", code)
-	}
-
-	// Issuing a token shows the plaintext exactly once.
-	code, issuedPage, _ := h.postForm("/settings/tokens", url.Values{"label": {"laptop"}}, cookie, csrf)
-	if code != http.StatusOK {
-		t.Fatalf("issue token = %d", code)
-	}
-	token := plaintextToken(issuedPage)
-	if len(token) < 20 {
-		t.Fatalf("no plaintext token in:\n%s", issuedPage)
-	}
-	if !strings.Contains(issuedPage, "只显示这一次") {
-		t.Error("missing one-time warning")
-	}
-	// The plaintext works as a bearer credential.
-	if code, who := h.get("/whoami", token); code != http.StatusOK || !strings.Contains(who, "wallet") {
-		t.Fatalf("token auth = %d %q", code, who)
-	}
-
-	// Revoking by digest kills it.
-	digest := hiddenValue(issuedPage, "digest")
-	if digest == "" {
-		t.Fatal("no digest rendered")
-	}
-	if code, _, _ := h.postForm("/settings/tokens/revoke", url.Values{"digest": {digest}}, cookie, csrf); code != http.StatusSeeOther {
-		t.Fatalf("revoke = %d", code)
-	}
-	if code, _ := h.get("/whoami", token); code != http.StatusUnauthorized {
-		t.Fatalf("revoked token still works: %d", code)
+	if code, _, _ := h.postNoRedirect("/settings/profile", url.Values{"display_name": {"没令牌"}}, cookie); code != http.StatusForbidden {
+		t.Fatalf("CSRF-less profile save = %d, want 403", code)
 	}
 
 	// Profile edits stick.
@@ -701,9 +664,9 @@ func plaintextToken(page string) string {
 func TestSubmissionListViewForBrowsers(t *testing.T) {
 	h := newHarness(t)
 	h.readyProblem("P4007")
-	tok := h.userToken("watcher")
+	watcher := h.signIn("watcher")
 	for i := 0; i < 3; i++ {
-		h.submit(tok, "P4007", "cpp", fmt.Sprintf("int main(){return %d;}", i))
+		h.submitCode(watcher, "P4007", "cpp", fmt.Sprintf("int main(){return %d;}", i))
 	}
 	code, body := h.htmlGet("/submissions", "")
 	if code != http.StatusOK {
