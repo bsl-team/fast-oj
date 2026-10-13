@@ -14,6 +14,9 @@ func TestSiteSettingsRoundTrip(t *testing.T) {
 	if err != nil || site.Title != "fast oj" || !site.AllowRegister || len(site.Links) != 0 {
 		t.Fatalf("defaults = %+v %v", site, err)
 	}
+	if site.APIHint != DefaultAPIHint {
+		t.Errorf("api hint default = %q", site.APIHint)
+	}
 
 	if err := db.SetSiteAll(ctx, admin.ID, SiteConfig{
 		Title: "我的 OJ", Tagline: "欢迎", Footer: "出题请走管理台",
@@ -40,5 +43,10 @@ func TestSiteSettingsRoundTrip(t *testing.T) {
 	}
 	if site.Links == nil || len(site.Links) != 0 {
 		t.Errorf("links = %#v, want an empty list", site.Links)
+	}
+	// Saving with the field cleared writes an empty row: the default is only for a
+	// key that was never set, otherwise "hide this line" could not be saved.
+	if site.APIHint != "" {
+		t.Errorf("api hint after clearing = %q, want empty", site.APIHint)
 	}
 }

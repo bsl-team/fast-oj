@@ -98,6 +98,8 @@ nav.top button:hover { color: var(--accent); }
 .hero .stats { margin: .8rem 0 0; }
 .links, .foot-note { width: 100%; }
 .links a { margin-right: .9rem; }
+/* Both are Markdown fields, so a one-line value still arrives wrapped in a <p>. */
+.links p, .foot-note p { margin: .3rem 0; }
 
 /* feed */
 .composer textarea { min-height: 5rem; }

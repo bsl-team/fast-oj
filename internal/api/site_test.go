@@ -71,6 +71,34 @@ func TestSiteSettingsRoundTripAndCache(t *testing.T) {
 	}
 }
 
+func TestSiteAPIHintIsEditable(t *testing.T) {
+	h := newHarness(t)
+
+	// A fresh site ships the line, so nobody gets a footer that vanished on its own.
+	if _, home := h.htmlGet("/", ""); !strings.Contains(home, "<code>curl -s localhost:8080/problems</code>") {
+		t.Error("default api hint missing from the footer")
+	}
+
+	code, out := h.postBearer("/admin/site", url.Values{
+		"title": {"我的 OJ"}, "allow_register": {"1"},
+		"api_hint": {"本机 API：`curl -s localhost:18080/problems`"},
+	}, h.admin)
+	if code != http.StatusOK || !strings.Contains(out, "已保存") {
+		t.Fatalf("save = %d %s", code, out)
+	}
+	if _, home := h.htmlGet("/", ""); !strings.Contains(home, "<code>curl -s localhost:18080/problems</code>") {
+		t.Errorf("edited hint not rendered:\n%s", home)
+	}
+
+	// Clearing it drops the whole line, not just its text.
+	if _, out := h.postBearer("/admin/site", url.Values{"title": {"我的 OJ"}, "allow_register": {"1"}}, h.admin); !strings.Contains(out, "已保存") {
+		t.Fatal("second save failed")
+	}
+	if _, home := h.htmlGet("/", ""); strings.Contains(home, "本机 API") {
+		t.Errorf("cleared hint still rendered:\n%s", home)
+	}
+}
+
 func TestSiteSettingsRejectsBadInput(t *testing.T) {
 	h := newHarness(t)
 

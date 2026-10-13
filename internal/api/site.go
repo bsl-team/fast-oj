@@ -201,6 +201,7 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 		Title:   strings.TrimSpace(r.FormValue("title")),
 		Tagline: r.FormValue("tagline"),
 		Footer:  r.FormValue("footer"),
+		APIHint: r.FormValue("api_hint"),
 		// The checkbox is only present when checked.
 		AllowRegister: r.FormValue("allow_register") == "1",
 	}
@@ -217,8 +218,8 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	}
 	// Counted in runes because that is what the form's maxlength counts: 60 bytes
 	// would refuse a 20-character Chinese site name.
-	if tooLong(in.Tagline, 2000) || tooLong(in.Footer, 2000) {
-		fail("首页语与页脚各最长 2000 字")
+	if tooLong(in.Tagline, 2000) || tooLong(in.Footer, 2000) || tooLong(in.APIHint, 2000) {
+		fail("首页语、页脚与 API 提示各最长 2000 字")
 		return
 	}
 	if in.Title == "" || tooLong(in.Title, 60) {

@@ -5,7 +5,7 @@
 - 单个可执行文件，零外部服务依赖（SQLite 内嵌，纯 Go 驱动）
 - 判机与服务器分离，判机只需要一个出站 HTTP 连接
 - 题面、动态、个人简介、首页语统一走 Markdown + KaTeX 数学公式
-- 首页内容（站名、首页语、友情链接、页脚、注册开关）在网页后台改，不用重启
+- 首页内容（站名、首页语、友情链接、页脚、页脚 API 提示、注册开关）在网页后台改，不用重启
 - 读接口每次请求的处理时间在 0.2–1.2 ms 之间（200 题 / 500 提交规模，见[性能](#性能)）
 
 ---
@@ -100,7 +100,7 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `POST` | `/judge/submissions/{id}/status` | 判机 | 进度（`compiling` → `running`） |
 | `POST` | `/judge/submissions/{id}/result` | 判机 | 回报判定与逐用例结果 |
 | `GET` | `/judges` | `judge.view` | 判机框清单 |
-| `GET` `/POST` | `/admin/site` | `site.settings` | 站名、首页语、友情链接、页脚、注册开关 |
+| `GET` `/POST` | `/admin/site` | `site.settings` | 站名、首页语、友情链接、页脚、API 提示、注册开关 |
 | `GET` | `/admin/perms` | `permission.manage` | 账号列表与权限控制台 |
 | `GET` | `/admin/perms/u/{handle}` | `permission.manage` | 单个账号的权限矩阵 |
 | `POST` | `/admin/perms/u/{handle}` | `permission.manage` | 授予 / 收回 / 恢复默认（不能改自己） |
@@ -151,6 +151,7 @@ curl -s -X POST -H "Authorization: Bearer ADM" -H "Content-Type: application/jso
 | 首页语 | 首页大标题下面那段，支持 Markdown + 公式 |
 | 友情链接 | 每行一条 `标题 \| https://…`，最多 20 条，只允许 http/https/mailto |
 | 页脚 | 可选，全站显示 |
+| 页脚 API 提示 | 默认那句 `curl -s localhost:8080/problems`，支持 Markdown；清空则整行不显示（部署端口不是 8080 时改这里） |
 | 允许自助注册 | 与 `-no-register` 取与；关掉后 `/register` 的页面与 POST 都是 403 |
 
 保存是一次事务，页面缓存 2 秒后自动过期，改完刷新即见。被拒的保存会把已填内容原样留在表单里（长度按字符数算，与浏览器 `maxlength` 一致），不会让操作员整页重打。

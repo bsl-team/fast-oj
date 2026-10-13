@@ -18,15 +18,22 @@ type SiteConfig struct {
 	Title         string     `json:"title"`
 	Tagline       string     `json:"tagline"`
 	Footer        string     `json:"footer"`
+	APIHint       string     `json:"api_hint"`
 	Links         []SiteLink `json:"links"`
 	AllowRegister bool       `json:"allow_register"`
 }
+
+// DefaultAPIHint is the footer line a fresh site shows. It names a port the
+// operator may not be listening on, which is exactly why it is editable; an
+// explicit empty value hides the line.
+const DefaultAPIHint = "纯文本 API：`curl -s localhost:8080/problems`；机器可读加 `?format=json`。"
 
 // Setting keys. They are data, so adding one needs no schema change.
 const (
 	setTitle         = "site.title"
 	setTagline       = "site.tagline"
 	setFooter        = "site.footer"
+	setAPIHint       = "site.api_hint"
 	setLinks         = "site.links"
 	setAllowRegister = "site.allow_register"
 )
@@ -42,6 +49,7 @@ func (db *DB) Site(ctx context.Context) (SiteConfig, error) {
 		setTitle:         "fast oj",
 		setTagline:       "",
 		setFooter:        "",
+		setAPIHint:       DefaultAPIHint,
 		setLinks:         "[]",
 		setAllowRegister: "1",
 	}
@@ -64,6 +72,7 @@ func (db *DB) Site(ctx context.Context) (SiteConfig, error) {
 		Title:   values[setTitle],
 		Tagline: values[setTagline],
 		Footer:  values[setFooter],
+		APIHint: values[setAPIHint],
 		Links:   links,
 		// Anything but an explicit "0" keeps registration open, so a missing row
 		// cannot silently lock the site.
@@ -90,6 +99,7 @@ func (db *DB) SetSiteAll(ctx context.Context, byUserID int64, in SiteConfig) err
 		{setTitle, in.Title},
 		{setTagline, in.Tagline},
 		{setFooter, in.Footer},
+		{setAPIHint, in.APIHint},
 		{setLinks, string(raw)},
 		{setAllowRegister, allow},
 	}

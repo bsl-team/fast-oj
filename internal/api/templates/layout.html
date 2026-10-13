@@ -44,7 +44,7 @@
     {{range .Site.Links}}<a href="{{.URL}}" rel="nofollow noopener" target="_blank">{{.Title}}</a>{{end}}
   </div>
   {{end}}
-  <div class="links">纯文本 API：<code>curl -s localhost:8080/problems</code>；机器可读加 <code>?format=json</code>。</div>
+  {{if .Site.APIHint}}<div class="links">{{markdown .Site.APIHint}}</div>{{end}}
 </footer>
 </body>
 </html>{{end}}

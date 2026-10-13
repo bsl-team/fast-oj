@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>站点设置</h1>
-<p class="meta">改完立即生效（缓存 2 秒）。首页语与页脚支持 Markdown 和 $KaTeX$ 公式。</p>
+<p class="meta">改完立即生效（缓存 2 秒）。首页语、页脚与 API 提示支持 Markdown 和 $KaTeX$ 公式。</p>
 
 <form method="post" action="/admin/site">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
@@ -16,6 +16,9 @@
 
   <label>页脚（可选）</label>
   <textarea name="footer" rows="2" maxlength="2000">{{.Data.Site.Footer}}</textarea>
+
+  <label>页脚 API 提示（留空则整行不显示）</label>
+  <textarea name="api_hint" rows="2" maxlength="2000" spellcheck="false">{{.Data.Site.APIHint}}</textarea>
 
   <label class="check">
     <input type="checkbox" name="allow_register" value="1" {{if .Data.Site.AllowRegister}}checked{{end}}>
