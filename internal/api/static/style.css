@@ -66,6 +66,8 @@ pre code { background: none; padding: 0; }
 .flash { border: 1px solid var(--warn); color: var(--warn); padding: .5rem .7rem; border-radius: 4px; }
 .badge { font-weight: 700; font-variant-numeric: tabular-nums; }
 .badge.bad { color: var(--warn); }
+/* Standalone warning text: a form note that has no badge box around it. */
+.bad { color: var(--warn); }
 .AC { color: var(--ok); }
 .WA, .RE, .MLE, .TLE, .CE, .IE { color: var(--bad); }
 .queued, .compiling, .running { color: var(--warn); }

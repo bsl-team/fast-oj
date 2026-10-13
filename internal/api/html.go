@@ -63,6 +63,8 @@ type viewer struct {
 	// a delegate with only one of the consoles sees only that one.
 	Manage bool
 	Site   bool
+	// Author is the 出题 entry: creating a problem or editing anyone's problem.
+	Author bool
 	// Unread is the private-message badge in the nav bar.
 	Unread int
 	CSRF   string

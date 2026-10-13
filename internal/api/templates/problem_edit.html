@@ -1,0 +1,74 @@
+{{define "content"}}
+<h1>{{if .Data.IsNew}}新建题目{{else}}编辑题目 {{.Data.Key}}{{end}}</h1>
+<p class="meta">题面、动态、简介都走同一套 Markdown + <code>$KaTeX$</code>；保存前可以先预览。
+{{if not .Data.IsNew}}用例与分值在 <a href="/problems/{{.Data.Key}}/cases">用例管理</a> 里改。{{end}}</p>
+
+{{if .Data.Errors}}
+<div class="flash">
+  {{range .Data.Errors}}<p>{{.}}</p>{{end}}
+</div>
+{{end}}
+
+<form method="post" action="{{.Data.Action}}">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+
+  <div class="row">
+    <div>
+      <label>编号（题库与 URL 用它）</label>
+      <input type="text" name="pid" value="{{.Data.PID}}" maxlength="32" required autocomplete="off" spellcheck="false">
+    </div>
+    <div>
+      <label>时限（毫秒）</label>
+      <input type="number" name="time_ms" value="{{.Data.TimeMS}}" min="1" max="600000" step="1" required>
+    </div>
+    <div>
+      <label>内存上限（MB）</label>
+      <input type="number" name="mem_mb" value="{{.Data.MemMB}}" min="0.001" max="4096" step="any" required>
+    </div>
+  </div>
+
+  <label>标题</label>
+  <input type="text" name="title" value="{{.Data.Title}}" maxlength="200" required>
+
+  <label>允许的语言（一个都不勾 = 不限）</label>
+  <p class="row">
+    {{range .Data.Langs}}
+    <label class="check"><input type="checkbox" name="languages" value="{{.Value}}" {{if .Checked}}checked{{end}}>{{.Label}}</label>
+    {{end}}
+  </p>
+
+  <label class="check">
+    <input type="checkbox" name="visible" value="1" {{if .Data.Visible}}checked{{end}}>
+    公开题面（不勾只有你自己和判题看得到；改这一项需要 <code>problem.publish</code>）
+  </label>
+
+  <label>题面</label>
+  <textarea name="statement" rows="16" spellcheck="false" autocomplete="off" placeholder="## 题目描述&#10;&#10;给定 $n$ 个整数……">{{.Data.Statement}}</textarea>
+
+  <p class="row">
+    <input type="submit" value="{{if .Data.IsNew}}创建并去加用例{{else}}保存{{end}}">
+    <button type="submit" name="preview" value="1">预览</button>
+  </p>
+</form>
+
+{{if .Data.Preview}}
+<h2>预览</h2>
+<article class="preview">{{.Data.Preview}}</article>
+{{end}}
+
+{{if not .Data.IsNew}}
+<h2>现在</h2>
+<p class="meta">
+  用例 <b>{{.Data.Cases}}</b> 条（判题 <b>{{.Data.Judged}}</b> 条，满分 <b>{{.Data.Total}}</b> 分）
+  {{if eq .Data.Judged 0}}· <span class="bad">没有判题用例，提交只会得到「无数据」</span>{{end}}
+  · <a href="/problems/{{.Data.Key}}/cases">用例管理</a>
+  · <a href="/problems/{{.Data.Key}}">看题面页</a>
+</p>
+
+<form method="post" action="/problems/{{.Data.Key}}/delete"
+      onsubmit="return confirm('删除 {{.Data.Key}}：题面、用例文件与全部提交记录都会没掉。')">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <p><button type="submit" class="danger">删除这道题</button></p>
+</form>
+{{end}}
+{{end}}

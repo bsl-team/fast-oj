@@ -8,6 +8,11 @@
   {{if .Data.Hidden}} · <span class="hidden">未公开</span>{{end}}
 </p>
 
+{{if or .Data.CanEdit .Data.CanCases}}
+<p class="meta">{{if .Data.CanEdit}}<a href="/problems/{{.Data.PID}}/edit">编辑题面</a>{{end}}
+  {{if .Data.CanCases}}<a href="/problems/{{.Data.PID}}/cases">用例管理</a>{{end}}</p>
+{{end}}
+
 <article>{{.Data.Statement}}</article>
 
 {{if .Data.Samples}}
@@ -56,7 +61,4 @@
   {{end}}
 </table>
 {{end}}
-
-<p class="meta"><a href="/problems/{{.Data.PID}}?format=text">纯文本题面</a> ·
-  <a href="/problems/{{.Data.PID}}?format=json">JSON</a></p>
 {{end}}

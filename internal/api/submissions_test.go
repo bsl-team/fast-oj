@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -46,8 +47,7 @@ func (h *harness) userToken(handle string) string {
 // cases plus one sample.
 func (h *harness) readyProblem(pid string) {
 	h.t.Helper()
-	if code, body := h.json(http.MethodPost, "/problems", h.admin,
-		[]byte(fmt.Sprintf(`{"pid":%q,"title":"case ready","languages":["c","cpp"]}`, pid))); code != http.StatusCreated {
+	if code, body := h.createProblem(url.Values{"pid": {pid}, "title": {"case ready"}, "languages": {"c", "cpp"}}); code != http.StatusOK {
 		h.t.Fatalf("create problem = %d %q", code, body)
 	}
 	h.uploadCases(pid)
@@ -108,13 +108,13 @@ func TestSubmissionInputValidation(t *testing.T) {
 	if code, body := h.submit(tok, "P9999", "cpp", "int main(){}"); code != http.StatusNotFound {
 		t.Fatalf("unknown problem = %d %q", code, body)
 	}
-	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"EMPTY","title":"no cases"}`))
+	h.createProblem(url.Values{"pid": {"EMPTY"}, "title": {"no cases"}})
 	if code, body := h.submit(tok, "EMPTY", "cpp", "int main(){}"); code != http.StatusConflict {
 		t.Fatalf("empty problem submit = %d %q, want 409", code, body)
 	}
 
 	// Hidden problems are invisible to regular users but testable by admins.
-	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"HIDE","title":"hidden","visible":false}`))
+	h.createProblem(url.Values{"pid": {"HIDE"}, "title": {"hidden"}, "visible": {"0"}})
 	h.uploadCases("HIDE")
 	if code, _ := h.submit(tok, "HIDE", "cpp", "int main(){}"); code != http.StatusNotFound {
 		t.Fatalf("hidden submit as user = %d, want 404", code)

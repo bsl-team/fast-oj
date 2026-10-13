@@ -172,9 +172,13 @@ type problemData struct {
 	Solved      int
 	Submits     int
 	Hidden      bool
-	Statement   template.HTML
-	Samples     []samplePair
-	Recent      []subRow
+	// CanEdit and CanCases are what the page shows the authoring links for: owning
+	// a problem is enough for both, testcase.manage only buys the case page.
+	CanEdit   bool
+	CanCases  bool
+	Statement template.HTML
+	Samples   []samplePair
+	Recent    []subRow
 }
 
 func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p store.Problem) {
@@ -238,6 +242,8 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		JudgedCases: judged, TotalScore: total,
 		Solved: c.Solved, Submits: c.Submits,
 		Hidden:    !p.Visible,
+		CanEdit:   a.canEditProblem(p),
+		CanCases:  a.canSeeTestcases(p),
 		Statement: renderMarkdownHTML(p.Statement),
 		Samples:   samples,
 		Recent:    rows,

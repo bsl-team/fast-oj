@@ -63,9 +63,9 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `GET` | `/` | 公开 | 浏览器给首页，curl/JSON 给题库列表 |
 | `GET` | `/problems` | 公开 | 列表，`?q=` `?limit=` `?after=` |
 | `GET` | `/problems/{key}` | 公开 | 题面 + 样例（`key` 可为编号或数字 id） |
-| `POST` | `/problems` | `problem.create` | 建题（记录 owner） |
-| `PUT` | `/problems/{key}` | 该题 owner 或 `problem.edit.any` | 改题（只改发来的字段） |
-| `DELETE` | `/problems/{key}` | 该题 owner 或 `problem.edit.any` | 删题（连带用例文件） |
+| `GET` `/POST` | `/problems/new` `/problems` | `problem.create` | 网页出题：编号、标题、题面（可预览）、时限、内存、语言、可见性 |
+| `GET` `/POST` | `/problems/{key}/edit` `/problems/{key}` | 该题 owner 或 `problem.edit.any` | 网页改题；改可见性另需 `problem.publish` |
+| `POST` | `/problems/{key}/delete` | 该题 owner 或 `problem.edit.any` | 删题（连带用例文件） |
 | `POST` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 上传用例 zip |
 | `GET` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 用例清单与大小 |
 | `DELETE` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 清空用例 |

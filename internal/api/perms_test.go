@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,20 +27,26 @@ func (h *harness) grant(handle, key string, allowed bool) {
 }
 
 // author registers a user with the given capabilities and returns a bearer token.
-func (h *harness) author(handle string, perms ...string) string {
+// author signs a person in through the web form and grants them the listed
+// capabilities, which is what an operator does in the permission console.
+func (h *harness) author(handle string, perms ...string) session {
 	h.t.Helper()
-	tok := h.userToken(handle)
-	for _, p := range perms {
-		h.grant(handle, p, true)
-	}
-	return tok
+	return h.signIn(handle, perms...)
+}
+
+// hiddenValues is what an unchecked 公开 box posts: the field arrives as "0",
+// not missing, exactly like a browser form.
+func hiddenValues(pid, title string) url.Values {
+	values := problemValues(pid, title)
+	values.Set("visible", "0")
+	return values
 }
 
 func TestAuthoringNeedsTheCreateRight(t *testing.T) {
 	h := newHarness(t)
-	plain := h.userToken("nobody-yet")
+	plain := h.author("nobody-yet")
 
-	code, body := h.json(http.MethodPost, "/problems", plain, []byte(`{"pid":"P6000","title":"想出题"}`))
+	code, body := h.postAs(plain, "/problems", problemValues("P6000", "想出题"))
 	if code != http.StatusForbidden {
 		t.Fatalf("unprivileged create = %d %q", code, body)
 	}
@@ -50,8 +55,7 @@ func TestAuthoringNeedsTheCreateRight(t *testing.T) {
 	}
 
 	writer := h.author("writer", permProblemCreate)
-	code, body = h.json(http.MethodPost, "/problems", writer, []byte(`{"pid":"P6000","title":"我的题"}`))
-	if code != http.StatusCreated {
+	if code, body := h.postAs(writer, "/problems", problemValues("P6000", "我的题")); code != http.StatusOK {
 		t.Fatalf("granted create = %d %q", code, body)
 	}
 	p, err := h.db.FindProblem(ctx(), "P6000")
@@ -67,24 +71,29 @@ func TestOwnershipScopesEditing(t *testing.T) {
 	h := newHarness(t)
 	alice := h.author("alice2", permProblemCreate)
 	bob := h.author("bob2", permProblemCreate)
-	h.json(http.MethodPost, "/problems", alice, []byte(`{"pid":"P6001","title":"爱丽丝的题"}`))
+	if code, _ := h.postAs(alice, "/problems", problemValues("P6001", "爱丽丝的题")); code != http.StatusOK {
+		t.Fatalf("create = %d", code)
+	}
+	form := func(title string) url.Values {
+		return url.Values{"pid": {"P6001"}, "title": {title}, "time_ms": {"1000"}, "mem_mb": {"256"}, "visible": {"1"}}
+	}
 
-	// Same right, different owner: still refused.
-	if code, body := h.json(http.MethodPut, "/problems/P6001", bob, []byte(`{"title":"抢过来"}`)); code != http.StatusForbidden {
+	// Same right, different owner: still refused, and the message names the way out.
+	if code, body := h.postAs(bob, "/problems/P6001", form("抢过来")); code != http.StatusForbidden {
 		t.Fatalf("non-owner update = %d %q", code, body)
 	} else if !strings.Contains(body, permProblemEditAny) {
 		t.Errorf("message should name the way out: %q", body)
 	}
-	if code, _ := h.do(http.MethodDelete, "/problems/P6001", bob, nil, ""); code != http.StatusForbidden {
+	if code, _ := h.postAs(bob, "/problems/P6001/delete", url.Values{}); code != http.StatusForbidden {
 		t.Fatalf("non-owner delete = %d", code)
 	}
-	if code, body := h.json(http.MethodPut, "/problems/P6001", alice, []byte(`{"title":"改自己的"}`)); code != http.StatusOK {
+	if code, body := h.postAs(alice, "/problems/P6001", form("改自己的")); code != http.StatusOK || !strings.Contains(body, "改自己的") {
 		t.Fatalf("owner update = %d %q", code, body)
 	}
 
 	// The global right is exactly what unlocks someone else's problem.
 	h.grant("bob2", permProblemEditAny, true)
-	if code, body := h.json(http.MethodPut, "/problems/P6001", bob, []byte(`{"title":"管理员代改"}`)); code != http.StatusOK {
+	if code, body := h.postAs(bob, "/problems/P6001", form("管理员代改")); code != http.StatusOK {
 		t.Fatalf("edit.any update = %d %q", code, body)
 	}
 }
@@ -92,56 +101,68 @@ func TestOwnershipScopesEditing(t *testing.T) {
 func TestPublishRightIsSeparateFromAuthoring(t *testing.T) {
 	h := newHarness(t)
 	writer := h.author("writer3", permProblemCreate)
-	h.json(http.MethodPost, "/problems", writer, []byte(`{"pid":"P6002","title":"待隐藏"}`))
+	if code, _ := h.postAs(writer, "/problems", problemValues("P6002", "待隐藏")); code != http.StatusOK {
+		t.Fatalf("create = %d", code)
+	}
+	form := func(title, visible string) url.Values {
+		return url.Values{"pid": {"P6002"}, "title": {title}, "time_ms": {"1000"}, "mem_mb": {"256"}, "visible": {visible}}
+	}
 
 	// Owning a problem does not let you hide it from the public.
-	if code, body := h.json(http.MethodPut, "/problems/P6002", writer, []byte(`{"visible":false}`)); code != http.StatusForbidden {
+	if code, body := h.postAs(writer, "/problems/P6002", form("待隐藏", "0")); code != http.StatusForbidden {
 		t.Fatalf("owner hid a problem without the right = %d %q", code, body)
+	} else if !strings.Contains(body, permProblemPublish) {
+		t.Errorf("message should name the missing capability: %q", body)
 	}
 	h.grant("writer3", permProblemPublish, true)
-	if code, body := h.json(http.MethodPut, "/problems/P6002", writer, []byte(`{"visible":false}`)); code != http.StatusOK {
+	if code, body := h.postAs(writer, "/problems/P6002", form("待隐藏", "0")); code != http.StatusOK {
 		t.Fatalf("publish right update = %d %q", code, body)
 	}
-	// Title-only edits still work without touching visibility.
-	if code, _ := h.json(http.MethodPut, "/problems/P6002", writer, []byte(`{"title":"改名"}`)); code != http.StatusOK {
-		t.Fatalf("untouched visibility should not need the right: %d", code)
+	if _, page := h.htmlGet("/problems/P6002", h.admin); !strings.Contains(page, "未公开") {
+		t.Fatalf("problem should be hidden now:\n%s", page)
+	}
+	// An edit that leaves visibility alone needs no publishing right at all.
+	if code, body := h.postAs(writer, "/problems/P6002", form("改名", "0")); code != http.StatusOK {
+		t.Fatalf("same visibility should not need the right: %d %q", code, body)
 	}
 }
 
 func TestHiddenProblemsRespectRights(t *testing.T) {
 	h := newHarness(t)
 	owner := h.author("owner4", permProblemCreate, permProblemPublish)
-	h.json(http.MethodPost, "/problems", owner, []byte(`{"pid":"P6003","title":"内部题","visible":false}`))
-	outsider := h.userToken("outsider")
+	if code, _ := h.postAs(owner, "/problems", hiddenValues("P6003", "内部题")); code != http.StatusOK {
+		t.Fatalf("create = %d", code)
+	}
+	outsider := h.author("outsider4")
 
-	if code, _ := h.get("/problems/P6003", outsider); code != http.StatusNotFound {
+	if code, _ := h.getAs(outsider, "/problems/P6003"); code != http.StatusNotFound {
 		t.Fatalf("hidden detail for outsider = %d", code)
 	}
-	if _, list := h.get("/problems", outsider); strings.Contains(list, "P6003") {
+	if _, list := h.getAs(outsider, "/problems"); strings.Contains(list, "P6003") {
 		t.Error("hidden problem leaked into the outsider list")
 	}
 	// The author can still see and work on it.
-	if code, body := h.get("/problems/P6003", owner); code != http.StatusOK || !strings.Contains(body, "内部题") {
+	if code, body := h.getAs(owner, "/problems/P6003"); code != http.StatusOK || !strings.Contains(body, "内部题") {
 		t.Fatalf("author view = %d %q", code, body)
 	}
 	// Submitting to a hidden problem is allowed for the author, refused for others.
 	h.uploadCasesAs(owner, "P6003")
-	if code, _ := h.submit(owner, "P6003", "cpp", "int main(){}"); code != http.StatusCreated {
-		t.Fatalf("author submit to own hidden problem = %d", code)
+	if code, body := h.submitCode(owner, "P6003", "cpp", "int main(){}"); code != http.StatusOK {
+		t.Fatalf("author submit to own hidden problem = %d %q", code, body)
 	}
-	if code, _ := h.submit(outsider, "P6003", "cpp", "int main(){}"); code != http.StatusNotFound {
+	if code, _ := h.submitCode(outsider, "P6003", "cpp", "int main(){}"); code != http.StatusNotFound {
 		t.Fatalf("outsider submit to hidden problem = %d", code)
 	}
 }
 
-// uploadCasesAs posts a case zip with an arbitrary token.
-func (h *harness) uploadCasesAs(token, pid string) {
+// uploadCasesAs posts a case zip as a signed-in browser.
+func (h *harness) uploadCasesAs(s session, pid string) {
 	h.t.Helper()
 	archive := zipOf(map[string]string{
 		"sample1.in": "1 2\n", "sample1.out": "3\n",
 		"1.in": "1 2\n", "1.out": "3\n",
 	})
-	if code, body := h.do(http.MethodPost, "/problems/"+pid+"/cases", token, archive, "application/zip"); code != http.StatusOK {
+	if code, body := h.uploadZipAs(s, "/problems/"+url.PathEscape(pid)+"/cases", archive); code != http.StatusOK {
 		h.t.Fatalf("upload as %s = %d %q", pid, code, body)
 	}
 }
@@ -149,29 +170,33 @@ func (h *harness) uploadCasesAs(token, pid string) {
 func TestCaseRightsAreIndependentOfStatementEditing(t *testing.T) {
 	h := newHarness(t)
 	author := h.author("author5", permProblemCreate)
-	h.json(http.MethodPost, "/problems", author, []byte(`{"pid":"P6004","title":"缺数据"}`))
+	if code, _ := h.postAs(author, "/problems", problemValues("P6004", "缺数据")); code != http.StatusOK {
+		t.Fatalf("create = %d", code)
+	}
 
 	// The author may upload for their own problem.
 	h.uploadCasesAs(author, "P6004")
 
 	// A data maintainer with no create right can top up someone else's data...
 	maintainer := h.author("maintainer5", permTestcaseManage)
-	if code, body := h.do(http.MethodPost, "/problems/P6004/cases", maintainer,
-		zipOf(map[string]string{"2.in": "4 5\n", "2.out": "9\n"}), "application/zip"); code != http.StatusOK {
+	if code, body := h.uploadZipAs(maintainer, "/problems/P6004/cases",
+		zipOf(map[string]string{"2.in": "4 5\n", "2.out": "9\n"})); code != http.StatusOK {
 		t.Fatalf("data maintainer upload = %d %q", code, body)
 	}
 	// ...but cannot rewrite the statement.
-	if code, _ := h.json(http.MethodPut, "/problems/P6004", maintainer, []byte(`{"title":"越界改名"}`)); code != http.StatusForbidden {
+	if code, _ := h.postAs(maintainer, "/problems/P6004", url.Values{
+		"pid": {"P6004"}, "title": {"越界改名"}, "time_ms": {"1000"}, "mem_mb": {"256"}, "visible": {"1"},
+	}); code != http.StatusForbidden {
 		t.Fatalf("maintainer edited a statement = %d", code)
 	}
 	// Nobody else may even list the case set.
-	stranger := h.userToken("stranger5")
-	if code, _ := h.get("/problems/P6004/cases", stranger); code != http.StatusForbidden {
+	stranger := h.author("stranger5")
+	if code, _ := h.getAs(stranger, "/problems/P6004/cases"); code != http.StatusForbidden {
 		t.Fatalf("stranger listed cases = %d", code)
 	}
 	// Judged case bodies stay shut; samples stay open.
-	if code, _ := h.get("/problems/P6004/cases/2/in", stranger); code != http.StatusForbidden {
-		t.Fatalf("stranger fetched judged case = %d", code)
+	if code, _ := h.get("/problems/P6004/cases/2/in", ""); code != http.StatusForbidden {
+		t.Fatalf("anonymous judged case fetch = %d", code)
 	}
 	if code, _ := h.get("/problems/P6004/cases/sample1/in", ""); code != http.StatusOK {
 		t.Fatalf("anonymous sample fetch = %d", code)
@@ -182,28 +207,34 @@ func TestViewingOthersSourceNeedsARight(t *testing.T) {
 	h := newHarness(t)
 	writer := h.author("writer6", permProblemCreate)
 	h.readyProblemAs(writer, "P6005")
-	owner := h.userToken("owner6")
-	intruder := h.userToken("intruder6")
+	owner := h.author("owner6")
+	intruder := h.author("intruder6")
 
-	h.submit(owner, "P6005", "cpp", "int main(){return 0;}")
-	// The text view carries no source; the JSON view carries it for the owner.
-	if _, mine := h.get("/submissions/1?format=json", owner); !strings.Contains(mine, "int main()") {
+	if code, body := h.submitCode(owner, "P6005", "cpp", "int main(){return 0;}"); code != http.StatusOK {
+		t.Fatalf("submit = %d %.200q", code, body)
+	}
+	// The source is on the page for the person who wrote it, and for nobody else.
+	if _, mine := h.getAs(owner, "/submissions/1"); !strings.Contains(mine, "int main()") {
 		t.Fatal("author of the submission could not see their own source")
 	}
-	if _, other := h.get("/submissions/1?format=json", intruder); strings.Contains(other, "int main()") {
+	if _, other := h.getAs(intruder, "/submissions/1"); strings.Contains(other, "int main()") {
 		t.Fatal("another user read someone else's source")
 	}
 	h.grant("intruder6", permSubmissionViewAny, true)
-	if _, audited := h.get("/submissions/1?format=json", intruder); !strings.Contains(audited, "int main()") {
+	if _, audited := h.getAs(intruder, "/submissions/1"); !strings.Contains(audited, "int main()") {
 		t.Fatal("submission.view.any had no effect")
 	}
 }
 
-func (h *harness) readyProblemAs(token, pid string) {
+func (h *harness) readyProblemAs(s session, pid string) {
 	h.t.Helper()
-	h.json(http.MethodPost, "/problems", token,
-		[]byte(fmt.Sprintf(`{"pid":%q,"title":"别人的题","languages":["c","cpp"]}`, pid)))
-	h.uploadCasesAs(token, pid)
+	if code, _ := h.postAs(s, "/problems", url.Values{
+		"pid": {pid}, "title": {"别人的题"}, "time_ms": {"1000"}, "mem_mb": {"256"},
+		"languages": {"c", "cpp"}, "visible": {"1"},
+	}); code != http.StatusOK {
+		h.t.Fatalf("create %s = %d", pid, code)
+	}
+	h.uploadCasesAs(s, pid)
 }
 
 func TestAdminConsolePermissions(t *testing.T) {
@@ -302,11 +333,12 @@ func TestRoleAndStatusChanges(t *testing.T) {
 
 func TestJudgeViewRight(t *testing.T) {
 	h := newHarness(t)
-	if code, _ := h.get("/judges", h.userToken("watcher7")); code != http.StatusForbidden {
+	watcher := h.author("watcher7")
+	if code, _ := h.getAs(watcher, "/judges"); code != http.StatusForbidden {
 		t.Fatalf("plain user listed judges = %d", code)
 	}
 	auditor := h.author("auditor7", permJudgeView)
-	if code, _ := h.get("/judges", auditor); code != http.StatusOK {
+	if code, _ := h.getAs(auditor, "/judges"); code != http.StatusOK {
 		t.Fatalf("judge.view holder = %d", code)
 	}
 	// The judge token itself is not a licence to browse the registry.

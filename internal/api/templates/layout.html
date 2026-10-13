@@ -15,6 +15,7 @@
   <a href="/rank">排行榜</a>
   <a href="/submissions">提交</a>
   {{if .Me}}
+  {{if .Me.Author}}<a href="/problems/new">出题</a>{{end}}
   {{if .Me.Manage}}<a href="/admin/perms">权限</a>{{end}}
   {{if .Me.Site}}<a href="/admin/site">站点</a>{{end}}
   <form class="inline" method="post" action="/logout">

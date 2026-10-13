@@ -33,10 +33,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /about", s.handleAbout)
 
 	mux.HandleFunc("GET /problems", s.handleProblemList)
+	mux.HandleFunc("GET /problems/new", s.handleProblemNew)
 	mux.HandleFunc("POST /problems", s.handleProblemCreate)
 	mux.HandleFunc("GET /problems/{key}", s.handleProblemGet)
-	mux.HandleFunc("PUT /problems/{key}", s.handleProblemUpdate)
-	mux.HandleFunc("DELETE /problems/{key}", s.handleProblemDelete)
+	mux.HandleFunc("GET /problems/{key}/edit", s.handleProblemEdit)
+	mux.HandleFunc("POST /problems/{key}", s.handleProblemUpdate)
+	mux.HandleFunc("POST /problems/{key}/delete", s.handleProblemDelete)
 	mux.HandleFunc("GET /problems/{key}/cases", s.handleCaseList)
 	mux.HandleFunc("POST /problems/{key}/cases", s.handleCaseUpload)
 	mux.HandleFunc("DELETE /problems/{key}/cases", s.handleCaseWipe)
@@ -149,9 +151,11 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /                        首页：站名+首页语+动态+最新题目（文本视图=题库列表）",
 		"  GET  /problems                题库列表（?q= &limit= &after=）",
 		"  GET  /problems/{key}          题面 + 样例 + 提交表单",
+		"  GET  /problems/new            出题表单（problem.create）",
 		"  POST /problems                建题（problem.create）",
-		"  PUT  /problems/{key}          改题（owner 或 problem.edit.any）",
-		"  DELETE /problems/{key}        删题（owner 或 problem.edit.any）",
+		"  GET  /problems/{key}/edit     改题表单（owner 或 problem.edit.any）",
+		"  POST /problems/{key}          保存题目（owner 或 problem.edit.any）",
+		"  POST /problems/{key}/delete   删题（owner 或 problem.edit.any）",
 		"  POST /problems/{key}/cases    上传用例 zip（testcase.manage 或 owner）",
 		"  GET  /problems/{key}/cases    用例清单（同上）",
 		"  POST /problems/{key}/submit   网页表单提交代码",

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +17,88 @@ func (h *harness) htmlGet(path, token string) (int, string) {
 	h.t.Helper()
 	code, body, _ := h.html(http.MethodGet, path, token, nil, "")
 	return code, body
+}
+
+// session is a logged-in browser: the cookie it holds plus the CSRF token every
+// write form must carry. This is how the suite drives the app now that the
+// programmatic surface is gone.
+type session struct {
+	handle       string
+	cookie, csrf string
+}
+
+// signIn registers through the web form, so the account has a real password and
+// a real session, then grants the listed capabilities through the console.
+func (h *harness) signIn(handle string, perms ...string) session {
+	h.t.Helper()
+	cookie, csrf := h.login(handle, handle+"@example.com", testPassword)
+	for _, p := range perms {
+		h.grant(handle, p, true)
+	}
+	return session{handle: handle, cookie: cookie, csrf: csrf}
+}
+
+// getAs fetches a page with this session's cookie.
+func (h *harness) getAs(s session, path string) (int, string) {
+	h.t.Helper()
+	return h.htmlWithCookie(http.MethodGet, path, s.cookie)
+}
+
+// postAs submits a form as this browser: CSRF included, the 303 followed, so the
+// page the person lands on is what the test asserts.
+func (h *harness) postAs(s session, path string, values url.Values) (int, string) {
+	h.t.Helper()
+	return h.postForm2(path, values, s.cookie, s.csrf)
+}
+
+// problemValues is what the create form posts: a browser always sends every
+// field, including the prefilled limits, so the tests must too.
+func problemValues(pid, title string) url.Values {
+	return url.Values{"pid": {pid}, "title": {title}, "time_ms": {"1000"}, "mem_mb": {"256"}, "visible": {"1"}}
+}
+
+// createProblem authors a problem through the web form as the operator token,
+// which is the one credential that is not a browser session.
+func (h *harness) createProblem(values url.Values) (int, string) {
+	h.t.Helper()
+	if values.Get("time_ms") == "" {
+		values.Set("time_ms", "1000")
+	}
+	if values.Get("mem_mb") == "" {
+		values.Set("mem_mb", "256")
+	}
+	if values.Get("visible") == "" {
+		values.Set("visible", "1")
+	}
+	return h.postBearer("/problems", values, h.admin)
+}
+
+// submitCode posts the code form on the problem page, the only way to submit now.
+func (h *harness) submitCode(s session, pid, lang, source string) (int, string) {
+	h.t.Helper()
+	return h.postAs(s, "/problems/"+url.PathEscape(pid)+"/submit", url.Values{
+		"language": {lang}, "source": {source},
+	})
+}
+
+// uploadZipAs posts a raw zip body as a signed-in browser. The CSRF token rides
+// in its header because the body is the archive, not a form.
+func (h *harness) uploadZipAs(s session, path string, archive []byte) (int, string) {
+	h.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, bytes.NewReader(archive))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/zip")
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Cookie", s.cookie)
+	req.Header.Set(csrfHeader, s.csrf)
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, readAll(h.t, resp)
 }
 
 func (h *harness) html(method, path, token string, body []byte, contentType string) (int, string, http.Header) {
@@ -192,7 +274,7 @@ const testPassword = "correct-horse-battery"
 func TestProblemListViewForBrowsers(t *testing.T) {
 	h := newHarness(t)
 	h.readyProblem("P4000")
-	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"P4001","title":"隐藏题","visible":false}`))
+	h.createProblem(hiddenValues("P4001", "隐藏题"))
 
 	code, body := h.htmlGet("/", "")
 	if code != http.StatusOK {
@@ -242,11 +324,9 @@ $$ \frac{a+b}{2} $$
 
 [坑](javascript:alert(2))
 `
-	payload, err := json.Marshal(map[string]any{"pid": "P4002", "title": "公式题", "statement": statement})
-	if err != nil {
-		t.Fatal(err)
+	if code, body := h.createProblem(url.Values{"pid": {"P4002"}, "title": {"公式题"}, "statement": {statement}}); code != http.StatusOK {
+		t.Fatalf("create = %d %s", code, body)
 	}
-	h.json(http.MethodPost, "/problems", h.admin, payload)
 	h.uploadCases("P4002")
 
 	code, body := h.htmlGet("/problems/P4002", "")
@@ -390,7 +470,7 @@ func (h *harness) finishSubmission(id int64, res store.Result, runs []store.Run)
 func TestWebFormValidationMirrorsTheAPI(t *testing.T) {
 	h := newHarness(t)
 	h.readyProblem("P4004")
-	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"P4005","title":"no cases"}`))
+	h.createProblem(url.Values{"pid": {"P4005"}, "title": {"no cases"}})
 	cookie, csrf := h.login("checker", "checker@example.com", testPassword)
 
 	cases := []struct{ pid, lang, source string }{
@@ -426,7 +506,7 @@ func TestWebFormValidationMirrorsTheAPI(t *testing.T) {
 
 func TestUnrestrictedProblemFormStillOffersLanguages(t *testing.T) {
 	h := newHarness(t)
-	h.json(http.MethodPost, "/problems", h.admin, []byte(`{"pid":"P4010","title":"语言不限"}`))
+	h.createProblem(url.Values{"pid": {"P4010"}, "title": {"语言不限"}})
 	h.uploadCases("P4010")
 	cookie, csrf := h.login("opener", "opener@example.com", testPassword)
 
