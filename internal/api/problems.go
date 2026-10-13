@@ -58,9 +58,6 @@ func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
 	s.problemPage(w, r, a, p)
 }
 
-
-
-
 func clip(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -113,8 +110,6 @@ func joinOr(items []string, empty string) string {
 	}
 	return strings.Join(items, ",")
 }
-
-
 
 // problemByKey resolves /problems/{key} into a row or writes the error.
 func (s *Server) problemByKey(w http.ResponseWriter, r *http.Request) (store.Problem, bool) {

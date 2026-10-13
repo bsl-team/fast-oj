@@ -322,8 +322,6 @@ func tallyResult(claimed judge.Verdict, reqRuns []protocol.RunRow, cases []store
 	return verdict, runs, score, total, failed
 }
 
-
-
 func submissionID(r *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {

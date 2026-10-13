@@ -89,6 +89,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/profile", s.handleProfileSave)
 	mux.HandleFunc("POST /settings/password", s.handlePasswordSave)
 
+	// First-run bootstrap: the operator token cannot be presented by a browser, so
+	// this pair turns it into a real web login for the admin account.
+	mux.HandleFunc("GET /admin/claim", s.handleAdminClaimPage)
+	mux.HandleFunc("POST /admin/claim", s.handleAdminClaim)
+
 	mux.HandleFunc("GET /admin/perms", s.handleAdminUsers)
 	mux.HandleFunc("GET /admin/perms/u/{handle}", s.handleAdminUser)
 	mux.HandleFunc("POST /admin/perms/u/{handle}", s.handleAdminPermChange)
@@ -162,6 +167,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /settings                个人资料、密码、私信策略",
 		"  POST /checkin                 每日打卡（漏卡 n 天扣 3^n 连续天数）",
 		"  GET  /admin/site              站点设置（site.settings）",
+		"  GET  /admin/claim             首次接管：用管理令牌给 admin 账号设网页密码",
 		"  GET  /admin/perms             权限控制台（permission.manage）",
 		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
 		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁",

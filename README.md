@@ -24,7 +24,7 @@ powershell -File build.ps1        # 产出 dist\fast-oj.exe dist\fast-judge.exe
 ./dist/fast-judge.exe -server http://127.0.0.1:8080 -token JDG -name box1 -v
 ```
 
-浏览器打开 <http://127.0.0.1:8080>。命令行只留一件事——探活：
+浏览器打开 <http://127.0.0.1:8080>。**全新库的第一步**：打开 <http://127.0.0.1:8080/admin/claim>，把 `-admin-token` 的值填进去，给 `admin` 账号设一个网页密码，之后就是普通登录（这个页面在旧库上也能用，属于恢复手段，会先警告你要覆盖已有密码）。命令行只留一件事——探活：
 
 ```bash
 curl -s localhost:8080/healthz          # ok
@@ -238,7 +238,7 @@ zip -j cases.zip 1.in 1.out sample1.in sample1.out
 
 | 凭证 | 怎么来 | 能干什么 |
 |------|--------|----------|
-| `-admin-token` | 启动参数 | 运维引导凭据：给第一个账号发权限、手动驱动判机队列。不是人用的登录方式 |
+| `-admin-token` | 启动参数 | 运维引导凭据：驱动判机队列、以及在 `/admin/claim` 给第一个账号设密码。不是日常登录方式 |
 | `-judge-token` | 启动参数 | 领取任务、取用例正文、回报结果 |
 | 邮箱 + 密码 | `/register` 自助注册 | 登录成普通用户（session cookie） |
 

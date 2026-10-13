@@ -1,0 +1,17 @@
+{{define "content"}}
+<h1>接管后台</h1>
+<p class="meta">这是给全新安装用的第一步：用启动参数 <code>-admin-token</code> 的值，给账号 <b>{{.Data.Handle}}</b>
+  设一个网页登录密码。设完直接登进来，之后招人照常用 <a href="/admin/perms">权限控制台</a>。</p>
+{{if .Data.HasOwned}}
+<p class="flash">这个账号已经有密码了，提交会覆盖它，并让它当前的登录状态全部失效。</p>
+{{end}}
+
+<form method="post" action="/admin/claim">
+  <label>管理令牌</label>
+  <input type="password" name="token" autocomplete="off" required>
+  <label>新密码（至少 10 位，不能全是数字）</label>
+  <input type="password" name="password" autocomplete="new-password" required>
+  <p><input type="submit" value="设密码并登录"></p>
+</form>
+
+{{end}}

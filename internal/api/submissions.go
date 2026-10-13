@@ -21,7 +21,6 @@ func languageAllowed(list []string, lang string) bool {
 	return false
 }
 
-
 func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 	a, _ := s.authenticate(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -55,8 +54,6 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 	}
 	s.submissionPage(w, r, a, d, full, source, detail, runs)
 }
-
-
 
 func ago(ms int64) string {
 	if ms == 0 {
@@ -120,6 +117,3 @@ func (s *Server) handleSubmitList(w http.ResponseWriter, r *http.Request) {
 	}
 	s.submissionsPage(w, r, a.viewer(), items, f.Limit, q.Get("user"), q.Get("problem"))
 }
-
-
-
