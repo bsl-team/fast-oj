@@ -81,6 +81,35 @@ func (db *DB) DeleteTestcases(ctx context.Context, problemID int64) (int64, erro
 	return res.RowsAffected()
 }
 
+// UpdateTestcase writes the editable columns of one case by id. Renaming is
+// deliberately not an upsert by name: the row keeps its ordinal and its files,
+// and only the label changes.
+func (db *DB) UpdateTestcase(ctx context.Context, tc *Testcase) (Testcase, error) {
+	res, err := db.SQL.ExecContext(ctx,
+		`UPDATE testcases SET name=?, ordinal=?, is_sample=?, score=?, input_rel=?, output_rel=? WHERE id=?`,
+		tc.Name, tc.Ordinal, boolInt(tc.IsSample), tc.Score, tc.InputRel, tc.OutputRel, tc.ID)
+	if err != nil {
+		return Testcase{}, conflict(err, tc.Name)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Testcase{}, ErrNotFound
+	}
+	return db.GetTestcaseByID(ctx, tc.ID)
+}
+
+// DeleteTestcase removes one case row and returns it, because the caller has to
+// delete the files it points at.
+func (db *DB) DeleteTestcase(ctx context.Context, id int64) (Testcase, error) {
+	tc, err := db.GetTestcaseByID(ctx, id)
+	if err != nil {
+		return Testcase{}, err
+	}
+	if _, err := db.SQL.ExecContext(ctx, `DELETE FROM testcases WHERE id=?`, id); err != nil {
+		return Testcase{}, err
+	}
+	return tc, nil
+}
+
 func (db *DB) ProblemScoreTotal(ctx context.Context, problemID int64) (int, error) {
 	var total int
 	err := db.SQL.QueryRowContext(ctx,

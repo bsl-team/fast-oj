@@ -66,9 +66,12 @@ curl -s localhost:8080/problems         # 纯文本题库列表
 | `GET` `/POST` | `/problems/new` `/problems` | `problem.create` | 网页出题：编号、标题、题面（可预览）、时限、内存、语言、可见性 |
 | `GET` `/POST` | `/problems/{key}/edit` `/problems/{key}` | 该题 owner 或 `problem.edit.any` | 网页改题；改可见性另需 `problem.publish` |
 | `POST` | `/problems/{key}/delete` | 该题 owner 或 `problem.edit.any` | 删题（连带用例文件） |
-| `POST` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 上传用例 zip |
-| `GET` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 用例清单与大小 |
-| `DELETE` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 清空用例 |
+| `GET` | `/problems/{key}/cases` | owner 或 `testcase.manage` | 用例管理页：列表、大小、加一条、zip 导入、清空 |
+| `POST` | `/problems/{key}/cases` | 同上 | 加一条用例（名称、分值、样例、输入、输出） |
+| `POST` | `/problems/{key}/cases/upload` | 同上 | 批量导入 zip（`名字.in` + `名字.out`，同名覆盖） |
+| `GET` `/POST` | `/problems/{key}/cases/{id}/edit` | 同上 | 改单条用例；超过 256KB 的文件只改元信息，内容走 zip |
+| `POST` | `/problems/{key}/cases/{id}/delete` | 同上 | 删一条用例（连带它的文件） |
+| `POST` | `/problems/{key}/cases/wipe` | 同上 | 清空用例 |
 | `GET` | `/problems/{key}/cases/{name}/{in\|out}` | 样例公开，判题需 admin/判机 | 取单个用例正文 |
 | `POST` | `/problems/{key}/submit` | 登录用户 | 网页表单提交 |
 | `POST` | `/submissions` | 用户令牌 | 提交代码 |

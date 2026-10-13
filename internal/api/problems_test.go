@@ -67,8 +67,10 @@ func TestProblemCRUDThroughTheWebForm(t *testing.T) {
 		"statement": {"Give a and b, print a+b.\nHave 3 spaces."},
 		"time_ms":   {"1500"}, "mem_mb": {"128"}, "languages": {"c", "cpp"},
 	}
+	// Creating lands on the case page, because an empty problem cannot be judged
+	// and that is the author's next job.
 	if code, body := h.createProblem(values); code != http.StatusOK ||
-		!strings.Contains(body, "P1001") || !strings.Contains(body, "1500ms") || !strings.Contains(body, "128.00M") {
+		!strings.Contains(body, "还没有用例") || !strings.Contains(body, "加一条") {
 		t.Fatalf("create = %d %q", code, body)
 	}
 
@@ -196,20 +198,24 @@ func TestCaseUploadAndAccess(t *testing.T) {
 	})
 
 	// Cases are invisible until an operator uploads them.
-	if code, _ := h.do(http.MethodPost, "/problems/P1/cases", "", archive, "application/zip"); code != http.StatusUnauthorized {
+	if code, _ := h.do(http.MethodPost, "/problems/P1/cases/upload", "", archive, "application/zip"); code != http.StatusUnauthorized {
 		t.Fatalf("anon upload = %d", code)
 	}
-	// A garbage body must be rejected as a bad archive, not a crash.
-	if code, body := h.do(http.MethodPost, "/problems/P1/cases", h.admin, []byte("not a zip"), "application/zip"); code != http.StatusBadRequest {
+	// A garbage body is refused in the author's own language and nothing is added.
+	code, body := h.do(http.MethodPost, "/problems/P1/cases/upload", h.admin, []byte("not a zip"), "application/zip")
+	if code != http.StatusOK || !strings.Contains(body, "zip") {
 		t.Fatalf("garbage upload = %d %q", code, body)
 	}
-	if code, body := h.do(http.MethodPost, "/problems/P1/cases", h.admin, archive, "application/zip"); code != http.StatusOK {
+	if n, _ := h.db.CountTestcases(ctx(), 1, false); n != 0 {
+		t.Fatalf("a bad archive added %d cases", n)
+	}
+	if code, body := h.do(http.MethodPost, "/problems/P1/cases/upload", h.admin, archive, "application/zip"); code != http.StatusOK {
 		t.Fatalf("upload = %d %q", code, body)
 	}
 
 	// Re-uploading the same names replaces them instead of duplicating, and the
 	// samples-first ordinal layout stays stable across the second pass.
-	if code, body := h.do(http.MethodPost, "/problems/P1/cases", h.admin, archive, "application/zip"); code != http.StatusOK {
+	if code, body := h.do(http.MethodPost, "/problems/P1/cases/upload", h.admin, archive, "application/zip"); code != http.StatusOK {
 		t.Fatalf("re-upload = %d %q", code, body)
 	}
 	cases, err := h.db.ListTestcases(ctx(), 1, false)
@@ -254,7 +260,7 @@ func TestCaseUploadAndAccess(t *testing.T) {
 	}
 
 	// Clearing the set removes the rows along with the files.
-	if code, body := h.do(http.MethodDelete, "/problems/P1/cases", h.admin, nil, ""); code != http.StatusOK {
+	if code, body := h.postBearer("/problems/P1/cases/wipe", url.Values{}, h.admin); code != http.StatusOK {
 		t.Fatalf("wipe = %d %q", code, body)
 	}
 	if rest, err := h.db.ListTestcases(ctx(), 1, false); err != nil || len(rest) != 0 {
@@ -274,9 +280,16 @@ func TestIncompleteCasePairsRejected(t *testing.T) {
 	f.Write([]byte("only input\n"))
 	w.Close()
 
-	code, body := h.do(http.MethodPost, "/problems/P9/cases", h.admin, buf.Bytes(), "application/zip")
-	if code != http.StatusBadRequest || !strings.Contains(body, "lonely") {
+	code, body := h.do(http.MethodPost, "/problems/P9/cases/upload", h.admin, buf.Bytes(), "application/zip")
+	if code != http.StatusOK || !strings.Contains(body, "lonely") {
 		t.Fatalf("unpaired upload = %d %q", code, body)
+	}
+	p9, err := h.db.FindProblem(ctx(), "P9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := h.db.CountTestcases(ctx(), p9.ID, false); n != 0 {
+		t.Fatalf("half a pair created %d cases", n)
 	}
 }
 

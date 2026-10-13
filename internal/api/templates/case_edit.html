@@ -1,0 +1,42 @@
+{{define "content"}}
+<h1>用例 {{.Data.Edit.Name}}</h1>
+<p class="meta">{{.Data.PID}} {{.Data.Title}} · 第 {{.Data.Edit.Ordinal}} 号
+  · <a href="/problems/{{.Data.PID}}/cases">用例列表</a></p>
+
+<form method="post" action="/problems/{{.Data.PID}}/cases/{{.Data.Edit.ID}}/edit">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div class="row">
+    <div style="flex:1 1 14rem">
+      <label>名称</label>
+      <input type="text" name="name" value="{{.Data.Edit.Name}}" maxlength="64" required autocomplete="off" spellcheck="false">
+    </div>
+    <div>
+      <label>分值</label>
+      <input type="number" name="score" value="{{if .Data.Edit.IsSample}}0{{else}}{{.Data.Edit.Score}}{{end}}" min="0" max="10000" step="1" required>
+    </div>
+    <label class="check">
+      <input type="checkbox" name="sample" value="1" {{if .Data.Edit.IsSample}}checked{{end}}>算样例（公开在题面上，不计分）
+    </label>
+  </div>
+
+  {{if .Data.Edit.Inline}}
+  <label>输入（{{.Data.Edit.InSize}}）</label>
+  <textarea name="input" spellcheck="false" autocomplete="off">{{.Data.Edit.Input}}</textarea>
+  <label>输出（{{.Data.Edit.OutSize}}）</label>
+  <textarea name="output" spellcheck="false" autocomplete="off">{{.Data.Edit.Output}}</textarea>
+  {{else}}
+  <p class="meta">这条的用例文件是 {{.Data.Edit.InSize}} / {{.Data.Edit.OutSize}}，太大不适合在网页里编辑，
+    这里只改名称、类型与分值。要换内容请用 <a href="/problems/{{.Data.PID}}/cases">zip 导入</a> 同名覆盖。</p>
+  {{end}}
+
+  <p class="row">
+    <input type="submit" value="保存">
+  </p>
+</form>
+
+<form method="post" action="/problems/{{.Data.PID}}/cases/{{.Data.Edit.ID}}/delete"
+      onsubmit="return confirm('删除用例 {{.Data.Edit.Name}}？')">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <p><button type="submit" class="bad">删除这条用例</button></p>
+</form>
+{{end}}

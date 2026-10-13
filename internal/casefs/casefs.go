@@ -77,6 +77,19 @@ func (s *Store) Size(rel string) (int64, error) {
 	return info.Size(), nil
 }
 
+// Remove deletes one case file. A missing file is not an error: the row is the
+// record, and the delete stays idempotent.
+func (s *Store) Remove(rel string) error {
+	abs, err := s.abs(rel)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) RemoveProblem(problemID int64) error {
 	return os.RemoveAll(s.problemDir(problemID))
 }

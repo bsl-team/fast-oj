@@ -337,7 +337,7 @@ func isSampleName(name string) bool {
 }
 
 func (s *Server) handleCaseUpload(w http.ResponseWriter, r *http.Request) {
-	_, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
+	a, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
 	if !ok {
 		return
 	}
@@ -347,7 +347,7 @@ func (s *Server) handleCaseUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	pairs, err := s.collectCases(zipBody)
 	if err != nil {
-		s.respondError(w, r, http.StatusBadRequest, err.Error())
+		s.backToCases(w, r, p, err.Error())
 		return
 	}
 
@@ -403,9 +403,8 @@ func (s *Server) handleCaseUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	respond(w, r, http.StatusOK,
-		fmt.Sprintf("%s: added=%d replaced=%d total=%d\n", p.PID, added, replaced, total),
-		map[string]any{"pid": p.PID, "added": added, "replaced": replaced, "total": total})
+	s.log.Info("cases imported", "pid", p.PID, "added", added, "replaced", replaced, "by", a.User.Handle)
+	s.casesDone(w, r, p, fmt.Sprintf("导入完成：新增 %d 条，覆盖 %d 条，共 %d 条", added, replaced, total))
 }
 
 // readUpload accepts a raw zip body, or a zip inside a multipart file part.
@@ -448,57 +447,6 @@ func (s *Server) readUpload(w http.ResponseWriter, r *http.Request) ([]byte, boo
 		return nil, false
 	}
 	return body, true
-}
-
-func (s *Server) handleCaseList(w http.ResponseWriter, r *http.Request) {
-	_, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
-	if !ok {
-		return
-	}
-	cases, err := s.db.ListTestcases(r.Context(), p.ID, false)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString("ord  name                  kind    score      in     out\n")
-	for _, tc := range cases {
-		inSize, _ := s.cases.Size(tc.InputRel)
-		outSize, _ := s.cases.Size(tc.OutputRel)
-		kind := "judged"
-		if tc.IsSample {
-			kind = "sample"
-		}
-		fmt.Fprintf(&b, "%-4d %-20s %-8s %5d %7d %7d\n",
-			tc.Ordinal, clip(tc.Name, 20), kind, tc.Score, inSize, outSize)
-	}
-	fmt.Fprintf(&b, "cases=%d judged_points=%d\n", len(cases), total)
-	respond(w, r, http.StatusOK, b.String(),
-		map[string]any{"pid": p.PID, "cases": cases, "judged_points": total})
-}
-
-func (s *Server) handleCaseWipe(w http.ResponseWriter, r *http.Request) {
-	_, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
-	if !ok {
-		return
-	}
-	n, err := s.db.DeleteTestcases(r.Context(), p.ID)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	if err := s.cases.RemoveProblem(p.ID); err != nil {
-		s.respondError(w, r, http.StatusInternalServerError, "metadata removed but files remain: "+err.Error())
-		return
-	}
-	respond(w, r, http.StatusOK, fmt.Sprintf("%s: removed %d cases\n", p.PID, n),
-		map[string]any{"pid": p.PID, "removed": n})
 }
 
 // handleCaseBody streams one case file. Sample data is public; judged data needs

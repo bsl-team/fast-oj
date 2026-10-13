@@ -39,9 +39,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /problems/{key}/edit", s.handleProblemEdit)
 	mux.HandleFunc("POST /problems/{key}", s.handleProblemUpdate)
 	mux.HandleFunc("POST /problems/{key}/delete", s.handleProblemDelete)
-	mux.HandleFunc("GET /problems/{key}/cases", s.handleCaseList)
-	mux.HandleFunc("POST /problems/{key}/cases", s.handleCaseUpload)
-	mux.HandleFunc("DELETE /problems/{key}/cases", s.handleCaseWipe)
+	mux.HandleFunc("GET /problems/{key}/cases", s.handleCasesPage)
+	mux.HandleFunc("POST /problems/{key}/cases", s.handleCaseCreate)
+	mux.HandleFunc("POST /problems/{key}/cases/upload", s.handleCaseUpload)
+	mux.HandleFunc("POST /problems/{key}/cases/wipe", s.handleCaseWipe)
+	mux.HandleFunc("GET /problems/{key}/cases/{id}/edit", s.handleCaseEditPage)
+	mux.HandleFunc("POST /problems/{key}/cases/{id}/edit", s.handleCaseSave)
+	mux.HandleFunc("POST /problems/{key}/cases/{id}/delete", s.handleCaseDelete)
 	mux.HandleFunc("GET /problems/{key}/cases/{name}/{which}", s.handleCaseBody)
 
 	mux.HandleFunc("GET /whoami", s.handleWhoami)
@@ -156,8 +160,11 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /problems/{key}/edit     改题表单（owner 或 problem.edit.any）",
 		"  POST /problems/{key}          保存题目（owner 或 problem.edit.any）",
 		"  POST /problems/{key}/delete   删题（owner 或 problem.edit.any）",
-		"  POST /problems/{key}/cases    上传用例 zip（testcase.manage 或 owner）",
-		"  GET  /problems/{key}/cases    用例清单（同上）",
+		"  GET  /problems/{key}/cases    用例管理页（owner 或 testcase.manage）",
+		"  POST /problems/{key}/cases    加一条用例（同上）",
+		"  POST /problems/{key}/cases/upload  批量导入用例 zip",
+		"  POST /problems/{key}/cases/{id}/edit|delete  改用例 / 删用例",
+		"  POST /problems/{key}/cases/wipe    清空用例",
 		"  POST /problems/{key}/submit   网页表单提交代码",
 		"  POST /submissions             提交（bearer）",
 		"  GET  /submissions             提交列表（?user= &problem=）",

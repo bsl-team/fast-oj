@@ -162,7 +162,7 @@ func (h *harness) uploadCasesAs(s session, pid string) {
 		"sample1.in": "1 2\n", "sample1.out": "3\n",
 		"1.in": "1 2\n", "1.out": "3\n",
 	})
-	if code, body := h.uploadZipAs(s, "/problems/"+url.PathEscape(pid)+"/cases", archive); code != http.StatusOK {
+	if code, body := h.uploadZipAs(s, "/problems/"+url.PathEscape(pid)+"/cases/upload", archive); code != http.StatusOK {
 		h.t.Fatalf("upload as %s = %d %q", pid, code, body)
 	}
 }
@@ -179,7 +179,7 @@ func TestCaseRightsAreIndependentOfStatementEditing(t *testing.T) {
 
 	// A data maintainer with no create right can top up someone else's data...
 	maintainer := h.author("maintainer5", permTestcaseManage)
-	if code, body := h.uploadZipAs(maintainer, "/problems/P6004/cases",
+	if code, body := h.uploadZipAs(maintainer, "/problems/P6004/cases/upload",
 		zipOf(map[string]string{"2.in": "4 5\n", "2.out": "9\n"})); code != http.StatusOK {
 		t.Fatalf("data maintainer upload = %d %q", code, body)
 	}

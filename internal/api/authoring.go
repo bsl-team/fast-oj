@@ -237,7 +237,7 @@ func (s *Server) handleProblemCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("problem created", "pid", created.PID, "id", created.ID, "by", a.User.Handle)
-	http.Redirect(w, r, "/problems/"+url.PathEscape(created.PID)+"?msg="+url.QueryEscape("题目已建好，现在加用例"), http.StatusSeeOther)
+	http.Redirect(w, r, "/problems/"+url.PathEscape(created.PID)+"/cases?msg="+url.QueryEscape("题目已建好，现在加用例"), http.StatusSeeOther)
 }
 
 // problemForEdit resolves the {key} of an authoring URL. The numeric id is used
