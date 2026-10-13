@@ -122,7 +122,7 @@ func TestSubmissionRoundTripAndVisibility(t *testing.T) {
 	if strings.Contains(foreign, "std::cin") {
 		t.Fatalf("a stranger leaked the submission body:\n%s", foreign)
 	}
-	if !strings.Contains(foreign, "只有本人或管理员可见") {
+	if !strings.Contains(foreign, "只对本人、出题人和管理员可见") {
 		t.Fatalf("the private-data hint is missing for a stranger:\n%s", foreign)
 	}
 
@@ -153,7 +153,11 @@ func TestSubmissionRoundTripAndVisibility(t *testing.T) {
 	h.finishSubmission(2, store.Result{
 		Verdict: "WA", TimeMS: 5, MemKB: 1024, Score: 1, TotalScore: 2, FailedCase: "1",
 		Detail: "实测 4\n期望 3",
-	}, nil)
+	}, []store.Run{
+		{Ordinal: 1, CaseName: "sample1", Verdict: "AC", TimeMS: 11, MemKB: 2048, IsSample: true, Score: 0},
+		{Ordinal: 2, CaseName: "1", Verdict: "AC", TimeMS: 12, MemKB: 2048, Score: 1},
+		{Ordinal: 3, CaseName: "2", Verdict: "WA", TimeMS: 12, MemKB: 2048, Score: 0},
+	})
 	_, mine := h.getAs(alice, "/submissions/2")
 	for _, want := range []string{"失败用例", "实测 4"} {
 		if !strings.Contains(mine, want) {
@@ -182,6 +186,92 @@ func TestSubmissionRoundTripAndVisibility(t *testing.T) {
 	}
 	if code, _ := h.htmlGet("/submissions/9999", ""); code != http.StatusNotFound {
 		t.Fatalf("unknown id = %d", code)
+	}
+}
+
+// The detail level is what lets a contest hide the failing case while still
+// showing the score, and it must never hide anything from the author.
+func TestDetailLevelGradesTheSubmissionPage(t *testing.T) {
+	h := newHarness(t)
+	author := h.signIn("lvlauthor", permProblemCreate)
+	solver := h.signIn("lvlsolver")
+
+	form := func(detail string) url.Values {
+		return url.Values{
+			"pid": {"P2100"}, "title": {"详情级别"}, "time_ms": {"1000"}, "mem_mb": {"256"},
+			"detail": {detail}, "visible": {"1"},
+		}
+	}
+	if code, body := h.postAs(author, "/problems", form(store.DetailNone)); code != http.StatusOK {
+		t.Fatalf("create = %d %s", code, short(body))
+	}
+	h.uploadCases("P2100")
+	if code, _, _ := h.submitRaw("P2100", url.Values{"language": {"cpp"}, "source": {"int main(){return 0;}"}}, solver); code != http.StatusSeeOther {
+		t.Fatalf("submit = %d", code)
+	}
+	h.finishSubmission(1, store.Result{
+		Verdict: "WA", TimeMS: 12, MemKB: 2048, Score: 1, TotalScore: 3, FailedCase: "2",
+		Detail: "实测 4\n期望 3",
+	}, []store.Run{
+		{Ordinal: 1, CaseName: "sample1", Verdict: "AC", TimeMS: 11, MemKB: 2048, IsSample: true},
+		{Ordinal: 2, CaseName: "1", Verdict: "AC", TimeMS: 12, MemKB: 2048, Score: 1},
+		{Ordinal: 3, CaseName: "2", Verdict: "WA", TimeMS: 12, MemKB: 2048},
+	})
+	page := "/submissions/1"
+
+	// none: the score is public enough to rank by, the rest is not.
+	_, mine := h.getAs(solver, page)
+	for _, want := range []string{"1/3"} {
+		if !strings.Contains(mine, want) {
+			t.Errorf("level none lost %q:\n%s", want, mine)
+		}
+	}
+	// The code and the score stay theirs; what the judging revealed does not.
+	for _, hide := range []string{"逐用例", "实测 4", "失败用例", "判机"} {
+		if !strings.Contains(mine, "int main()") {
+			t.Error("the submitter lost their own code")
+		}
+		if strings.Contains(mine, hide) {
+			t.Errorf("level none leaked %q:\n%s", hide, mine)
+		}
+	}
+
+	// The author sees everything regardless of the level they set.
+	_, all := h.getAs(author, page)
+	for _, want := range []string{"逐用例", "int main()", "实测 4", "失败用例"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("author lost %q:\n%s", want, all)
+		}
+	}
+
+	// case: the per-case verdicts arrive, the diff and the timings do not.
+	if code, body := h.postAs(author, "/problems/P2100", form(store.DetailCase)); code != http.StatusOK {
+		t.Fatalf("save case level = %d %s", code, short(body))
+	}
+	_, mine = h.getAs(solver, page)
+	if !strings.Contains(mine, "逐用例") || !strings.Contains(mine, "sample1") {
+		t.Fatalf("level case did not open the per-case table:\n%s", mine)
+	}
+	for _, hide := range []string{"实测 4", `<th class="num">用时</th>`, "判机信息"} {
+		if strings.Contains(mine, hide) {
+			t.Errorf("level case leaked %q:\n%s", hide, mine)
+		}
+	}
+
+	// diff: the comparison and the failing case name come with it.
+	if code, body := h.postAs(author, "/problems/P2100", form(store.DetailDiff)); code != http.StatusOK {
+		t.Fatalf("save diff level = %d %s", code, short(body))
+	}
+	_, mine = h.getAs(solver, page)
+	for _, want := range []string{"实测 4", `<th class="num">用时</th>`, "失败用例"} {
+		if !strings.Contains(mine, want) {
+			t.Errorf("level diff lost %q:\n%s", want, mine)
+		}
+	}
+
+	// An anonymous reader never gets the code, at any level.
+	if _, anon := h.htmlGet(page, ""); strings.Contains(anon, "int main()") {
+		t.Fatal("the source leaked to an anonymous reader")
 	}
 }
 

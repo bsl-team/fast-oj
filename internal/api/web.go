@@ -309,11 +309,12 @@ type submissionData struct {
 	Runs      []runRow
 	Detail    string
 	Source    string
-	Full      bool
+	View      detailView
+	Partial   bool
 	Waiting   bool
 }
 
-func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor, d store.SubmissionDetail, full bool, source, detail string, runs []store.Run) {
+func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor, d store.SubmissionDetail, view detailView, source, detail string, runs []store.Run) {
 	class, outcome := outcomeOf(d.Status, d.Verdict)
 	score := "-"
 	if d.TotalScore > 0 {
@@ -334,9 +335,13 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 		if !run.IsSample {
 			points = strconv.Itoa(run.Score)
 		}
+		time, mem := formatMS(run.TimeMS, run.TimeMin), formatKB(run.MemKB, run.MemMin)
+		if !view.Perf {
+			time, mem = "", ""
+		}
 		rows = append(rows, runRow{
 			Ordinal: run.Ordinal, CaseName: run.CaseName, Verdict: run.Verdict,
-			Time: formatMS(run.TimeMS, run.TimeMin), Mem: formatKB(run.MemKB, run.MemMin),
+			Time: time, Mem: mem,
 			IsSample: run.IsSample, Points: points, Unpaid: unpaid,
 		})
 	}
@@ -352,7 +357,9 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,
 		Created: agoMS(d.CreatedAt), Judged: agoMS(d.JudgedAt),
 		Runs: rows, Detail: detail, Source: source,
-		Full: full, Waiting: judge.Status(d.Status).InFlight(),
+		View: view,
+		Partial:    !(view.Runs && view.Perf && view.Diff && view.Judge && view.Source),
+		Waiting:    judge.Status(d.Status).InFlight(),
 	})
 }
 

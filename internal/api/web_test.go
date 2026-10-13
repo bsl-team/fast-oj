@@ -436,7 +436,7 @@ func TestWebSubmitEndToEndThroughTheForm(t *testing.T) {
 	if !strings.Contains(anon, "badge AC") {
 		t.Error("verdict itself should stay public")
 	}
-	if !strings.Contains(anon, "只有本人或管理员可见") {
+	if !strings.Contains(anon, "只对本人、出题人和管理员可见") {
 		t.Error("anonymous page should explain the restriction")
 	}
 

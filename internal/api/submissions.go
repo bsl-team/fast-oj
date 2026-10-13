@@ -21,6 +21,59 @@ func languageAllowed(list []string, lang string) bool {
 	return false
 }
 
+// detailView is how much of the judging a particular reader gets to see on the
+// submission page. The problem's own 详情级别 sets the ceiling for everyone who is
+// neither the author nor the operator, so a contest can hide the failing case
+// without hiding the score.
+type detailView struct {
+	Source bool // the submitted code itself
+	Runs   bool // the per-case table
+	Perf   bool // per-case time and memory
+	Diff   bool // what the judge compared, and which case failed
+	Judge  bool // which box judged it
+}
+
+var seeEverything = detailView{Source: true, Runs: true, Perf: true, Diff: true, Judge: true}
+
+func submissionView(a actor, d store.SubmissionDetail) detailView {
+	own := a.User.ID != 0 && a.User.ID == d.UserID
+	if a.can(permSubmissionViewAny) || a.can(permProblemEditAny) ||
+		(d.ProblemOwner != 0 && a.User.ID == d.ProblemOwner) {
+		// Whoever owns the problem, or holds the audit right, needs the whole
+		// picture to act on it.
+		return seeEverything
+	}
+	// Somebody else's submission stays a summary: the per-case detail is the
+	// author's and the operator's business, never the public's.
+	if !own {
+		return detailView{}
+	}
+	// Your own code and score are yours whatever the level says; what the level
+	// grades is what the judging revealed about it.
+	view := gradeDetail(d.DetailLevel)
+	view.Source = true
+	return view
+}
+
+func gradeDetail(level string) detailView {
+	view := detailView{}
+	switch level {
+	case store.DetailCase:
+		view.Runs = true
+	case store.DetailDiff, store.DetailFull:
+		view.Runs, view.Perf, view.Diff = true, true, true
+		if level == store.DetailFull {
+			view.Judge = true
+		}
+	case store.DetailNone:
+	default:
+		// An unknown value falls back to the middle of the ladder rather than to
+		// showing everything.
+		view.Runs, view.Perf, view.Diff = true, true, true
+	}
+	return view
+}
+
 func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 	a, _ := s.authenticate(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -34,10 +87,10 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	full := a.can(permSubmissionViewAny) || (a.User.ID != 0 && a.User.ID == d.UserID)
+	view := submissionView(a, d)
 	var runs []store.Run
 	var source, detail string
-	if full {
+	if view.Runs || view.Source {
 		// Source and judge detail stay out of the joined list view; they are
 		// loaded only for the one row someone is allowed to read.
 		source, detail, err = s.db.SubmissionPayload(r.Context(), d.ID)
@@ -45,14 +98,22 @@ func (s *Server) handleSubmitGet(w http.ResponseWriter, r *http.Request) {
 			s.writeStoreError(w, r, err)
 			return
 		}
+		if !view.Source {
+			source = ""
+		}
+		if !view.Diff {
+			detail = ""
+		}
 		d.Source, d.Detail = source, detail
+	}
+	if view.Runs {
 		runs, err = s.db.ListRuns(r.Context(), d.ID)
 		if err != nil {
 			s.writeStoreError(w, r, err)
 			return
 		}
 	}
-	s.submissionPage(w, r, a, d, full, source, detail, runs)
+	s.submissionPage(w, r, a, d, view, source, detail, runs)
 }
 
 func ago(ms int64) string {

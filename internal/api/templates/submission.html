@@ -11,20 +11,26 @@
 
 <table>
   <tr>
-    <th>用时</th><th>内存</th><th>得分</th><th>失败用例</th><th>判机</th><th>提交于</th><th>判于</th>
+    <th>用时</th><th>内存</th><th>得分</th>
+    {{if .Data.View.Diff}}<th>失败用例</th>{{end}}
+    {{if .Data.View.Judge}}<th>判机</th>{{end}}
+    <th>提交于</th><th>判于</th>
   </tr>
   <tr>
     <td>{{.Data.Time}}</td><td>{{.Data.Mem}}</td><td>{{.Data.Score}}</td>
-    <td>{{.Data.Failed}}</td><td>{{.Data.JudgeName}}</td>
+    {{if .Data.View.Diff}}<td>{{.Data.Failed}}</td>{{end}}
+    {{if .Data.View.Judge}}<td>{{.Data.JudgeName}}</td>{{end}}
     <td>{{.Data.Created}}</td><td>{{.Data.Judged}}</td>
   </tr>
 </table>
 
-{{if .Data.Full}}
-  {{if .Data.Runs}}
+{{if and .Data.View.Runs .Data.Runs}}
   <h2>逐用例</h2>
   <table>
-    <tr><th class="num">#</th><th>类型</th><th>用例</th><th>结果</th><th class="num">得分</th><th class="num">用时</th><th class="num">内存</th></tr>
+    <tr>
+      <th class="num">#</th><th>类型</th><th>用例</th><th>结果</th><th class="num">得分</th>
+      {{if .Data.View.Perf}}<th class="num">用时</th><th class="num">内存</th>{{end}}
+    </tr>
     {{range .Data.Runs}}
     <tr>
       <td class="num">{{.Ordinal}}</td>
@@ -32,23 +38,27 @@
       <td>{{.CaseName}}</td>
       <td><span class="badge {{.Verdict}}">{{.Verdict}}</span></td>
       <td class="num">{{.Points}}{{if .Unpaid}} <span class="hidden">组未过</span>{{end}}</td>
-      <td class="num">{{.Time}}</td>
-      <td class="num">{{.Mem}}</td>
+      {{if $.Data.View.Perf}}<td class="num">{{.Time}}</td><td class="num">{{.Mem}}</td>{{end}}
     </tr>
     {{end}}
   </table>
-  {{end}}
+{{end}}
 
-  {{if .Data.Detail}}
+{{if and .Data.View.Diff .Data.Detail}}
   <h2>判机信息</h2>
   <pre>{{.Data.Detail}}</pre>
-  {{end}}
+{{end}}
 
+{{if .Data.View.Source}}
+  {{if .Data.Source}}
   <h2>源码</h2>
   <pre><code>{{.Data.Source}}</code></pre>
+  {{end}}
 {{else}}
-  <p class="meta">逐用例结果与源码只有本人或管理员可见。<a href="/login?next=/submissions/{{.Data.ID}}">登录</a></p>
+  <p class="meta">源码与判题明细只对本人、出题人和管理员可见。<a href="/login?next=/submissions/{{.Data.ID}}">登录</a></p>
 {{end}}
+
+{{if .Data.Partial}}<p class="meta">这道题设置了判题详情级别，更细的部分只对出题人与管理员开放。</p>{{end}}
 
 {{if .Data.Waiting}}<p class="meta">判题中 —— 本页会自动刷新，每判完一个用例就多出一行。</p>{{end}}
 {{if .Data.Waiting}}<meta http-equiv="refresh" content="2">{{end}}

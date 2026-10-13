@@ -11,13 +11,18 @@ type SubmissionDetail struct {
 	PID    string `json:"pid"`
 	Title  string `json:"title"`
 	Handle string `json:"handle"`
+	// DetailLevel and ProblemOwner come from the problem row: they decide how much
+	// of this submission's judging detail the reader is shown.
+	DetailLevel  string `json:"detail_level"`
+	ProblemOwner int64  `json:"problem_owner"`
 }
 
 const detailColumns = `s.id, s.user_id, s.problem_id, s.language, s.status, s.verdict,
 		s.time_ms, s.mem_kb, s.time_min, s.mem_min, s.score, s.total_score, s.failed_case,
 		IFNULL(s.judge_id, 0),
 		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0),
-		p.pid, p.title, u.handle`
+		p.pid, p.title, u.handle,
+		IFNULL(p.detail_level, 'diff'), IFNULL(p.owner_id, 0)`
 
 func scanDetail(row scanner) (SubmissionDetail, error) {
 	var (
@@ -27,7 +32,8 @@ func scanDetail(row scanner) (SubmissionDetail, error) {
 	)
 	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.Language, &d.Status, &d.Verdict,
 		&d.TimeMS, &d.MemKB, &timeMin, &memMin, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
-		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle)
+		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle,
+		&d.DetailLevel, &d.ProblemOwner)
 	d.JudgeID = judgeID
 	d.TimeMin, d.MemMin = timeMin != 0, memMin != 0
 	return d, notFound(err)
