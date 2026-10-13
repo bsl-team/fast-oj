@@ -29,6 +29,9 @@ type Problem struct {
 	MemLimitKB  int      `json:"mem_limit_kb"`
 	Languages   []string `json:"languages,omitempty"`
 	Visible     bool     `json:"visible"`
+	// DetailLevel is how much of the judging detail the submitter gets to see:
+	// none, case, diff or full. The author and the operator always see everything.
+	DetailLevel string `json:"detail_level"`
 	OwnerID     int64    `json:"owner_id"`
 	CreatedAt   int64    `json:"created_at"`
 	UpdatedAt   int64    `json:"updated_at"`
@@ -41,6 +44,9 @@ type Testcase struct {
 	Name      string `json:"name"`
 	IsSample  bool   `json:"is_sample"`
 	Score     int    `json:"score"`
+	// GroupName bundles cases: the whole group pays only when every case in it
+	// passes. Empty means the case pays on its own.
+	GroupName string `json:"group_name"`
 	InputRel  string `json:"input_rel"`
 	OutputRel string `json:"output_rel"`
 }
@@ -75,6 +81,9 @@ type Run struct {
 	Ordinal      int    `json:"ordinal"`
 	CaseName     string `json:"case_name"`
 	Verdict      string `json:"verdict"`
+	// Score is what this row actually earned, which is not the case weight when a
+	// bundle was broken by another case in the same group.
+	Score        int    `json:"score"`
 	TimeMS       int    `json:"time_ms"`
 	MemKB        int    `json:"mem_kb"`
 	IsSample     bool   `json:"is_sample"`

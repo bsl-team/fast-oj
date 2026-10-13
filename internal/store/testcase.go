@@ -6,14 +6,15 @@ import (
 	"strings"
 )
 
-const testcaseColumns = `id, problem_id, ordinal, name, is_sample, score, input_rel, output_rel`
+const testcaseColumns = `id, problem_id, ordinal, name, is_sample, score, group_name, input_rel, output_rel`
 
 func scanTestcase(row scanner) (Testcase, error) {
 	var (
 		tc     Testcase
 		sample int
 	)
-	err := row.Scan(&tc.ID, &tc.ProblemID, &tc.Ordinal, &tc.Name, &sample, &tc.Score, &tc.InputRel, &tc.OutputRel)
+	err := row.Scan(&tc.ID, &tc.ProblemID, &tc.Ordinal, &tc.Name, &sample, &tc.Score,
+		&tc.GroupName, &tc.InputRel, &tc.OutputRel)
 	tc.IsSample = sample != 0
 	return tc, notFound(err)
 }
@@ -30,9 +31,9 @@ func (db *DB) AddTestcase(ctx context.Context, tc *Testcase) (Testcase, error) {
 		tc.Ordinal = max + 1
 	}
 	res, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO testcases (problem_id, ordinal, name, is_sample, score, input_rel, output_rel)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		tc.ProblemID, tc.Ordinal, tc.Name, boolInt(tc.IsSample), tc.Score, tc.InputRel, tc.OutputRel)
+		`INSERT INTO testcases (problem_id, ordinal, name, is_sample, score, group_name, input_rel, output_rel)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		tc.ProblemID, tc.Ordinal, tc.Name, boolInt(tc.IsSample), tc.Score, tc.GroupName, tc.InputRel, tc.OutputRel)
 	if err != nil {
 		return Testcase{}, fmt.Errorf("%w: case %q", conflict(err, tc.Name), tc.Name)
 	}
@@ -86,8 +87,8 @@ func (db *DB) DeleteTestcases(ctx context.Context, problemID int64) (int64, erro
 // and only the label changes.
 func (db *DB) UpdateTestcase(ctx context.Context, tc *Testcase) (Testcase, error) {
 	res, err := db.SQL.ExecContext(ctx,
-		`UPDATE testcases SET name=?, ordinal=?, is_sample=?, score=?, input_rel=?, output_rel=? WHERE id=?`,
-		tc.Name, tc.Ordinal, boolInt(tc.IsSample), tc.Score, tc.InputRel, tc.OutputRel, tc.ID)
+		`UPDATE testcases SET name=?, ordinal=?, is_sample=?, score=?, group_name=?, input_rel=?, output_rel=? WHERE id=?`,
+		tc.Name, tc.Ordinal, boolInt(tc.IsSample), tc.Score, tc.GroupName, tc.InputRel, tc.OutputRel, tc.ID)
 	if err != nil {
 		return Testcase{}, conflict(err, tc.Name)
 	}
@@ -163,12 +164,12 @@ func (db *DB) CountTestcases(ctx context.Context, problemID int64, samplesOnly b
 // because an upsert branch leaves last_insert_rowid() untouched.
 func (db *DB) PutTestcase(ctx context.Context, tc *Testcase) (Testcase, error) {
 	_, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO testcases (problem_id, ordinal, name, is_sample, score, input_rel, output_rel)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO testcases (problem_id, ordinal, name, is_sample, score, group_name, input_rel, output_rel)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(problem_id, name) DO UPDATE SET
 			ordinal=excluded.ordinal, is_sample=excluded.is_sample, score=excluded.score,
-			input_rel=excluded.input_rel, output_rel=excluded.output_rel`,
-		tc.ProblemID, tc.Ordinal, tc.Name, boolInt(tc.IsSample), tc.Score, tc.InputRel, tc.OutputRel)
+			group_name=excluded.group_name, input_rel=excluded.input_rel, output_rel=excluded.output_rel`,
+		tc.ProblemID, tc.Ordinal, tc.Name, boolInt(tc.IsSample), tc.Score, tc.GroupName, tc.InputRel, tc.OutputRel)
 	if err != nil {
 		return Testcase{}, err
 	}

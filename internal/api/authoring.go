@@ -29,6 +29,7 @@ const (
 type problemForm struct {
 	PID     string
 	Title   string
+	Detail  string
 	MemMB   float64
 	TimeMS  int
 	Langs   []string
@@ -45,6 +46,7 @@ func (f problemForm) memKB() int { return int(f.MemMB*1024 + 0.5) }
 func parseProblemForm(r *http.Request) (problemForm, []string) {
 	f := problemForm{
 		PID:       strings.TrimSpace(r.FormValue("pid")),
+		Detail:    r.FormValue("detail"),
 		Title:     strings.TrimSpace(r.FormValue("title")),
 		Statement: r.FormValue("statement"),
 		Langs:     r.Form["languages"],
@@ -81,12 +83,18 @@ func parseProblemForm(r *http.Request) (problemForm, []string) {
 			errs = append(errs, "语言标签不合法："+l)
 		}
 	}
+	// A browser always posts the selector, so an empty value means the form came
+	// from somewhere else: fall back to the default rather than reject.
+	if f.Detail != "" && !store.ValidDetailLevel(f.Detail) {
+		errs = append(errs, "详情级别不认识："+f.Detail)
+	}
 	return f, errs
 }
 
 // apply writes the form onto a problem row.
 func (f problemForm) apply(p *store.Problem) {
 	p.PID, p.Title, p.Statement = f.PID, f.Title, f.Statement
+	p.DetailLevel = detailLevel(f.Detail)
 	p.TimeLimitMS, p.MemLimitKB, p.Visible = f.TimeMS, f.memKB(), f.Visible
 	p.Languages = f.Langs
 }
@@ -105,6 +113,9 @@ type editData struct {
 	// the only reason it is safe to hand to the template unescaped.
 	Preview              template.HTML
 	Visible, IsNew       bool
+	// Detail is the chosen 详情级别 and DetailOptions the selector next to it.
+	Detail               string
+	DetailOptions        []detailOption
 	Cases, Judged, Total int
 	Langs                []editRow
 	Errors               []string
@@ -121,7 +132,7 @@ func newEditData(p store.Problem, isNew bool) editData {
 		PID: p.PID, Title: p.Title, Statement: p.Statement,
 		TimeMS: p.TimeLimitMS, Visible: p.Visible, IsNew: isNew,
 		MemMB: memMBText(p.MemLimitKB),
-		Key:   p.PID,
+		Key:   p.PID, Detail: detailLevel(p.DetailLevel), DetailOptions: detailOptions,
 	}
 	if isNew {
 		// A brand new problem starts from the limits most OI problems use, so the
@@ -141,6 +152,36 @@ func newEditData(p store.Problem, isNew bool) editData {
 	return d
 }
 
+// detailOption is one choice in the 详情级别 selector.
+type detailOption struct {
+	Value, Label string
+	Current      bool
+}
+
+// detailLevels is the order the selector shows them in, least revealing first.
+var detailLevels = []struct{ value, label string }{
+	{store.DetailNone, "只给总判定（比赛进行中用这个）"},
+	{store.DetailCase, "给逐用例判定"},
+	{store.DetailDiff, "再给实测/期望差异（默认）"},
+	{store.DetailFull, "全给，包含判机侧细节"},
+}
+
+var detailOptions = func() []detailOption {
+	out := make([]detailOption, 0, len(detailLevels))
+	for _, l := range detailLevels {
+		out = append(out, detailOption{Value: l.value, Label: l.label})
+	}
+	return out
+}()
+
+// detailLevel keeps an unset value from rendering a blank option as selected.
+func detailLevel(level string) string {
+	if store.ValidDetailLevel(level) {
+		return level
+	}
+	return store.DetailDiff
+}
+
 // memMBText prints the stored kilobyte budget back as the megabytes the form
 // asked for, without the trailing ".000" that a fixed format would add.
 func memMBText(kb int) string {
@@ -152,6 +193,7 @@ func memMBText(kb int) string {
 // fillFromForm is what a rejected save does: keep exactly what was typed.
 func (d *editData) fillFromForm(f problemForm, errs []string) {
 	d.PID, d.Title, d.Statement = f.PID, f.Title, f.Statement
+	d.Detail = detailLevel(f.Detail)
 	d.TimeMS, d.Visible = f.TimeMS, f.Visible
 	d.MemMB = strings.TrimRight(strings.TrimRight(strconv.FormatFloat(f.MemMB, 'f', 3, 64), "0"), ".")
 	d.Errors = errs

@@ -51,7 +51,7 @@ func (db *DB) TransferProblemOwner(ctx context.Context, problemID, ownerID int64
 }
 
 const problemColumns = `id, pid, title, statement, time_limit_ms, mem_limit_kb, languages,
-		visible, IFNULL(owner_id, 0), created_at, updated_at`
+		visible, IFNULL(owner_id, 0), created_at, updated_at, IFNULL(detail_level, 'diff')`
 
 func scanProblem(row scanner) (Problem, error) {
 	var (
@@ -60,7 +60,7 @@ func scanProblem(row scanner) (Problem, error) {
 		visibleFlag int
 	)
 	err := row.Scan(&p.ID, &p.PID, &p.Title, &p.Statement, &p.TimeLimitMS, &p.MemLimitKB,
-		&langs, &visibleFlag, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt)
+		&langs, &visibleFlag, &p.OwnerID, &p.CreatedAt, &p.UpdatedAt, &p.DetailLevel)
 	p.Languages = splitList(langs)
 	p.Visible = visibleFlag != 0
 	return p, notFound(err)
@@ -70,11 +70,13 @@ func (db *DB) CreateProblem(ctx context.Context, p *Problem) (Problem, error) {
 	now := nowMS()
 	p.CreatedAt = now
 	p.UpdatedAt = now
+	p.DetailLevel = detailColumn(p.DetailLevel)
 	res, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO problems (pid, title, statement, time_limit_ms, mem_limit_kb, languages, visible, owner_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO problems (pid, title, statement, time_limit_ms, mem_limit_kb, languages, visible, owner_id, created_at, updated_at, detail_level)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.PID, p.Title, p.Statement, p.TimeLimitMS, p.MemLimitKB,
-		joinList(p.Languages), boolInt(p.Visible), nullInt64(p.OwnerID), p.CreatedAt, p.UpdatedAt)
+		joinList(p.Languages), boolInt(p.Visible), nullInt64(p.OwnerID), p.CreatedAt, p.UpdatedAt,
+		detailColumn(p.DetailLevel))
 	if err != nil {
 		return Problem{}, conflict(err, "pid "+p.PID)
 	}
@@ -85,10 +87,10 @@ func (db *DB) CreateProblem(ctx context.Context, p *Problem) (Problem, error) {
 func (db *DB) UpdateProblem(ctx context.Context, p Problem) (Problem, error) {
 	p.UpdatedAt = nowMS()
 	res, err := db.SQL.ExecContext(ctx,
-		`UPDATE problems SET pid=?, title=?, statement=?, time_limit_ms=?, mem_limit_kb=?, languages=?, visible=?, updated_at=?
+		`UPDATE problems SET pid=?, title=?, statement=?, time_limit_ms=?, mem_limit_kb=?, languages=?, visible=?, updated_at=?, detail_level=?
 		 WHERE id=?`,
 		p.PID, p.Title, p.Statement, p.TimeLimitMS, p.MemLimitKB,
-		joinList(p.Languages), boolInt(p.Visible), p.UpdatedAt, p.ID)
+		joinList(p.Languages), boolInt(p.Visible), p.UpdatedAt, detailColumn(p.DetailLevel), p.ID)
 	if err != nil {
 		return Problem{}, conflict(err, "pid "+p.PID)
 	}
@@ -202,4 +204,34 @@ func (db *DB) DeleteProblem(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Detail levels. They are stored as text so the console can show them without a
+// join, and an unknown value falls back to the middle of the range.
+const (
+	DetailNone  = "none"
+	DetailCase  = "case"
+	DetailDiff  = "diff"
+	DetailFull  = "full"
+	DetailMax   = DetailFull
+	defaultDetail = DetailDiff
+)
+
+// detailColumn keeps a zero value from writing an empty string into a column with
+// a CHECK constraint.
+func detailColumn(level string) string {
+	switch level {
+	case DetailNone, DetailCase, DetailDiff, DetailFull:
+		return level
+	}
+	return defaultDetail
+}
+
+// ValidDetailLevel is what the authoring form validates against.
+func ValidDetailLevel(level string) bool {
+	switch level {
+	case DetailNone, DetailCase, DetailDiff, DetailFull:
+		return true
+	}
+	return false
 }

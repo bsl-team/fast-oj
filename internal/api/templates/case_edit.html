@@ -11,6 +11,10 @@
       <input type="text" name="name" value="{{.Data.Edit.Name}}" maxlength="64" required autocomplete="off" spellcheck="false">
     </div>
     <div>
+      <label>组名（可空）</label>
+      <input type="text" name="group" value="{{.Data.Edit.Group}}" maxlength="40" autocomplete="off" spellcheck="false">
+    </div>
+    <div>
       <label>分值</label>
       <input type="number" name="score" value="{{if .Data.Edit.IsSample}}0{{else}}{{.Data.Edit.Score}}{{end}}" min="0" max="10000" step="1" required>
     </div>

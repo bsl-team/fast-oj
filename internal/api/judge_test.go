@@ -259,9 +259,43 @@ func TestTallyResultMath(t *testing.T) {
 		t.Fatalf("ghost row: %v %q", v, failed)
 	}
 
-	// Sample rows never add points.
-	v, _, score, _, _ = tallyResult("AC", []protocol.RunRow{{CaseName: "sample1", Verdict: "AC"}}, cases)
-	if v != "AC" || score != 0 {
-		t.Fatalf("sample only: %v %d", v, score)
+	// Sample rows never add points, and reporting only them has not judged the
+	// scored cases: that cannot be certified AC.
+	v, _, score, total, failed = tallyResult("AC", []protocol.RunRow{{CaseName: "sample1", Verdict: "AC"}}, cases)
+	if v != "WA" || score != 0 || total != 100 || failed != "1" {
+		t.Fatalf("skipped judged cases: %v %d %d %q", v, score, total, failed)
+	}
+
+	// A bundle pays only when every case in it passes, so the AC row of a broken
+	// group earns nothing even though the row itself passed.
+	grouped := []store.Testcase{
+		{Name: "sub1", Score: 30, GroupName: "sub"},
+		{Name: "sub2", Score: 70, GroupName: "sub"},
+		{Name: "solo", Score: 5},
+	}
+	v, runs, score, total, failed = tallyResult("AC", []protocol.RunRow{
+		{CaseName: "sub1", Verdict: "AC"}, {CaseName: "sub2", Verdict: "TLE"}, {CaseName: "solo", Verdict: "AC"},
+	}, grouped)
+	if v != "TLE" || score != 5 || total != 105 || failed != "sub2" {
+		t.Fatalf("broken bundle: %v %d %d %q", v, score, total, failed)
+	}
+	if len(runs) != 3 || runs[0].Score != 0 || runs[2].Score != 5 {
+		t.Fatalf("per-row points = %+v", runs)
+	}
+
+	// The same group, fully passed, pays the sum of its cases.
+	v, _, score, _, failed = tallyResult("AC", []protocol.RunRow{
+		{CaseName: "sub1", Verdict: "AC"}, {CaseName: "sub2", Verdict: "AC"}, {CaseName: "solo", Verdict: "AC"},
+	}, grouped)
+	if v != "AC" || score != 105 || failed != "" {
+		t.Fatalf("intact bundle: %v %d %q", v, score, failed)
+	}
+
+	// A group whose hard case was never reported is not passed either.
+	v, _, score, _, failed = tallyResult("AC", []protocol.RunRow{
+		{CaseName: "sub1", Verdict: "AC"}, {CaseName: "solo", Verdict: "AC"},
+	}, grouped)
+	if v != "WA" || score != 5 || failed != "sub2" {
+		t.Fatalf("unreported bundle case: %v %d %q", v, score, failed)
 	}
 }

@@ -30,6 +30,14 @@
   <label>标题</label>
   <input type="text" name="title" value="{{.Data.Title}}" maxlength="200" required>
 
+  <label>判题详情透露级别（出题人和运维始终看得到全部）</label>
+  <select name="detail">
+    {{$cur := .Data.Detail}}
+    {{range .Data.DetailOptions}}
+    <option value="{{.Value}}" {{if eq .Value $cur}}selected{{end}}>{{.Label}}</option>
+    {{end}}
+  </select>
+
   <label>允许的语言（一个都不勾 = 不限）</label>
   <p class="row">
     {{range .Data.Langs}}

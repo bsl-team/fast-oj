@@ -6,7 +6,7 @@
 
 <table>
   <tr>
-    <th class="num">#</th><th>名称</th><th>类型</th>
+    <th class="num">#</th><th>名称</th><th>类型</th><th>组</th>
     <th class="num">分值</th><th class="num">输入</th><th class="num">输出</th><th></th>
   </tr>
   {{range .Data.Rows}}
@@ -14,13 +14,14 @@
     <td class="num">{{.Ordinal}}</td>
     <td>{{.Name}}</td>
     <td>{{.Kind}}{{if .Missing}} <span class="hidden">文件缺失</span>{{end}}</td>
+    <td>{{if .Group}}<code>{{.Group}}</code>{{else}}—{{end}}</td>
     <td class="num">{{if eq .Kind "样例"}}—{{else}}{{.Score}}{{end}}</td>
     <td class="num">{{.InSize}}</td>
     <td class="num">{{.OutSize}}</td>
     <td><a href="/problems/{{$.Data.PID}}/cases/{{.ID}}/edit">编辑</a></td>
   </tr>
   {{else}}
-  <tr><td colspan="7">还没有用例，现在提交只会得到「无数据」。</td></tr>
+  <tr><td colspan="8">还没有用例，现在提交只会得到「无数据」。</td></tr>
   {{end}}
 </table>
 
@@ -37,6 +38,10 @@
       <input type="number" name="score" value="1" min="0" max="10000" step="1" required>
     </div>
     <label class="check"><input type="checkbox" name="sample" value="1">算样例</label>
+    <div>
+      <label>组名（可空，同名即同组，组内全过才给分）</label>
+      <input type="text" name="group" maxlength="40" autocomplete="off" spellcheck="false" placeholder="sub1">
+    </div>
   </div>
   <label>输入</label>
   <textarea name="input" spellcheck="false" autocomplete="off" required></textarea>
@@ -56,6 +61,17 @@
     <input type="submit" value="导入">
   </div>
 </form>
+
+{{if .Data.Groups}}
+<h2>捆绑</h2>
+<p class="meta">一组用例要全过才给分：组里任何一条没过（或判机没跑完这一组），整组一分不得。</p>
+<table>
+  <tr><th>组名</th><th class="num">条数</th><th class="num">全过得</th></tr>
+  {{range .Data.Groups}}
+  <tr><td><code>{{.Name}}</code></td><td class="num">{{.Cases}}</td><td class="num">{{.Points}}</td></tr>
+  {{end}}
+</table>
+{{end}}
 
 {{if .Data.Rows}}
 <form method="post" action="/problems/{{.Data.PID}}/cases/wipe"

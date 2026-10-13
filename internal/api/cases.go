@@ -21,6 +21,7 @@ type caseRow struct {
 	Ordinal         int
 	Name            string
 	Kind            string
+	Group           string
 	Score           int
 	InSize, OutSize string
 	Missing         bool
@@ -29,14 +30,24 @@ type caseRow struct {
 type casesData struct {
 	PID, Title string
 	Rows       []caseRow
+	Groups     []groupRow
 	Judged     int
 	Total      int
+}
+
+// groupRow summarises one bundle: how many cases it holds and what the group is
+// worth when all of them pass.
+type groupRow struct {
+	Name   string
+	Cases  int
+	Points int
 }
 
 // caseEdit is one case opened for editing.
 type caseEdit struct {
 	ID              int64
 	Name            string
+	Group           string
 	Score           int
 	IsSample        bool
 	Input, Output   string
@@ -61,7 +72,7 @@ func (s *Server) loadCases(r *http.Request, p store.Problem) ([]store.Testcase, 
 			kind = "样例"
 		}
 		rows = append(rows, caseRow{
-			ID: tc.ID, Ordinal: tc.Ordinal, Name: tc.Name, Score: tc.Score,
+			ID: tc.ID, Ordinal: tc.Ordinal, Name: tc.Name, Score: tc.Score, Group: tc.GroupName,
 			Kind:    kind,
 			InSize:  formatBytes(in, errIn),
 			OutSize: formatBytes(out, errOut),
@@ -100,19 +111,35 @@ func (s *Server) handleCasesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	judged := 0
+	// Groups keep the order their cases are declared in, so the summary does not
+	// reshuffle between two visits to the same page.
+	var groups []groupRow
+	index := map[string]int{}
 	for _, tc := range cases {
-		if !tc.IsSample {
-			judged++
+		if tc.IsSample {
+			continue
 		}
+		judged++
+		if tc.GroupName == "" {
+			continue
+		}
+		at, seen := index[tc.GroupName]
+		if !seen {
+			at = len(groups)
+			index[tc.GroupName] = at
+			groups = append(groups, groupRow{Name: tc.GroupName})
+		}
+		groups[at].Cases++
+		groups[at].Points += tc.Score
 	}
 	s.page(w, r, http.StatusOK, "用例 "+p.PID, "problem_cases", a.viewer(), msgOf(r), casesData{
-		PID: p.PID, Title: p.Title, Rows: rows, Judged: judged, Total: total,
+		PID: p.PID, Title: p.Title, Rows: rows, Groups: groups, Judged: judged, Total: total,
 	})
 }
 
 // caseForm is one case as the editor posts it.
 type caseForm struct {
-	Name          string
+	Name, Group   string
 	Score         int
 	IsSample      bool
 	Input, Output string
@@ -124,6 +151,7 @@ type caseForm struct {
 func parseCaseForm(r *http.Request) (caseForm, string) {
 	f := caseForm{
 		Name:     strings.TrimSpace(r.FormValue("name")),
+		Group:    strings.TrimSpace(r.FormValue("group")),
 		IsSample: r.FormValue("sample") == "1",
 	}
 	if score, err := strconv.Atoi(strings.TrimSpace(r.FormValue("score"))); err != nil {
@@ -142,6 +170,9 @@ func parseCaseForm(r *http.Request) (caseForm, string) {
 	_, hasIn := r.Form["input"]
 	_, hasOut := r.Form["output"]
 	f.HasContent = hasIn || hasOut
+	if len(f.Group) > 40 || strings.ContainsAny(f.Group, "/\\") {
+		return f, "组名最多 40 个字符，不能含斜杠"
+	}
 	if len(f.Input) > maxInlineCase || len(f.Output) > maxInlineCase {
 		return f, "这一条太大，网页里改不了；用 zip 导入同名覆盖"
 	}
@@ -188,7 +219,7 @@ func (s *Server) handleCaseCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.db.AddTestcase(r.Context(), &store.Testcase{
 		ProblemID: p.ID, Ordinal: ordinal, Name: f.Name, IsSample: f.IsSample,
-		Score: f.Score, InputRel: relIn, OutputRel: relOut,
+		Score: f.Score, GroupName: f.Group, InputRel: relIn, OutputRel: relOut,
 	}); err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -235,7 +266,7 @@ func (s *Server) handleCaseEditPage(w http.ResponseWriter, r *http.Request) {
 	in, errIn := s.cases.Read(tc.InputRel)
 	out, errOut := s.cases.Read(tc.OutputRel)
 	edit := caseEdit{
-		ID: tc.ID, Name: tc.Name, Score: tc.Score, IsSample: tc.IsSample, Ordinal: tc.Ordinal,
+		ID: tc.ID, Name: tc.Name, Group: tc.GroupName, Score: tc.Score, IsSample: tc.IsSample, Ordinal: tc.Ordinal,
 		InSize:  formatBytes(int64(len(in)), errIn),
 		OutSize: formatBytes(int64(len(out)), errOut),
 		Inline:  errIn == nil && errOut == nil && len(in) <= maxInlineCase && len(out) <= maxInlineCase,
@@ -259,7 +290,7 @@ func (s *Server) handleCaseSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next := tc
-	next.Name, next.Score, next.IsSample = f.Name, f.Score, f.IsSample
+	next.Name, next.Score, next.IsSample, next.GroupName = f.Name, f.Score, f.IsSample, f.Group
 	if f.HasContent {
 		relIn, relOut, err := s.cases.Put(p.ID, tc.Ordinal, []byte(f.Input), []byte(f.Output))
 		if err != nil {

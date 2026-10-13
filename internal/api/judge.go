@@ -264,19 +264,66 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 // tallyResult treats the judge as untrusted arithmetic: the score is recomputed
 // from the per-case rows against the stored case weights, and an AC claim whose
 // rows contain a failure is downgraded to that failure.
+//
+// Bundling is applied here rather than in the judge: a group pays only when every
+// case declared in it came back AC, so a box that skips the hard case of a group
+// earns nothing from the easy ones. Each row also records what it actually earned,
+// which is how the page can say "这条过了，但这组没给分".
 func tallyResult(claimed judge.Verdict, reqRuns []protocol.RunRow, cases []store.Testcase) (judge.Verdict, []store.Run, int, int, string) {
 	byName := make(map[string]store.Testcase, len(cases))
+	// judgedByName holds only the scored cases, in the order they were declared.
+	var judged []store.Testcase
+	groupMembers := map[string][]string{}
 	total := 0
 	for _, tc := range cases {
 		byName[tc.Name] = tc
-		if !tc.IsSample {
-			total += tc.Score
+		if tc.IsSample {
+			continue
 		}
+		judged = append(judged, tc)
+		total += tc.Score
+		if tc.GroupName != "" {
+			groupMembers[tc.GroupName] = append(groupMembers[tc.GroupName], tc.Name)
+		}
+	}
+
+	ac := make(map[string]bool, len(reqRuns))
+	clean := make(map[string]bool, len(reqRuns))
+	for _, rr := range reqRuns {
+		if _, known := byName[rr.CaseName]; !known {
+			continue
+		}
+		clean[rr.CaseName] = true
+		if judge.VerdictName(rr.Verdict) == judge.AC {
+			ac[rr.CaseName] = true
+		}
+	}
+	// A group pays only when all of its cases were reported *and* all of them are
+	// AC; a missing row is a failure, not a pass.
+	groupOK := make(map[string]bool, len(groupMembers))
+	for name, members := range groupMembers {
+		groupOK[name] = true
+		for _, m := range members {
+			if !ac[m] {
+				groupOK[name] = false
+				break
+			}
+		}
+	}
+
+	// earned is the points a case contributes given the bundle rules.
+	earned := func(tc store.Testcase) int {
+		if !ac[tc.Name] {
+			return 0
+		}
+		if tc.GroupName != "" && !groupOK[tc.GroupName] {
+			return 0
+		}
+		return tc.Score
 	}
 
 	verdict := claimed
 	score := 0
-	failed := ""
 	runs := make([]store.Run, 0, len(reqRuns))
 	for i, rr := range reqRuns {
 		v := judge.VerdictName(rr.Verdict)
@@ -289,25 +336,60 @@ func tallyResult(claimed judge.Verdict, reqRuns []protocol.RunRow, cases []store
 		if ordinal == 0 {
 			ordinal = i + 1
 		}
-
-		switch {
-		case known && !sample && v == judge.AC:
-			score += tc.Score
-		case known && !sample && failed == "":
-			failed = tc.Name
-			if claimed == judge.AC {
-				verdict = v
-			}
-		case !known && v != judge.AC && claimed == judge.AC && failed == "":
-			// A row for a case that vanished cannot certify AC either.
-			verdict = v
-			failed = rr.CaseName
+		points := 0
+		if known && !sample {
+			points = earned(tc)
+			score += points
 		}
 		runs = append(runs, store.Run{
-			Ordinal: ordinal, CaseName: rr.CaseName, Verdict: string(v),
+			Ordinal: ordinal, CaseName: rr.CaseName, Verdict: string(v), Score: points,
 			TimeMS: rr.TimeMS, MemKB: rr.MemKB, IsSample: sample,
 			TimeMin: rr.TimeMin, MemMin: rr.MemMin,
 		})
+	}
+
+	// The first judged case that did not pass is the one worth naming, whatever the
+	// box claimed: a sample mismatch alone does not become the reported case, and
+	// the passing rows of a broken bundle are guilty of nothing but being in it.
+	failed := ""
+	for _, rr := range reqRuns {
+		v := judge.VerdictName(rr.Verdict)
+		if v == judge.AC {
+			continue
+		}
+		if claimed == judge.AC && verdict == judge.AC {
+			verdict = v
+		}
+		tc, known := byName[rr.CaseName]
+		switch {
+		case known && !tc.IsSample:
+			failed = tc.Name
+		case !known && failed == "" && claimed == judge.AC:
+			// A row for a case that is gone cannot certify AC either, though a
+			// judged row further down would be the better name.
+			failed = rr.CaseName
+		}
+		if failed != "" {
+			break
+		}
+	}
+	if claimed == judge.AC && failed == "" && score != total {
+		// Every reported row passed, so the gap is a skipped case or a bundle
+		// broken by a case that was never reported.
+		for _, tc := range judged {
+			if !clean[tc.Name] {
+				verdict, failed = judge.WA, tc.Name
+				break
+			}
+		}
+		if failed == "" {
+			for _, tc := range judged {
+				if earned(tc) != tc.Score {
+					verdict, failed = judge.WA, tc.Name
+					break
+				}
+			}
+		}
 	}
 	// CE/IE fail the whole run without a judged case being implicated, so fall
 	// back to the first row that did not pass.

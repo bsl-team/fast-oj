@@ -204,6 +204,56 @@ func TestCaseEditorRefusesHugeFiles(t *testing.T) {
 	}
 }
 
+func TestCaseGroupsAreEditableFromTheWeb(t *testing.T) {
+	h := newHarness(t)
+	setter := h.caseProblem("grouper", "P703")
+	for _, c := range []struct {
+		name, group, score string
+	}{
+		{"sub1", "sub", "30"}, {"sub2", "sub", "70"}, {"solo", "", "5"},
+	} {
+		if code, body := h.postAs(setter, "/problems/P703/cases", url.Values{
+			"name": {c.name}, "group": {c.group}, "score": {c.score},
+			"input": {"1\n"}, "output": {"1\n"},
+		}); code != http.StatusOK {
+			t.Fatalf("add %s = %d %s", c.name, code, short(body))
+		}
+	}
+	_, page := h.getAs(setter, "/problems/P703/cases")
+	for _, want := range []string{"捆绑", "sub", "100"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("case page missing %q:\n%s", want, short(page))
+		}
+	}
+	// The summary names the bundle once and totals its points, so an author can
+	// see what a group is worth before a submission finds out the hard way.
+	if !strings.Contains(page, "<td class=\"num\">2</td>") || !strings.Contains(page, "<td class=\"num\">100</td>") {
+		t.Errorf("bundle summary wrong:\n%s", short(page))
+	}
+	p := h.problem("P703")
+	if tc, err := h.db.GetTestcase(ctx(), p.ID, "sub2"); err != nil || tc.GroupName != "sub" || tc.Score != 70 {
+		t.Fatalf("stored group case = %+v %v", tc, err)
+	}
+
+	// A group name with a slash would be a path, not a label.
+	if _, body := h.postAs(setter, "/problems/P703/cases", url.Values{
+		"name": {"bad"}, "group": {"a/b"}, "score": {"1"}, "input": {"1\n"}, "output": {"1\n"},
+	}); !strings.Contains(body, "组名") {
+		t.Errorf("a path-shaped group was accepted:\n%s", short(body))
+	}
+
+	// And the detail level travels with the problem form.
+	if code, body := h.postAs(setter, "/problems/"+p.PID, url.Values{
+		"pid": {"P703"}, "title": {"用例分组"}, "time_ms": {"1000"}, "mem_mb": {"256"},
+		"detail": {"none"}, "visible": {"1"},
+	}); code != http.StatusOK {
+		t.Fatalf("save detail level = %d %s", code, short(body))
+	}
+	if after := h.problem("P703"); after.DetailLevel != "none" {
+		t.Fatalf("detail level = %q, want none", after.DetailLevel)
+	}
+}
+
 func TestCasePageNeedsCaseRights(t *testing.T) {
 	h := newHarness(t)
 	author := h.caseProblem("caseowner", "P702")

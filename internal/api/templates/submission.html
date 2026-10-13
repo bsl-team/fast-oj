@@ -24,13 +24,14 @@
   {{if .Data.Runs}}
   <h2>逐用例</h2>
   <table>
-    <tr><th class="num">#</th><th>类型</th><th>用例</th><th>结果</th><th class="num">用时</th><th class="num">内存</th></tr>
+    <tr><th class="num">#</th><th>类型</th><th>用例</th><th>结果</th><th class="num">得分</th><th class="num">用时</th><th class="num">内存</th></tr>
     {{range .Data.Runs}}
     <tr>
       <td class="num">{{.Ordinal}}</td>
       <td>{{if .IsSample}}样例{{else}}判题{{end}}</td>
       <td>{{.CaseName}}</td>
       <td><span class="badge {{.Verdict}}">{{.Verdict}}</span></td>
+      <td class="num">{{.Points}}{{if .Unpaid}} <span class="hidden">组未过</span>{{end}}</td>
       <td class="num">{{.Time}}</td>
       <td class="num">{{.Mem}}</td>
     </tr>

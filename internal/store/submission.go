@@ -153,15 +153,15 @@ func (db *DB) RecordResult(ctx context.Context, id int64, r Result, runs []Run) 
 // result) lands on the same row instead of duplicating it.
 func writeRun(ctx context.Context, tx *sql.Tx, run Run) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO runs (submission_id, ordinal, case_name, verdict, time_ms, mem_kb, is_sample,
+		`INSERT INTO runs (submission_id, ordinal, case_name, verdict, score, time_ms, mem_kb, is_sample,
 		                   time_min, mem_min)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(submission_id, ordinal) DO UPDATE SET
-			case_name=excluded.case_name, verdict=excluded.verdict, time_ms=excluded.time_ms,
-			mem_kb=excluded.mem_kb, is_sample=excluded.is_sample,
+			case_name=excluded.case_name, verdict=excluded.verdict, score=excluded.score,
+			time_ms=excluded.time_ms, mem_kb=excluded.mem_kb, is_sample=excluded.is_sample,
 			time_min=excluded.time_min, mem_min=excluded.mem_min`,
-		run.SubmissionID, run.Ordinal, run.CaseName, run.Verdict, run.TimeMS, run.MemKB, boolInt(run.IsSample),
-		boolInt(run.TimeMin), boolInt(run.MemMin))
+		run.SubmissionID, run.Ordinal, run.CaseName, run.Verdict, run.Score, run.TimeMS, run.MemKB,
+		boolInt(run.IsSample), boolInt(run.TimeMin), boolInt(run.MemMin))
 	return err
 }
 
@@ -177,7 +177,7 @@ func (db *DB) AddRun(ctx context.Context, run Run) (Run, error) {
 
 func (db *DB) ListRuns(ctx context.Context, submissionID int64) ([]Run, error) {
 	rows, err := db.SQL.QueryContext(ctx,
-		`SELECT id, submission_id, ordinal, case_name, verdict, time_ms, mem_kb, is_sample, time_min, mem_min
+		`SELECT id, submission_id, ordinal, case_name, verdict, score, time_ms, mem_kb, is_sample, time_min, mem_min
 		 FROM runs WHERE submission_id=? ORDER BY ordinal`, submissionID)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (db *DB) ListRuns(ctx context.Context, submissionID int64) ([]Run, error) {
 			sample, timeMin, memMin int
 		)
 		if err := rows.Scan(&r.ID, &r.SubmissionID, &r.Ordinal, &r.CaseName, &r.Verdict,
-			&r.TimeMS, &r.MemKB, &sample, &timeMin, &memMin); err != nil {
+			&r.Score, &r.TimeMS, &r.MemKB, &sample, &timeMin, &memMin); err != nil {
 			return nil, err
 		}
 		r.IsSample = sample != 0

@@ -284,6 +284,10 @@ type runRow struct {
 	Time     string
 	Mem      string
 	IsSample bool
+	// Points is what this row earned, and Unpaid marks the case that passed while
+	// its bundle did not: those two need not be the same story.
+	Points string
+	Unpaid bool
 }
 
 type submissionData struct {
@@ -325,9 +329,15 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 
 	rows := make([]runRow, 0, len(runs))
 	for _, run := range runs {
+		unpaid := !run.IsSample && run.Verdict == "AC" && run.Score == 0
+		points := "—"
+		if !run.IsSample {
+			points = strconv.Itoa(run.Score)
+		}
 		rows = append(rows, runRow{
 			Ordinal: run.Ordinal, CaseName: run.CaseName, Verdict: run.Verdict,
-			Time: formatMS(run.TimeMS, run.TimeMin), Mem: formatKB(run.MemKB, run.MemMin), IsSample: run.IsSample,
+			Time: formatMS(run.TimeMS, run.TimeMin), Mem: formatKB(run.MemKB, run.MemMin),
+			IsSample: run.IsSample, Points: points, Unpaid: unpaid,
 		})
 	}
 	judgeName := "-"
