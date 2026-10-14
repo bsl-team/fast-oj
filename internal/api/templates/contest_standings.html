@@ -33,11 +33,7 @@
     <td class="num">{{.Rank}}</td>
     <td>{{.Name}}</td>
     {{if $.Data.TeamMode}}<td>{{.Members}}</td>{{end}}
-    {{if eq $.Data.Mode "ACM"}}
-    <td class="num">{{.Solved}}</td>
-    {{else}}
-    <td class="num">{{.Score}}</td>
-    {{end}}
+    <td class="num"><span class="score {{.ScoreClass}}">{{.Score}}</span></td>
     <td class="num">{{.Time}}</td>
     {{range .Cells}}
     <td class="num">

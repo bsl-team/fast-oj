@@ -981,11 +981,13 @@ type standingRowView struct {
 	Rank    int
 	Name    string
 	Members string
-	Solved  int
 	Score   string
-	Time    string
-	Cells   []standingCellView
-	Me      bool
+	// ScoreClass colours the total the same way the cells are coloured: OI 按得分
+	// 百分比，ACM 按解题数占题数比例。
+	ScoreClass string
+	Time       string
+	Cells      []standingCellView
+	Me         bool
 }
 
 type standingsData struct {
@@ -1072,15 +1074,21 @@ func (s *Server) handleContestStandings(w http.ResponseWriter, r *http.Request) 
 		}
 		view := standingRowView{
 			Rank: row.Rank, Name: row.Name, Members: strings.Join(row.Handles, "、"),
-			Solved: row.Solved, Me: me,
+			Me: me,
+		}
+		// 总分那一列也是分数，所以走同一把色阶：满分绿、零分红。
+		total, full := row.Score, 0
+		for _, cell := range row.Cells {
+			full += cell.Max
 		}
 		if c.Mode == store.ContestACM {
-			view.Score = "-"
-			view.Time = formatClock(row.TimeMS)
+			total, full = row.Solved, len(row.Cells)
+			view.Score = strconv.Itoa(row.Solved)
 		} else {
 			view.Score = strconv.Itoa(row.Score)
-			view.Time = formatClock(row.TimeMS)
 		}
+		view.ScoreClass = scoreClass(total, full)
+		view.Time = formatClock(row.TimeMS)
 		for _, cell := range row.Cells {
 			view.Cells = append(view.Cells, cellView(c.Mode, cell))
 		}
