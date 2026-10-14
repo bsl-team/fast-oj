@@ -11,7 +11,8 @@
 <p class="meta">
   <a href="{{.Data.Back}}">回比赛主页</a>
   {{if .Data.BoardOpen}}· 榜单公示{{else}}· <span class="warn">封榜中</span>{{end}}
-  {{if .Data.CanManage}}{{if .Data.Sealed}}（你是 host，看到的是完整榜单）{{end}}{{end}}
+  {{if not .Data.Live}}· <span class="warn">OI 比赛中不出榜</span>{{end}}
+  {{if .Data.CanManage}}{{if or .Data.Sealed (not .Data.Live)}}（你是主办方，看到的是完整榜单）{{end}}{{end}}
   · {{.Data.PenaltyText}}
 </p>
 
@@ -24,8 +25,8 @@
   <tr>
     <th class="num">#</th><th>{{if .Data.TeamMode}}队伍{{else}}选手{{end}}</th>
     {{if .Data.TeamMode}}<th>成员</th>{{end}}
-    {{if eq .Data.Mode "ACM"}}<th class="num">解题</th>{{else}}<th class="num">得分</th>{{end}}
-    <th class="num">{{if eq .Data.Mode "ACM"}}罚时{{else}}用时{{end}}</th>
+    <th class="num">{{if eq .Data.Mode "ACM"}}解题{{else}}得分{{end}}</th>
+    {{if .Data.ShowsClock}}<th class="num">{{if eq .Data.Mode "ACM"}}罚时{{else}}用时{{end}}</th>{{end}}
     {{range .Data.Columns}}<th class="num">{{.}}</th>{{end}}
   </tr>
   {{range .Data.Rows}}
@@ -34,7 +35,7 @@
     <td>{{.Name}}</td>
     {{if $.Data.TeamMode}}<td>{{.Members}}</td>{{end}}
     <td class="num"><span class="score {{.ScoreClass}}">{{.Score}}</span></td>
-    <td class="num">{{.Time}}</td>
+    {{if $.Data.ShowsClock}}<td class="num">{{.Time}}</td>{{end}}
     {{range .Cells}}
     <td class="num">
       {{if .Seen}}
@@ -50,8 +51,10 @@
 <p class="meta">
   {{if eq .Data.Mode "ACM"}}
   比解题数，同数再比「首过时刻 + 罚时」；编译错误与判机故障不罚时，判机故障也不算尝试。
-  {{else}}
+  {{else if eq .Data.Mode "IOI"}}
   每题取最高分（不是最后一次），同分再比总用时；带捆绑的用例组要整组过才给分。
+  {{else}}
+  OI 赛制：同一题取<b>最后一次</b>提交，总分高者优先，<b>同分同名次</b>；不比用时，也不显示尝试次数。
   {{end}}
 </p>
 {{else if .Data.WhyNot}}

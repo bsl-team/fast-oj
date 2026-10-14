@@ -173,10 +173,8 @@ func parseContestForm(r *http.Request) (contestForm, []string) {
 	if f.Title == "" || tooLong(f.Title, maxContestTitleRunes) {
 		errs = append(errs, fmt.Sprintf("标题要 1..%d 个字符", maxContestTitleRunes))
 	}
-	switch f.Mode {
-	case "", store.ContestOI, store.ContestACM:
-	default:
-		errs = append(errs, "计分模式只认 oi 或 acm")
+	if f.Mode != "" && !store.ValidContestMode(f.Mode) {
+		errs = append(errs, "计分模式只认 oi、ioi 或 acm")
 	}
 	if f.JoinCode != "" && !validJoinCode(f.JoinCode) {
 		errs = append(errs, "加入码只能是字母、数字和连字符，最长 32 位")
@@ -259,7 +257,8 @@ func (d *contestData) fillFromForm(f contestForm, errs []string) {
 }
 
 var contestModeOptions = []detailOption{
-	{Value: store.ContestOI, Label: "OI 赛制：每题取最高分，同分比总用时"},
+	{Value: store.ContestOI, Label: "OI 赛制（CSP/NOIP/NOI）：取最后一次提交，同分同名次，比赛中不出榜"},
+	{Value: store.ContestIOI, Label: "IOI 赛制：每题取最高分，同分比总用时"},
 	{Value: store.ContestACM, Label: "ACM 赛制：比解题数，再比首过时间加罚时"},
 }
 
@@ -383,10 +382,26 @@ type contestListRow struct {
 }
 
 func contestModeLabel(mode string) string {
-	if mode == store.ContestACM {
+	switch mode {
+	case store.ContestIOI:
+		return "IOI"
+	case store.ContestACM:
 		return "ACM"
 	}
 	return "OI"
+}
+
+// penaltyNote is honest about the one mode that actually uses the penalty setting:
+// an OI or IOI board has no penalty to speak of, so printing a number there would
+// describe a rule the scoreboard ignores.
+func penaltyNote(c store.Contest) string {
+	if c.Mode != store.ContestACM {
+		return "本赛制不比罚时"
+	}
+	if c.PenaltyMS == 0 {
+		return "不设罚时"
+	}
+	return "每次未过尝试罚 " + strconv.FormatInt(c.PenaltyMS/60000, 10) + " 分钟"
 }
 
 func (s *Server) handleContestNew(w http.ResponseWriter, r *http.Request) {
@@ -693,6 +708,9 @@ type contestHomeData struct {
 	TeamSize     int
 	PenaltyText  string
 	BoardOpen    bool
+	// BoardPending is the OI case: the board exists but nobody but the host may see
+	// it until the clock stops.
+	BoardPending bool
 	Private      bool
 	Problems     []contestProblemRow
 	Teams        []contestTeamRow
@@ -734,8 +752,9 @@ func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
 		Mode:         contestModeLabel(c.Mode),
 		Window:       formatContestClock(c.StartAt) + " —— " + formatContestClock(c.EndAt),
 		TeamSize:     c.TeamSize, Access: access, CanManage: access.CanManage,
-		BoardOpen: c.StandingOpen,
-		Private:   c.JoinCode != "",
+		BoardOpen:    c.StandingOpen && c.BoardLive(now),
+		BoardPending: !c.BoardLive(now),
+		Private:      c.JoinCode != "",
 		// 已结束不再收人：赛后补进榜会把榜单变成一份事后总结。
 		CanJoin:   !access.Joined && c.Phase(now) != store.PhaseOver,
 		EditLink:  "/contests/" + url.PathEscape(c.CID) + "/edit",
@@ -751,11 +770,7 @@ func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Phase = c.Phase(now).Label()
 	d.PhaseClass = c.Phase(now).Badge()
-	penalty := c.PenaltyMS / 60000
-	d.PenaltyText = "每次未过尝试罚 " + strconv.FormatInt(penalty, 10) + " 分钟"
-	if c.PenaltyMS == 0 {
-		d.PenaltyText = "不设罚时"
-	}
+	d.PenaltyText = penaltyNote(c)
 	if access.ShowProblems {
 		problems, err := s.db.ListContestProblems(r.Context(), c.ID)
 		if err != nil {
@@ -1002,11 +1017,16 @@ type standingsData struct {
 	Rows        []standingRowView
 	Columns     []string
 	PenaltyText string
-	Members     int
-	SelfRank    string
-	WhyNot      string
-	Back        string
-	TeamMode    bool
+	// ShowsClock is false for OI: that board has no clock and no attempt counts.
+	ShowsClock bool
+	// Live is false while an OI contest is still running, which is a different
+	// answer from 封榜: nobody but the host may see anything yet.
+	Live     bool
+	Members  int
+	SelfRank string
+	WhyNot   string
+	Back     string
+	TeamMode bool
 }
 
 // handleContestStandings is the contest's own board. The whole field is always
@@ -1024,12 +1044,22 @@ func (s *Server) handleContestStandings(w http.ResponseWriter, r *http.Request) 
 		Phase: c.Phase(now).Label(), PhaseClass: c.Phase(now).Badge(),
 		Window:    formatContestClock(c.StartAt) + " —— " + formatContestClock(c.EndAt),
 		BoardOpen: c.StandingOpen, CanManage: access.CanManage,
-		Sealed:   !c.StandingOpen,
-		Back:     "/contests/" + url.PathEscape(c.CID),
-		TeamMode: c.TeamSize > store.MinTeamSize,
+		Sealed:     !c.StandingOpen,
+		Back:       "/contests/" + url.PathEscape(c.CID),
+		TeamMode:   c.TeamSize > store.MinTeamSize,
+		ShowsClock: c.Mode != store.ContestOI,
+		Live:       c.BoardLive(now),
 	}
 	if members, err := s.db.ListContestMembers(r.Context(), c.ID); err == nil {
 		d.Members = len(members)
+	}
+	if !c.BoardLive(now) && !access.CanManage {
+		// OI 是闭卷的：比赛结束之前谁都没有榜，包括自己。这跟封榜是两件事，
+		// 封榜还能看见自己那一行，这里是什么都看不见。
+		d.WhyNot = "OI 赛制比赛中不实时出榜：提交看不到结果，成绩要等比赛结束后由主办方放榜。"
+		d.Rows = nil
+		s.page(w, r, http.StatusOK, "成绩榜 "+c.CID, "contest_standings", a.viewer(), msgOf(r), d)
+		return
 	}
 	if !access.ShowBoard {
 		// 封榜 and not inside the contest: nothing to show, and the page says why
@@ -1053,11 +1083,7 @@ func (s *Server) handleContestStandings(w http.ResponseWriter, r *http.Request) 
 			d.Columns = append(d.Columns, cell.Label)
 		}
 	}
-	penalty := c.PenaltyMS / 60000
-	d.PenaltyText = "每次未过尝试罚 " + strconv.FormatInt(penalty, 10) + " 分钟"
-	if c.PenaltyMS == 0 {
-		d.PenaltyText = "不设罚时"
-	}
+	d.PenaltyText = penaltyNote(c)
 
 	// A sealed board shows a member their own row only, so nobody can read the field
 	// over someone's shoulder. The host sees everything, marked as sealed.
@@ -1088,9 +1114,11 @@ func (s *Server) handleContestStandings(w http.ResponseWriter, r *http.Request) 
 			view.Score = strconv.Itoa(row.Score)
 		}
 		view.ScoreClass = scoreClass(total, full)
-		view.Time = formatClock(row.TimeMS)
+		if d.ShowsClock {
+			view.Time = formatClock(row.TimeMS)
+		}
 		for _, cell := range row.Cells {
-			view.Cells = append(view.Cells, cellView(c.Mode, cell))
+			view.Cells = append(view.Cells, cellView(c.Mode, cell, d.ShowsClock))
 		}
 		d.Rows = append(d.Rows, view)
 	}
@@ -1105,7 +1133,7 @@ func (s *Server) handleContestStandings(w http.ResponseWriter, r *http.Request) 
 }
 
 // cellView turns one stored square into what a reader should see for that mode.
-func cellView(mode string, cell store.Cell) standingCellView {
+func cellView(mode string, cell store.Cell, showsClock bool) standingCellView {
 	v := standingCellView{
 		Label: cell.Label, PID: cell.PID, Title: cell.Title,
 		Seen: cell.Seen, Removed: cell.Removed,
@@ -1117,6 +1145,13 @@ func cellView(mode string, cell store.Cell) standingCellView {
 	attempts := ""
 	if cell.Attempts > 1 {
 		attempts = strconv.Itoa(cell.Attempts) + " 次"
+	}
+	if !showsClock {
+		// OI 的格子只有一个数字：不比用时，也不给尝试次数。
+		v.Text = strconv.Itoa(cell.Points)
+		v.Class = scoreClass(cell.Points, cell.Max)
+		v.Title = cell.Title + " · 本题满分 " + strconv.Itoa(cell.Max)
+		return v
 	}
 	if mode == store.ContestACM {
 		// 一题只认首次 AC：数字是尝试次数，绿色即已解出，时间放下面。

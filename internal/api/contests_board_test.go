@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
@@ -88,7 +89,7 @@ func (h *harness) joinAll(cid string, players ...session) {
 	}
 }
 
-func TestContestStandingsOIMode(t *testing.T) {
+func TestContestStandingsIOIMode(t *testing.T) {
 	h := newHarness(t)
 	host := h.signIn("hostoi", permContestCreate)
 	best := h.signIn("oi_best")
@@ -109,7 +110,8 @@ func TestContestStandingsOIMode(t *testing.T) {
 	}
 	h.readyProblem("P7001") // two judged cases, worth 1 each until the contest rescales it
 
-	values := contestValues("C7000", "OI 榜")
+	values := contestValues("C7000", "IOI 榜")
+	values.Set("mode", store.ContestIOI)
 	values.Set("standing_open", "1")
 	if _, body := h.createContest(host, values); !strings.Contains(body, "比赛已建好") {
 		t.Fatalf("create:\n%s", body)
@@ -133,7 +135,7 @@ func TestContestStandingsOIMode(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("standings = %d", code)
 	}
-	for _, want := range []string{"成绩榜", "OI 榜", "oi_best", "oi_half", "每题取最高分"} {
+	for _, want := range []string{"成绩榜", "IOI 榜", "oi_best", "oi_half", "每题取最高分"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("board missing %q:\n%s", want, page)
 		}
@@ -166,6 +168,7 @@ func TestContestStandingsSealed(t *testing.T) {
 	h.readyProblem("P7010")
 
 	values := contestValues("C7010", "封榜赛")
+	values.Set("mode", store.ContestIOI)
 	if _, body := h.createContest(host, values); !strings.Contains(body, "比赛已建好") {
 		t.Fatalf("create:\n%s", body)
 	}
@@ -207,6 +210,7 @@ func TestContestStandingsSealed(t *testing.T) {
 
 	// Opening the board is a decision the host makes, never an automatic event.
 	open := contestValues("C7010", "封榜赛")
+	open.Set("mode", store.ContestIOI)
 	open.Set("standing_open", "1")
 	if _, body := h.postAs(host, "/contests/C7010", open); !strings.Contains(body, "已保存") {
 		t.Fatalf("open the board:\n%s", body)
@@ -275,6 +279,7 @@ func TestContestStandingsTeamMode(t *testing.T) {
 	h.readyProblem("P7030")
 
 	values := contestValues("C7030", "团体榜")
+	values.Set("mode", store.ContestIOI)
 	values.Set("team_size", "2")
 	values.Set("standing_open", "1")
 	if _, body := h.createContest(host, values); !strings.Contains(body, "比赛已建好") {
@@ -314,6 +319,7 @@ func TestContestStandingsIgnoreUnfinishedRows(t *testing.T) {
 	h.readyProblem("P7040")
 
 	values := contestValues("C7040", "判分中榜")
+	values.Set("mode", store.ContestIOI)
 	if _, body := h.createContest(host, values); !strings.Contains(body, "比赛已建好") {
 		t.Fatalf("create:\n%s", body)
 	}
@@ -364,4 +370,82 @@ func styleSheet() string {
 		return ""
 	}
 	return string(body)
+}
+
+// TestOIBoardWaitsForTheEnd is the closed-book half of real OI: while the clock runs
+// nobody but the host sees a board at all, and the board that does come out has no
+// clock and no attempt counts.
+func TestOIBoardWaitsForTheEnd(t *testing.T) {
+	h := newHarness(t)
+	host := h.signIn("oi_host", permContestCreate)
+	player := h.signIn("oi_player")
+	rival := h.signIn("oi_rival")
+	h.readyProblem("P7050")
+
+	values := contestValues("C7050", "NOIP 模拟赛")
+	values.Set("mode", store.ContestOI)
+	values.Set("standing_open", "1")
+	if _, body := h.createContest(host, values); !strings.Contains(body, "比赛已建好") {
+		t.Fatalf("create:\n%s", body)
+	}
+	h.mountContestProblems(host, "C7050", "P7050")
+	cid := h.contestID("C7050")
+	h.joinAll("C7050", player, rival)
+
+	// player solves it and then breaks it; OI scores the broken one.
+	h.submitAndJudge(player, "P7050", cid, "AC", 1, 1)
+	h.submitAndJudge(player, "P7050", cid, "WA", 0)
+	h.submitAndJudge(rival, "P7050", cid, "AC", 1, 1)
+
+	during := h.getPage(player, "/contests/C7050/standings")
+	for _, want := range []string{"OI 赛制比赛中不实时出榜", "提交看不到结果"} {
+		if !strings.Contains(during, want) {
+			t.Errorf("a running OI board should explain itself, missing %q:\n%s", want, during)
+		}
+	}
+	for _, leak := range []string{">oi_player</td>", ">oi_rival</td>", "你现在第"} {
+		if strings.Contains(during, leak) {
+			t.Errorf("the live OI board leaked %q:\n%s", leak, during)
+		}
+	}
+	// The host can look, because someone has to be able to check the data.
+	behind := h.getPage(host, "/contests/C7050/standings")
+	if !strings.Contains(behind, ">oi_player</td>") || !strings.Contains(behind, "你是主办方") {
+		t.Errorf("the host should still see the field:\n%s", behind)
+	}
+	// The contest page says the same thing, so the reader is not sent to a blank page.
+	if home := h.getPage(player, "/contests/C7050"); !strings.Contains(home, "OI 比赛中不出榜") {
+		t.Errorf("the contest page should mark the board as pending:\n%s", home)
+	}
+
+	// End the window: the board comes out, and it carries no clock.
+	start, end := time.Now().Add(-3*time.Hour), time.Now().Add(-time.Hour)
+	after := contestValues("C7050", "NOIP 模拟赛")
+	after.Set("mode", store.ContestOI)
+	after.Set("standing_open", "1")
+	after.Set("start_at", start.Format(contestLayoutMini))
+	after.Set("end_at", end.Format(contestLayoutMini))
+	if _, body := h.postAs(host, "/contests/C7050", after); !strings.Contains(body, "已保存") {
+		t.Fatalf("end the contest:\n%s", body)
+	}
+	page := h.getPage(player, "/contests/C7050/standings")
+	for _, want := range []string{">oi_player</td>", ">oi_rival</td>", "同分同名次", "已结束", "本赛制不比罚时"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the published OI board is missing %q:\n%s", want, page)
+		}
+	}
+	// 罚时是 ACM 的事：OI 榜上连这个数字都不该出现。
+	for _, absent := range []string{"<th class=\"num\">用时</th>", "· 2 次", "你现在第", "每次未过尝试罚"} {
+		if strings.Contains(page, absent) {
+			t.Errorf("an OI board must not print %q:\n%s", absent, page)
+		}
+	}
+	// 最后一次提交说了算：破掉的题算 0 分，所以 player 全场 0 分，rival 满分。
+	if !strings.Contains(page, `class="score sc0" href="/problems/P7050"`) {
+		t.Errorf("the broken last submission should be at the red end:\n%s", page)
+	}
+	// 满分那位在格子和总分两处都是绿的一端。
+	if strings.Count(page, `class="score sc9"`) != 2 {
+		t.Errorf("the clean 2/2 should be green in its cell and in the total column:\n%s", page)
+	}
 }

@@ -111,7 +111,7 @@ func TestContestCRUDThroughTheWebForm(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("bad save = %d", code)
 	}
-	for _, want := range []string{"结束时间必须晚于开始时间", "队伍人数要 1..5", "计分模式只认 oi 或 acm", "加入码只能是字母", "改坏的"} {
+	for _, want := range []string{"结束时间必须晚于开始时间", "队伍人数要 1..5", "计分模式只认 oi、ioi 或 acm", "加入码只能是字母", "改坏的"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rejected save missing %q:\n%s", want, body)
 		}

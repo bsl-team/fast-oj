@@ -7,12 +7,12 @@
   · {{.Data.Countdown}}
   · 每队 {{.Data.TeamSize}} 人
   · {{.Data.PenaltyText}}
-  · 榜单{{if .Data.BoardOpen}}公示{{else}}<span class="warn">封榜</span>{{end}}
+  · {{if .Data.BoardPending}}<span class="warn">OI 比赛中不出榜</span>{{else}}榜单{{if .Data.BoardOpen}}公示{{else}}<span class="warn">封榜</span>{{end}}{{end}}
   {{if .Data.Private}} · <span class="warn">私有</span>{{end}}
 </p>
 
 <p class="meta">
-  <a href="{{.Data.StandLink}}">成绩榜</a>
+  <a href="{{.Data.StandLink}}">成绩榜</a>{{if .Data.BoardPending}}（OI 赛制比赛结束后才出）{{end}}
   {{if .Data.CanManage}}· <a href="{{.Data.EditLink}}">编辑比赛与挂题</a>{{end}}
   {{if .Data.Access.Joined}}· 你已加入{{end}}
 </p>
