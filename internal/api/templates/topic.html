@@ -19,4 +19,34 @@
   </form>
   {{end}}
 </p>
+
+<h2>评论{{if .Data.CommentNum}}（{{.Data.CommentNum}}）{{end}}</h2>
+{{range .Data.Comments}}
+<article class="reply">
+  <header>
+    <a class="who" href="/u/{{.Author}}">{{.DisplayName}}</a>
+    <span class="when">{{.When}}</span>
+    {{if .CanDelete}}
+    <form class="inline ops" method="post" action="/topics/comments/{{.ID}}/delete">
+      <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+      <button type="submit">删除</button>
+    </form>
+    {{end}}
+  </header>
+  <div class="body">{{.Body}}</div>
+</article>
+{{else}}
+<p class="meta">还没有评论。</p>
+{{end}}
+
+{{if .Data.SignedIn}}
+<form method="post" action="/topics/{{.Data.ID}}/comment" class="composer">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>回复（支持 Markdown 与 <code>$KaTeX$</code>）</label>
+  <textarea name="body" rows="4" maxlength="4000" required placeholder="说点什么"></textarea>
+  <p><input type="submit" value="发表评论"></p>
+</form>
+{{else}}
+<p class="meta"><a href="/login?next=/topics/{{.Data.ID}}">登录</a> 后才能评论，未登录可以浏览。</p>
+{{end}}
 {{end}}

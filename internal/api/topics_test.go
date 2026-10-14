@@ -236,3 +236,152 @@ func (h *harness) createTopicID(s session, values url.Values) int64 {
 	}
 	return id
 }
+
+// --- M17c: the comment thread ---
+
+func (h *harness) comment(s session, id int64, body string) (int, string) {
+	h.t.Helper()
+	return h.postAs(s, fmt.Sprintf("/topics/%d/comment", id), url.Values{"body": {body}})
+}
+
+func TestTopicCommentsThroughTheWeb(t *testing.T) {
+	h := newHarness(t)
+	author := h.signIn("topic_author")
+	helper := h.signIn("topic_helper")
+	stranger := h.signIn("topic_stranger")
+
+	id := h.createTopicID(author, url.Values{"kind": {"community"}, "title": {"求助：读入顺序"}, "body": {"$n$ 组数据"}})
+
+	// An anonymous browser reads the thread but is not offered the composer.
+	page := h.getPage(session{}, fmt.Sprintf("/topics/%d", id))
+	if !strings.Contains(page, "登录后才能评论") && !strings.Contains(page, "登录</a> 后才能评论") {
+		t.Errorf("an anonymous reader should be pointed at the login page:\n%s", page)
+	}
+	if strings.Contains(page, `name="body"`) {
+		t.Errorf("a composer was shown to an anonymous visitor:\n%s", page)
+	}
+	// Writing needs a session, and the way back is kept.
+	code, _, hdr := h.postNoRedirect(fmt.Sprintf("/topics/%d/comment", id), url.Values{"body": {"匿名评论"}}, "")
+	if code != http.StatusSeeOther || !strings.Contains(hdr.Get("Location"), "/login?next=%2Ftopics%2F") {
+		t.Errorf("anonymous comment = %d %q", code, hdr.Get("Location"))
+	}
+
+	if _, body := h.comment(helper, id, "把 `scanf` 的返回值判一下"); !strings.Contains(body, "已发布评论") {
+		t.Fatalf("comment:\n%s", body)
+	}
+	if _, body := h.comment(author, id, "谢谢，**解决了**"); !strings.Contains(body, "已发布评论") {
+		t.Fatalf("author comment:\n%s", body)
+	}
+	// The thread reads in the order it happened, and Markdown works in it.
+	page = h.getPage(stranger, fmt.Sprintf("/topics/%d", id))
+	if !strings.Contains(page, "评论（2）") || !strings.Contains(page, "<strong>解决了</strong>") {
+		t.Errorf("thread wrong:\n%s", page)
+	}
+	if strings.Index(page, "返回值判一下") > strings.Index(page, "解决了") {
+		t.Errorf("replies should be oldest first:\n%s", page)
+	}
+	// The list page carries the count, so a reader can pick a conversation.
+	if _, page := h.getAs(stranger, "/topics"); !strings.Contains(page, "求助：读入顺序") {
+		t.Errorf("the list lost the topic:\n%s", page)
+	}
+	if !strings.Contains(h.getPage(stranger, "/topics"), ">2<") {
+		t.Errorf("the list should show two comments:\n%s", h.getPage(stranger, "/topics"))
+	}
+
+	// An empty reply is refused, and the reason is shown on the page it bounces back
+	// to — not on a later fetch of the same thread, which has nothing to report.
+	code, body := h.comment(helper, id, "   ")
+	if strings.Contains(body, "已发布评论") {
+		t.Errorf("an empty comment was accepted:\n%s", body)
+	}
+	if !strings.Contains(body, "说点什么吧") {
+		t.Errorf("the refusal said nothing (code %d):\n%s", code, body)
+	}
+
+	// Deleting: the author of the reply may, a stranger may not.
+	cid := h.commentID(helper, id, "返回值判一下")
+	if code, _ := h.postAs(stranger, fmt.Sprintf("/topics/comments/%d/delete", cid), url.Values{}); code != http.StatusForbidden {
+		t.Errorf("a stranger deleted someone's reply = %d", code)
+	}
+	if _, body := h.postAs(helper, fmt.Sprintf("/topics/comments/%d/delete", cid), url.Values{}); !strings.Contains(body, "已删除评论") {
+		t.Errorf("author delete of a reply:\n%s", body)
+	}
+	if !strings.Contains(h.getPage(stranger, fmt.Sprintf("/topics/%d", id)), "评论（1）") {
+		t.Errorf("the count did not follow the delete:\n%s", h.getPage(stranger, fmt.Sprintf("/topics/%d", id)))
+	}
+	// A moderator may take down someone else's reply.
+	cid = h.commentID(author, id, "解决了")
+	if _, body := h.postAs(h.signIn("topic_mod", permTopicModerate), fmt.Sprintf("/topics/comments/%d/delete", cid), url.Values{}); !strings.Contains(body, "已删除评论") {
+		t.Errorf("moderator delete of a reply:\n%s", body)
+	}
+	if !strings.Contains(h.getPage(stranger, fmt.Sprintf("/topics/%d", id)), "还没有评论") {
+		t.Errorf("the thread should be empty now:\n%s", h.getPage(stranger, fmt.Sprintf("/topics/%d", id)))
+	}
+}
+
+// commentID finds a reply's id by the delete form it carries.
+func (h *harness) commentID(s session, topicID int64, needle string) int64 {
+	h.t.Helper()
+	page := h.getPage(s, fmt.Sprintf("/topics/%d", topicID))
+	i := strings.Index(page, needle)
+	if i < 0 {
+		h.t.Fatalf("no reply containing %q:\n%s", needle, page)
+	}
+	// The delete form for that reply appears just before its body.
+	before := page[:i]
+	j := strings.LastIndex(before, `/topics/comments/`)
+	if j < 0 {
+		h.t.Fatalf("no delete form before %q:\n%s", needle, page)
+	}
+	var id int64
+	if _, err := fmt.Sscanf(before[j+len("/topics/comments/"):], "%d", &id); err != nil || id <= 0 {
+		h.t.Fatalf("bad comment id in %q", before[j:])
+	}
+	return id
+}
+
+func TestTopicCommentRateLimit(t *testing.T) {
+	h := newHarness(t)
+	writer := h.signIn("chatty")
+	id := h.createTopicID(writer, url.Values{"kind": {"community"}, "title": {"灌水贴"}, "body": {""}})
+	for i := 1; i <= maxCommentsHour; i++ {
+		if _, body := h.comment(writer, id, fmt.Sprintf("%d 楼", i)); !strings.Contains(body, "已发布评论") {
+			t.Fatalf("comment %d refused:\n%s", i, body)
+		}
+	}
+	_, body := h.comment(writer, id, "多一条")
+	if !strings.Contains(body, "评论得太快了") {
+		t.Errorf("comment %d was accepted:\n%s", maxCommentsHour+1, body)
+	}
+	if n := h.commentCount(); n != maxCommentsHour {
+		t.Errorf("a refused comment created a row: %d", n)
+	}
+}
+
+func TestCommentOnDeletedTopicGoesNowhere(t *testing.T) {
+	h := newHarness(t)
+	author := h.signIn("gone_author")
+	other := h.signIn("gone_other")
+	id := h.createTopicID(author, url.Values{"kind": {"community"}, "title": {"要被删的帖子"}, "body": {""}})
+
+	if _, body := h.postAs(author, fmt.Sprintf("/topics/%d/delete", id), url.Values{}); !strings.Contains(body, "已删除帖子") {
+		t.Fatalf("delete:\n%s", body)
+	}
+	// The form was open when the topic was still there; posting now must not
+	// resurrect it or strand a comment.
+	if _, body := h.comment(other, id, "有人吗"); !strings.Contains(body, "这个帖子已经不在了") {
+		t.Errorf("a comment on a deleted topic:\n%s", body)
+	}
+	if n := h.commentCount(); n != 0 {
+		t.Errorf("%d orphan comments", n)
+	}
+}
+
+func (h *harness) commentCount() int {
+	h.t.Helper()
+	var n int
+	if err := h.db.SQL.QueryRowContext(ctx(), `SELECT COUNT(*) FROM topic_comments`).Scan(&n); err != nil {
+		h.t.Fatal(err)
+	}
+	return n
+}

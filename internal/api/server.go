@@ -52,6 +52,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /topics", s.handleTopicCreate)
 	mux.HandleFunc("GET /topics/{id}", s.handleTopicGet)
 	mux.HandleFunc("POST /topics/{id}/delete", s.handleTopicDelete)
+	mux.HandleFunc("POST /topics/{id}/comment", s.handleTopicComment)
+	mux.HandleFunc("POST /topics/comments/{id}/delete", s.handleTopicCommentDelete)
 
 	mux.HandleFunc("GET /submissions", s.handleSubmitList)
 	mux.HandleFunc("GET /submissions/{id}", s.handleSubmitGet)
@@ -193,7 +195,9 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /submissions/{id}        结果；判题中每 2 秒自动刷新，逐用例行一条条冒出来",
 		"  GET  /feed                    动态（?user= &after= &limit=）；POST /feed 发一条",
 		"  GET  /topics                  社区贴列表（?q= &after= &limit=）；/topics/new 发帖",
-		"  GET  /topics/{id}             帖子正文；POST /topics/{id}/delete 删帖（本人或 topic.moderate）",
+		"  GET  /topics/{id}             帖子正文与评论；POST /topics/{id}/delete 删帖（本人或 topic.moderate）",
+		"  POST /topics/{id}/comment     发表评论（登录用户，一小时 60 条）",
+		"  POST /topics/comments/{id}/delete  删评论（本人或 topic.moderate）",
 		"  POST /feed/{id}/delete        删动态（本人，或持 feed.moderate 删别人的）",
 		"  POST /feed/{id}/hide          隐藏/恢复动态（feed.moderate）",
 		"  GET  /rank                    排行榜",

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -320,6 +321,10 @@ type topicData struct {
 	CanDelete   bool
 	BackLink    string
 	BackText    string
+	// Comments are read oldest-first, and the count is what the list pages print.
+	Comments   []commentRow
+	CommentNum int
+	SignedIn   bool
 }
 
 func (s *Server) handleTopicGet(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +351,14 @@ func (s *Server) handleTopicGet(w http.ResponseWriter, r *http.Request) {
 		d.BackLink = "/topics"
 		d.BackText = "全部社区贴"
 	}
+	comments, err := s.db.ListTopicComments(r.Context(), topic.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	d.Comments = commentRows(comments, a)
+	d.CommentNum = len(comments)
+	d.SignedIn = a.User.ID != 0
 	s.page(w, r, http.StatusOK, topic.Title, "topic", a.viewer(), msgOf(r), d)
 }
 
@@ -398,4 +411,116 @@ func (s *Server) handleTopicDelete(w http.ResponseWriter, r *http.Request) {
 		back = "/problems/" + url.PathEscape(topic.ProblemPID) + "/topics"
 	}
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape("已删除帖子"), http.StatusSeeOther)
+}
+
+// --- comments ---
+
+// commentRow is one reply as the page shows it.
+type commentRow struct {
+	ID          int64
+	Author      string
+	DisplayName string
+	When        string
+	Body        template.HTML
+	CanDelete   bool
+}
+
+func commentRows(items []store.TopicComment, a actor) []commentRow {
+	rows := make([]commentRow, 0, len(items))
+	for _, c := range items {
+		name := c.Author
+		if c.DisplayName != "" {
+			name = c.DisplayName
+		}
+		rows = append(rows, commentRow{
+			ID: c.ID, Author: c.Author, DisplayName: name, When: agoMS(c.CreatedAt),
+			Body: renderMarkdownHTML(c.Body),
+			// The author may always take their own words back; anyone else needs the
+			// moderation right.
+			CanDelete: a.User.ID != 0 && (a.User.ID == c.AuthorID || a.can(permTopicModerate)),
+		})
+	}
+	return rows
+}
+
+// handleTopicComment is the write half of one thread. The post itself is re-read
+// rather than trusted from the form, so a comment cannot be attached to a topic that
+// was deleted while the reader was typing.
+func (s *Server) handleTopicComment(w http.ResponseWriter, r *http.Request) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next="+url.QueryEscape("/topics/"+r.PathValue("id")), http.StatusSeeOther)
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		return
+	}
+	key := fmt.Sprintf("topiccomment:%d", a.User.ID)
+	allowed, err := s.db.LoginAllowed(r.Context(), key, topicWindow, maxCommentsHour)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !allowed {
+		http.Redirect(w, r, fmt.Sprintf("/topics/%d?msg=%s", id,
+			url.QueryEscape("评论得太快了，一小时最多 "+strconv.Itoa(maxCommentsHour)+" 条")), http.StatusSeeOther)
+		return
+	}
+	comment, err := s.db.CreateTopicComment(r.Context(), id, a.User.ID, r.FormValue("body"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Redirect(w, r, "/topics?msg="+url.QueryEscape("这个帖子已经不在了，评论没处可去"), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, fmt.Sprintf("/topics/%d?msg=%s", id, url.QueryEscape(err.Error())), http.StatusSeeOther)
+		return
+	}
+	if _, err := s.db.RegisterLoginFailure(r.Context(), key, topicWindow); err != nil {
+		s.log.Error("comment counter", "err", err)
+	}
+	s.log.Info("topic comment", "id", comment.ID, "topic", comment.TopicID, "by", a.User.Handle)
+	http.Redirect(w, r, fmt.Sprintf("/topics/%d?msg=%s", id, url.QueryEscape("已发布评论")), http.StatusSeeOther)
+}
+
+// handleTopicCommentDelete removes one reply and returns the reader to its thread.
+func (s *Server) handleTopicCommentDelete(w http.ResponseWriter, r *http.Request) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next=/topics", http.StatusSeeOther)
+		return
+	}
+	id, ok := pathID(r)
+	if !ok {
+		return
+	}
+	comment, err := s.db.GetTopicComment(r.Context(), id)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	moderating := a.User.ID != comment.AuthorID
+	if moderating && !a.can(permTopicModerate) {
+		s.respondError(w, r, http.StatusForbidden, "这条评论由他人写的，需要 "+permTopicModerate+" 才能删除")
+		return
+	}
+	var removed bool
+	if moderating {
+		removed, err = s.db.DeleteTopicCommentAny(r.Context(), id)
+	} else {
+		removed, err = s.db.DeleteTopicComment(r.Context(), id, a.User.ID)
+	}
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !removed {
+		s.respondError(w, r, http.StatusNotFound, "没有这条评论，或者它已经不是你的了")
+		return
+	}
+	// The comment's parent cannot have vanished: the foreign key would have taken the
+	// comment with it.
+	back := fmt.Sprintf("/topics/%d", comment.TopicID)
+	s.log.Info("topic comment deleted", "id", id, "topic", comment.TopicID, "by", a.User.Handle)
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape("已删除评论"), http.StatusSeeOther)
 }

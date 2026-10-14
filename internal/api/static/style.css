@@ -141,3 +141,10 @@ form.checkin .meta { margin: 0; }
 .score.sc8 { color: color-mix(in oklab, var(--bad) 11%, var(--ok)); }
 .score.sc9 { color: var(--ok); }
 table .when { color: var(--muted); font-size: .8rem; }
+
+/* 帖子评论：一条回复是带左线的方块，作者与时间在上，操作靠右 */
+article.reply { border-left: 3px solid var(--line); padding: .35rem .8rem; margin: .5rem 0; }
+article.reply header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: var(--muted); }
+article.reply .who { font-weight: 600; color: var(--fg); }
+article.reply .ops { margin-left: auto; }
+article.reply .body p { margin: .3rem 0; }

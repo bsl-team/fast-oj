@@ -126,7 +126,7 @@ func (s *Server) handlePostDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeAuthError(w, r, err)
 		return
 	}
-	id, ok := postID(w, r)
+	id, ok := pathID(r)
 	if !ok {
 		return
 	}
@@ -158,7 +158,7 @@ func (s *Server) handlePostHide(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := postID(w, r)
+	id, ok := pathID(r)
 	if !ok {
 		return
 	}
@@ -176,7 +176,9 @@ func (s *Server) handlePostHide(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/feed?msg="+url.QueryEscape("已处理"), http.StatusSeeOther)
 }
 
-func postID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+// pathID reads the {id} of the route, without writing anything: the caller decides
+// what a nonsense id means for its own page.
+func pathID(r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
