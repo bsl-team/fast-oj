@@ -6,14 +6,14 @@ import (
 	"errors"
 )
 
-const submissionColumns = `id, user_id, problem_id, language, status, verdict,
+const submissionColumns = `id, user_id, problem_id, IFNULL(contest_id, 0), language, status, verdict,
 		time_ms, mem_kb, time_min, mem_min, score, total_score, failed_case, IFNULL(judge_id, 0),
 		created_at, IFNULL(started_at, 0), IFNULL(judged_at, 0)`
 
 func scanSubmission(row scanner) (Submission, error) {
 	var s Submission
 	var timeMin, memMin int
-	err := row.Scan(&s.ID, &s.UserID, &s.ProblemID, &s.Language, &s.Status, &s.Verdict,
+	err := row.Scan(&s.ID, &s.UserID, &s.ProblemID, &s.ContestID, &s.Language, &s.Status, &s.Verdict,
 		&s.TimeMS, &s.MemKB, &timeMin, &memMin, &s.Score, &s.TotalScore, &s.FailedCase, &s.JudgeID,
 		&s.CreatedAt, &s.StartedAt, &s.JudgedAt)
 	s.TimeMin, s.MemMin = timeMin != 0, memMin != 0
@@ -22,9 +22,9 @@ func scanSubmission(row scanner) (Submission, error) {
 
 func (db *DB) CreateSubmission(ctx context.Context, s *Submission) (Submission, error) {
 	res, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO submissions (user_id, problem_id, language, source, status, total_score, created_at)
-		 VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
-		s.UserID, s.ProblemID, s.Language, s.Source, s.TotalScore, nowMS())
+		`INSERT INTO submissions (user_id, problem_id, contest_id, language, source, status, total_score, created_at)
+		 VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)`,
+		s.UserID, s.ProblemID, s.ContestID, s.Language, s.Source, s.TotalScore, nowMS())
 	if err != nil {
 		return Submission{}, err
 	}

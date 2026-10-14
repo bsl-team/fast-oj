@@ -4,8 +4,8 @@ import (
 	"context"
 )
 
-// SubmissionDetail joins the human-facing keys onto a submission so the text
-// renderer does not need a second query per row.
+// SubmissionDetail joins the human-facing keys onto a submission so the page does
+// not need a second query per row.
 type SubmissionDetail struct {
 	Submission
 	PID    string `json:"pid"`
@@ -15,14 +15,17 @@ type SubmissionDetail struct {
 	// of this submission's judging detail the reader is shown.
 	DetailLevel  string `json:"detail_level"`
 	ProblemOwner int64  `json:"problem_owner"`
+	// ContestCID is empty when the contest was deleted, which is how the page can
+	// say 比赛已删除 instead of linking at nothing.
+	ContestCID string `json:"contest_cid"`
 }
 
-const detailColumns = `s.id, s.user_id, s.problem_id, s.language, s.status, s.verdict,
+const detailColumns = `s.id, s.user_id, s.problem_id, IFNULL(s.contest_id, 0), s.language, s.status, s.verdict,
 		s.time_ms, s.mem_kb, s.time_min, s.mem_min, s.score, s.total_score, s.failed_case,
 		IFNULL(s.judge_id, 0),
 		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0),
 		p.pid, p.title, u.handle,
-		IFNULL(p.detail_level, 'diff'), IFNULL(p.owner_id, 0)`
+		IFNULL(p.detail_level, 'diff'), IFNULL(p.owner_id, 0), IFNULL(ct.cid, '')`
 
 func scanDetail(row scanner) (SubmissionDetail, error) {
 	var (
@@ -30,10 +33,10 @@ func scanDetail(row scanner) (SubmissionDetail, error) {
 		judgeID         int64
 		timeMin, memMin int
 	)
-	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.Language, &d.Status, &d.Verdict,
+	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.ContestID, &d.Language, &d.Status, &d.Verdict,
 		&d.TimeMS, &d.MemKB, &timeMin, &memMin, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
 		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle,
-		&d.DetailLevel, &d.ProblemOwner)
+		&d.DetailLevel, &d.ProblemOwner, &d.ContestCID)
 	d.JudgeID = judgeID
 	d.TimeMin, d.MemMin = timeMin != 0, memMin != 0
 	return d, notFound(err)
@@ -41,7 +44,8 @@ func scanDetail(row scanner) (SubmissionDetail, error) {
 
 const detailFrom = ` FROM submissions s
 	JOIN problems p ON p.id = s.problem_id
-	JOIN users u ON u.id = s.user_id`
+	JOIN users u ON u.id = s.user_id
+	LEFT JOIN contests ct ON ct.id = s.contest_id`
 
 func (db *DB) SubmissionDetail(ctx context.Context, id int64) (SubmissionDetail, error) {
 	return scanDetail(db.SQL.QueryRowContext(ctx,

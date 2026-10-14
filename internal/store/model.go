@@ -32,9 +32,9 @@ type Problem struct {
 	// DetailLevel is how much of the judging detail the submitter gets to see:
 	// none, case, diff or full. The author and the operator always see everything.
 	DetailLevel string `json:"detail_level"`
-	OwnerID     int64    `json:"owner_id"`
-	CreatedAt   int64    `json:"created_at"`
-	UpdatedAt   int64    `json:"updated_at"`
+	OwnerID     int64  `json:"owner_id"`
+	CreatedAt   int64  `json:"created_at"`
+	UpdatedAt   int64  `json:"updated_at"`
 }
 
 type Testcase struct {
@@ -52,9 +52,13 @@ type Testcase struct {
 }
 
 type Submission struct {
-	ID        int64  `json:"id"`
-	UserID    int64  `json:"user_id"`
-	ProblemID int64  `json:"problem_id"`
+	ID        int64 `json:"id"`
+	UserID    int64 `json:"user_id"`
+	ProblemID int64 `json:"problem_id"`
+	// ContestID is the contest this submission was made inside, 0 for practice. It
+	// is fixed when the row is created: leaving a team or unmounting a problem does
+	// not unwind it.
+	ContestID int64  `json:"contest_id"`
 	Language  string `json:"language"`
 	Source    string `json:"source,omitempty"`
 	Status    string `json:"status"`
@@ -83,10 +87,10 @@ type Run struct {
 	Verdict      string `json:"verdict"`
 	// Score is what this row actually earned, which is not the case weight when a
 	// bundle was broken by another case in the same group.
-	Score        int    `json:"score"`
-	TimeMS       int    `json:"time_ms"`
-	MemKB        int    `json:"mem_kb"`
-	IsSample     bool   `json:"is_sample"`
+	Score    int  `json:"score"`
+	TimeMS   int  `json:"time_ms"`
+	MemKB    int  `json:"mem_kb"`
+	IsSample bool `json:"is_sample"`
 	// TimeMin/MemMin mark lower bounds: the run was cut off, so the real cost was
 	// at least this much. The views print a leading ">" for them.
 	TimeMin bool `json:"time_min,omitempty"`
