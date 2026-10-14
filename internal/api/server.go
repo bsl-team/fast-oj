@@ -49,6 +49,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /submissions", s.handleSubmitList)
 	mux.HandleFunc("GET /submissions/{id}", s.handleSubmitGet)
 
+	mux.HandleFunc("GET /contests", s.handleContestList)
+	mux.HandleFunc("GET /contests/new", s.handleContestNew)
+	mux.HandleFunc("POST /contests", s.handleContestCreate)
+	mux.HandleFunc("GET /contests/{key}", s.handleContestHome)
+	mux.HandleFunc("GET /contests/{key}/edit", s.handleContestEdit)
+	mux.HandleFunc("POST /contests/{key}", s.handleContestUpdate)
+	mux.HandleFunc("POST /contests/{key}/delete", s.handleContestDelete)
+	mux.HandleFunc("POST /contests/{key}/problems", s.handleContestProblemSave)
+	mux.HandleFunc("POST /contests/{key}/problems/{problemKey}/remove", s.handleContestProblemRemove)
+	mux.HandleFunc("POST /contests/{key}/problems/{problemKey}/move", s.handleContestProblemMove)
+
 	mux.HandleFunc("POST /judge/claim", s.handleJudgeClaim)
 	mux.HandleFunc("GET /judge/cases/{id}/{which}", s.handleJudgeCaseFile)
 	mux.HandleFunc("POST /judge/submissions/{id}/status", s.handleJudgeStatus)
@@ -152,6 +163,15 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /problems/{key}/cases/wipe    清空用例",
 		"  GET  /problems/{key}/cases/{name}/{in|out}  用例正文（样例公开）",
 		"  POST /problems/{key}/submit   提交代码",
+		"  GET  /contests                比赛列表（?q= &after= &limit=）",
+		"  GET  /contests/{key}          比赛主页：时间、赛制、题目（成员看得到）",
+		"  GET  /contests/new            建比赛（contest.create）",
+		"  POST /contests                创建比赛",
+		"  GET  /contests/{key}/edit     改比赛与挂题（owner 或 contest.manage.any）",
+		"  POST /contests/{key}          保存比赛",
+		"  POST /contests/{key}/delete   删除比赛（名单与挂题一起没，历史提交保留）",
+		"  POST /contests/{key}/problems 挂题 / 改比赛内分值与题号",
+		"  POST /contests/{key}/problems/{problemKey}/remove|move  移下 / 调顺序",
 		"  GET  /submissions             提交列表（?user= &problem=）",
 		"  GET  /submissions/{id}        结果；判题中每 2 秒自动刷新，逐用例行一条条冒出来",
 		"  GET  /feed                    动态（?user= &after= &limit=）；POST /feed 发一条",

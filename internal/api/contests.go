@@ -1,0 +1,755 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"html/template"
+	"math/big"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/liangbinchen2013/fast-oj/internal/store"
+)
+
+// Contests are a web surface only: a person creates one in a browser, and the
+// scoreboard is a page rather than an endpoint.
+
+const (
+	maxContestTitleRunes = 200
+	maxPenaltyMS         = 3_600_000
+	// contestLayout is what a browser's datetime-local sends; the seconds are
+	// optional because not every browser includes them.
+	contestLayoutFull = "2006-01-02T15:04:05"
+	contestLayoutMini = "2006-01-02T15:04"
+	// clockLayout is how a contest window is printed back to a person.
+	clockLayout = "2006-01-02 15:04"
+)
+
+// The contest clock is read and written in the server's own zone, and every view
+// prints it the same way. A site where half the times are UTC and half are local is
+// worse than a site with one documented zone.
+func parseContestTime(raw string) (int64, bool) {
+	raw = strings.TrimSpace(raw)
+	for _, layout := range []string{contestLayoutFull, contestLayoutMini} {
+		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+			return t.UnixMilli(), true
+		}
+	}
+	return 0, false
+}
+
+func formatContestClock(ms int64) string {
+	return time.UnixMilli(ms).In(time.Local).Format(clockLayout)
+}
+
+// formatContestInput prints the stored moment back in the shape the form field
+// needs, so a rejected save does not silently drop the time that was typed.
+func formatContestInput(ms int64) string {
+	return time.UnixMilli(ms).In(time.Local).Format(contestLayoutMini)
+}
+
+// formatSpan writes a duration the way a Chinese reader counts it: 天/小时/分, no
+// leading zero units, and never more than two of them.
+func formatSpan(ms int64) string {
+	if ms < 0 {
+		ms = 0
+	}
+	m := ms / 60000
+	const day = 24 * 60
+	switch {
+	case m >= day:
+		return fmt.Sprintf("%d 天 %d 小时", m/day, m%day/60)
+	case m >= 60:
+		return fmt.Sprintf("%d 小时 %d 分", m/60, m%60)
+	case m >= 1:
+		return fmt.Sprintf("%d 分", m)
+	}
+	return fmt.Sprintf("%d 秒", ms/1000)
+}
+
+// formatClock is elapsed-contest time for a cell: minutes can run past an hour, so
+// mm:ss reads better than a clock face.
+func formatClock(ms int64) string {
+	if ms < 0 {
+		ms = 0
+	}
+	return fmt.Sprintf("%d:%02d", ms/60000, ms%60000/1000)
+}
+
+// validJoinCode keeps the code inside the alphabet a person can read off a screen
+// and type without a keyboard layout getting in the way.
+func validJoinCode(code string) bool {
+	if len(code) > store.MaxJoinCodeLen {
+		return false
+	}
+	for _, r := range code {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// newJoinCode draws a code from the system randomness source. The alphabet drops the
+// characters that get misread in a chat window: 0/O, 1/l/I. A failure is reported
+// rather than answered with an empty code, because an empty code means 公开赛 and
+// would quietly throw the door open.
+func newJoinCode() (string, error) {
+	const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+	out := make([]byte, 8)
+	for i := range out {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		out[i] = alphabet[n.Int64()]
+	}
+	return string(out), nil
+}
+
+// contestForm is one contest as the browser posts it.
+type contestForm struct {
+	CID, Title, Statement, Mode string
+	JoinCode                    string
+	StartAt, EndAt              int64
+	PenaltyMS                   int64
+	TeamSize                    int
+	StandingOpen, Visible       bool
+	// The raw text of every numeric and time field, so a rejected save can put back
+	// exactly what was typed instead of a plausible-looking zero.
+	StartText, EndText        string
+	TeamSizeText, PenaltyText string
+}
+
+func (f contestForm) apply(c *store.Contest) {
+	c.CID, c.Title, c.Statement, c.Mode = f.CID, f.Title, f.Statement, f.Mode
+	c.JoinCode, c.StartAt, c.EndAt = f.JoinCode, f.StartAt, f.EndAt
+	c.PenaltyMS, c.TeamSize = f.PenaltyMS, f.TeamSize
+	c.StandingOpen, c.Visible = f.StandingOpen, f.Visible
+}
+
+// parseContestForm reads the form and reports every problem in it, so a rejected
+// save can redraw the page with everything already typed.
+func parseContestForm(r *http.Request) (contestForm, []string) {
+	f := contestForm{
+		CID:          strings.TrimSpace(r.FormValue("cid")),
+		Title:        strings.TrimSpace(r.FormValue("title")),
+		Statement:    r.FormValue("statement"),
+		Mode:         r.FormValue("mode"),
+		JoinCode:     strings.TrimSpace(r.FormValue("join_code")),
+		StartText:    strings.TrimSpace(r.FormValue("start_at")),
+		EndText:      strings.TrimSpace(r.FormValue("end_at")),
+		TeamSizeText: strings.TrimSpace(r.FormValue("team_size")),
+		PenaltyText:  strings.TrimSpace(r.FormValue("penalty_s")),
+		StandingOpen: r.FormValue("standing_open") == "1",
+		Visible:      r.FormValue("visible") == "1",
+	}
+	var errs []string
+	if ms, ok := parseContestTime(f.StartText); ok {
+		f.StartAt = ms
+	} else {
+		errs = append(errs, "开始时间没看懂，形如 2026-01-02T15:04")
+	}
+	if ms, ok := parseContestTime(f.EndText); ok {
+		f.EndAt = ms
+	} else {
+		errs = append(errs, "结束时间没看懂，形如 2026-01-02T15:04")
+	}
+	if f.StartAt > 0 && f.EndAt > 0 && f.EndAt <= f.StartAt {
+		errs = append(errs, "结束时间必须晚于开始时间")
+	}
+	if f.CID == "" {
+		// Blank is a request to generate, not a missing field.
+	} else if len(f.CID) > store.MaxCIDLen || strings.ContainsAny(f.CID, "/\\ \t") {
+		errs = append(errs, fmt.Sprintf("比赛编号要 1..%d 个字符，且不含斜杠或空格", store.MaxCIDLen))
+	}
+	if f.Title == "" || tooLong(f.Title, maxContestTitleRunes) {
+		errs = append(errs, fmt.Sprintf("标题要 1..%d 个字符", maxContestTitleRunes))
+	}
+	switch f.Mode {
+	case "", store.ContestOI, store.ContestACM:
+	default:
+		errs = append(errs, "计分模式只认 oi 或 acm")
+	}
+	if f.JoinCode != "" && !validJoinCode(f.JoinCode) {
+		errs = append(errs, "加入码只能是字母、数字和连字符，最长 32 位")
+	}
+	size, err := strconv.Atoi(f.TeamSizeText)
+	if err != nil || size < store.MinTeamSize || size > store.MaxTeamSize {
+		errs = append(errs, fmt.Sprintf("队伍人数要 %d..%d", store.MinTeamSize, store.MaxTeamSize))
+	} else {
+		f.TeamSize = size
+	}
+	penaltyS, err := strconv.Atoi(f.PenaltyText)
+	if err != nil || penaltyS < 0 || penaltyS*1000 > maxPenaltyMS {
+		errs = append(errs, "罚时要 0..3600 秒")
+	} else {
+		f.PenaltyMS = int64(penaltyS) * 1000
+	}
+	return f, errs
+}
+
+// contestData is the payload for the create and edit pages.
+type contestData struct {
+	CID, Title, Statement, Mode string
+	JoinCode                    string
+	StartText, EndText          string
+	TeamSize                    int
+	TeamSizeText, PenaltyText   string
+	StandingOpen, Visible       bool
+	IsNew                       bool
+	Errors                      []string
+	Preview                     template.HTML
+	Action, Key                 string
+	ModeOptions                 []detailOption
+	ProblemCount, MemberCount   int
+	Problems                    []contestProblemRow
+	Bank                        []bankEntry
+	PhaseLabel, PhaseClass      string
+	Window                      string
+}
+
+// newContestData builds the form payload from a stored row, or from the defaults a
+// first-time host would want.
+func newContestData(c store.Contest, isNew bool) contestData {
+	d := contestData{
+		IsNew: isNew, ModeOptions: contestModeOptions,
+		Key: c.CID, Action: "/contests/" + url.PathEscape(c.CID),
+	}
+	if isNew {
+		now := time.Now()
+		// A contest created "now" starts in five minutes and runs two hours, which is
+		// what a person means when they only fill in the title.
+		start := now.Add(5 * time.Minute)
+		d.Action = "/contests"
+		d.Mode, d.TeamSize = store.ContestOI, 1
+		d.StartText = start.Format(contestLayoutMini)
+		d.EndText = start.Add(2 * time.Hour).Format(contestLayoutMini)
+		d.TeamSizeText = "1"
+		d.PenaltyText = strconv.Itoa(store.DefaultPenaltyS)
+		d.Visible = true
+		return d
+	}
+	d.CID, d.Title, d.Statement, d.Mode = c.CID, c.Title, c.Statement, c.Mode
+	d.JoinCode = c.JoinCode
+	d.StartText, d.EndText = formatContestInput(c.StartAt), formatContestInput(c.EndAt)
+	d.TeamSize, d.TeamSizeText = c.TeamSize, strconv.Itoa(c.TeamSize)
+	d.PenaltyText = strconv.FormatInt(c.PenaltyMS/1000, 10)
+	d.StandingOpen, d.Visible = c.StandingOpen, c.Visible
+	d.PhaseLabel, d.PhaseClass = phaseView(c, time.Now().UnixMilli())
+	d.Window = formatContestClock(c.StartAt) + " —— " + formatContestClock(c.EndAt)
+	return d
+}
+
+// fillFromForm keeps what was typed when the save was rejected.
+func (d *contestData) fillFromForm(f contestForm, errs []string) {
+	d.CID, d.Title, d.Statement, d.Mode = f.CID, f.Title, f.Statement, f.Mode
+	d.JoinCode = f.JoinCode
+	d.StartText, d.EndText = f.StartText, f.EndText
+	d.TeamSize, d.Visible, d.StandingOpen = f.TeamSize, f.Visible, f.StandingOpen
+	d.TeamSizeText, d.PenaltyText = f.TeamSizeText, f.PenaltyText
+	d.Errors = errs
+}
+
+var contestModeOptions = []detailOption{
+	{Value: store.ContestOI, Label: "OI 赛制：每题取最高分，同分比总用时"},
+	{Value: store.ContestACM, Label: "ACM 赛制：比解题数，再比首过时间加罚时"},
+}
+
+// bankEntry is one problem offered by the mount field.
+type bankEntry struct {
+	Key, Label string
+}
+
+// contestProblemRow is one mounted problem as the management list shows it.
+type contestProblemRow struct {
+	ProblemID  int64
+	Label, PID string
+	Title      string
+	Ordinal    int
+	PointsText string
+	NoCases    bool
+	Hidden     bool
+}
+
+func contestProblemOf(cp store.ContestProblem) contestProblemRow {
+	points := "题目满分 " + strconv.Itoa(cp.TotalScore)
+	if cp.Points > 0 {
+		points = strconv.Itoa(cp.Points) + "（题目满分 " + strconv.Itoa(cp.TotalScore) + "）"
+	}
+	return contestProblemRow{
+		ProblemID: cp.ProblemID, Label: store.ContestLabel(cp.Label, cp.Ordinal),
+		PID: cp.PID, Title: cp.Title, Ordinal: cp.Ordinal,
+		PointsText: points, NoCases: cp.TotalScore == 0, Hidden: !cp.ProblemVisible,
+	}
+}
+
+// phaseView is the label plus its CSS class, so the pages and the board agree.
+func phaseView(c store.Contest, now int64) (string, string) {
+	phase := c.Phase(now)
+	return phase.Label(), phase.Badge()
+}
+
+// contestAccess is the single answer to "what may this reader see here", shared by
+// every contest page so the templates hold no permission arithmetic.
+type contestAccess struct {
+	Joined       bool
+	CanManage    bool
+	ShowProblems bool
+	ShowMembers  bool
+	ShowBoard    bool
+	// Pending is the message a reader who cannot see the problems should get.
+	WhyNot string
+}
+
+func (s *Server) contestAccessFor(ctx context.Context, c store.Contest, a actor, now int64) contestAccess {
+	v := contestAccess{CanManage: a.canManageContest(c)}
+	// Until a roster exists the mount list belongs to the host alone; M14c widens
+	// this to members once joining is possible.
+	if mm, ok := s.db.ContestMemberOf(ctx, c.ID, a.User.ID); ok {
+		v.Joined = mm.UserID != 0
+	}
+	v.ShowProblems = v.CanManage || v.Joined
+	v.ShowMembers = v.CanManage || v.Joined
+	v.ShowBoard = c.StandingOpen || v.CanManage
+	switch {
+	case v.ShowProblems:
+	case c.JoinCode != "" && c.Phase(now) != store.PhaseOver:
+		v.WhyNot = "这是一场私有比赛，加入之后才能看题目。"
+	case c.Phase(now) == store.PhaseOver:
+		v.WhyNot = "这场比赛已经结束，题目只对当时的成员开放。"
+	default:
+		v.WhyNot = "加入这场比赛之后就能看题目。"
+	}
+	return v
+}
+
+// handleContestList is the public board of contests. Staff also see the hidden
+// ones, which is how a host finds their own draft again.
+func (s *Server) handleContestList(w http.ResponseWriter, r *http.Request) {
+	a, _ := s.authenticate(r)
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	limit := pageLimit(r.URL.Query().Get("limit"))
+	search := r.URL.Query().Get("q")
+	page, err := s.db.ListContests(r.Context(), after, limit, search, a.canHostContests())
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	now := time.Now().UnixMilli()
+	rows := make([]contestListRow, 0, len(page.Items))
+	for _, item := range page.Items {
+		label, class := phaseView(item.Contest, now)
+		rows = append(rows, contestListRow{
+			CID: item.CID, Title: item.Title, Phase: label, PhaseClass: class,
+			Mode: contestModeLabel(item.Mode), Start: formatContestClock(item.StartAt),
+			End:      formatContestClock(item.EndAt),
+			Problems: item.ProblemCount, Members: item.MemberCount,
+			Private:   item.JoinCode != "",
+			Hidden:    !item.Visible,
+			BoardOpen: item.StandingOpen,
+		})
+	}
+	s.page(w, r, http.StatusOK, "比赛", "contests", a.viewer(), msgOf(r), map[string]any{
+		"Rows": rows, "Total": page.Total, "Limit": limit, "Next": page.NextAfter, "Query": search,
+		"CanHost": a.canHostContests(),
+	})
+}
+
+type contestListRow struct {
+	CID, Title string
+	Phase      string
+	PhaseClass string
+	Mode       string
+	Start, End string
+	Problems   int
+	Members    int
+	Private    bool
+	Hidden     bool
+	BoardOpen  bool
+}
+
+func contestModeLabel(mode string) string {
+	if mode == store.ContestACM {
+		return "ACM"
+	}
+	return "OI"
+}
+
+func (s *Server) handleContestNew(w http.ResponseWriter, r *http.Request) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next=/contests/new", http.StatusSeeOther)
+		return
+	}
+	if !a.can(permContestCreate) {
+		s.respondError(w, r, http.StatusForbidden, "缺少权限："+permContestCreate)
+		return
+	}
+	d := newContestData(store.Contest{}, true)
+	s.page(w, r, http.StatusOK, "新建比赛", "contest_edit", a.viewer(), msgOf(r), d)
+}
+
+func (s *Server) handleContestCreate(w http.ResponseWriter, r *http.Request) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next=/contests/new", http.StatusSeeOther)
+		return
+	}
+	if !a.can(permContestCreate) {
+		s.respondError(w, r, http.StatusForbidden, "缺少权限："+permContestCreate)
+		return
+	}
+	f, errs := parseContestForm(r)
+	if r.FormValue("newcode") == "1" {
+		code, err := newJoinCode()
+		if err != nil {
+			errs = append(errs, "生成加入码失败："+err.Error())
+		} else {
+			f.JoinCode = code
+		}
+	}
+	d := newContestData(store.Contest{}, true)
+	d.fillFromForm(f, errs)
+	if r.FormValue("preview") == "1" {
+		d.Preview = renderMarkdownHTML(f.Statement)
+		s.page(w, r, http.StatusOK, "新建比赛", "contest_edit", a.viewer(), "", d)
+		return
+	}
+	if len(errs) > 0 {
+		s.page(w, r, http.StatusBadRequest, "新建比赛", "contest_edit", a.viewer(), "", d)
+		return
+	}
+	var c store.Contest
+	c.OwnerID = a.User.ID
+	f.apply(&c)
+	created, err := s.db.CreateContest(r.Context(), &c)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			d.fillFromForm(f, []string{"比赛编号 " + f.CID + " 已经存在"})
+			s.page(w, r, http.StatusConflict, "新建比赛", "contest_edit", a.viewer(), "", d)
+			return
+		}
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("contest created", "cid", created.CID, "id", created.ID, "by", a.User.Handle)
+	http.Redirect(w, r, "/contests/"+url.PathEscape(created.CID)+"/edit?msg="+
+		url.QueryEscape("比赛已建好，现在挂题"), http.StatusSeeOther)
+}
+
+// contestForEdit resolves {key} and applies the management right.
+func (s *Server) contestForEdit(w http.ResponseWriter, r *http.Request) (actor, store.Contest, bool) {
+	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return actor{}, c, false
+	}
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.Path), http.StatusSeeOther)
+		return actor{}, c, false
+	}
+	if !a.canManageContest(c) {
+		s.respondError(w, r, http.StatusForbidden,
+			"这场比赛由他人创建，需要 "+permContestManageAny+" 才能修改")
+		return a, c, false
+	}
+	return a, c, true
+}
+
+func (s *Server) handleContestEdit(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestForEdit(w, r)
+	if !ok {
+		return
+	}
+	d, err := s.contestEditData(r, c)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.page(w, r, http.StatusOK, "编辑 "+c.CID, "contest_edit", a.viewer(), msgOf(r), d)
+}
+
+// contestEditData adds what the host needs next to the form: the mount list and the
+// problem bank the mount field offers.
+func (s *Server) contestEditData(r *http.Request, c store.Contest) (contestData, error) {
+	d := newContestData(c, false)
+	problems, err := s.db.ListContestProblems(r.Context(), c.ID)
+	if err != nil {
+		return d, err
+	}
+	for _, cp := range problems {
+		row := contestProblemOf(cp)
+		d.Problems = append(d.Problems, row)
+	}
+	d.ProblemCount = len(problems)
+	members, err := s.db.ListContestMembers(r.Context(), c.ID)
+	if err != nil {
+		return d, err
+	}
+	d.MemberCount = len(members)
+	a, _ := s.authenticate(r)
+	bank, err := s.db.ListProblems(r.Context(), 0, 500, "", !a.can(permProblemEditAny))
+	if err != nil {
+		return d, err
+	}
+	for _, p := range bank.Items {
+		d.Bank = append(d.Bank, bankEntry{Key: p.PID, Label: p.PID + "　" + p.Title})
+	}
+	return d, nil
+}
+
+func (s *Server) handleContestUpdate(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestForEdit(w, r)
+	if !ok {
+		return
+	}
+	f, errs := parseContestForm(r)
+	if r.FormValue("newcode") == "1" {
+		code, err := newJoinCode()
+		if err != nil {
+			errs = append(errs, "生成加入码失败："+err.Error())
+		} else {
+			f.JoinCode = code
+		}
+	}
+	d, err := s.contestEditData(r, c)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	d.fillFromForm(f, errs)
+	if r.FormValue("preview") == "1" {
+		d.Preview = renderMarkdownHTML(f.Statement)
+		s.page(w, r, http.StatusOK, "编辑 "+c.CID, "contest_edit", a.viewer(), "", d)
+		return
+	}
+	if len(errs) > 0 {
+		s.page(w, r, http.StatusBadRequest, "编辑 "+c.CID, "contest_edit", a.viewer(), "", d)
+		return
+	}
+	f.apply(&c)
+	updated, err := s.db.UpdateContest(r.Context(), c)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			d.fillFromForm(f, []string{"比赛编号 " + f.CID + " 已经存在"})
+			s.page(w, r, http.StatusConflict, "编辑 "+c.CID, "contest_edit", a.viewer(), "", d)
+			return
+		}
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("contest updated", "cid", updated.CID, "by", a.User.Handle)
+	http.Redirect(w, r, "/contests/"+url.PathEscape(updated.CID)+"?msg="+url.QueryEscape("已保存"), http.StatusSeeOther)
+}
+
+func (s *Server) handleContestDelete(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestForEdit(w, r)
+	if !ok {
+		return
+	}
+	if err := s.db.DeleteContest(r.Context(), c.ID); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("contest deleted", "cid", c.CID, "id", c.ID, "by", a.User.Handle)
+	http.Redirect(w, r, "/contests?msg="+url.QueryEscape("已删除 "+c.CID+"：名单与挂题记录一并清掉了，历史提交还在"), http.StatusSeeOther)
+}
+
+// handleContestProblemSave mounts a problem, or re-saves the settings of one that is
+// already there. A problem that is not published may only be mounted by someone who
+// may edit it, so hosting a contest cannot leak somebody else's hidden problem.
+func (s *Server) handleContestProblemSave(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestForEdit(w, r)
+	if !ok {
+		return
+	}
+	key := strings.TrimSpace(r.FormValue("problem"))
+	if key == "" {
+		s.backToContestEdit(w, r, c, "要填题目编号")
+		return
+	}
+	p, err := s.db.FindProblem(r.Context(), key)
+	if err != nil {
+		s.backToContestEdit(w, r, c, "找不到题目 "+key)
+		return
+	}
+	points, err := strconv.Atoi(strings.TrimSpace(defaultZero(r.FormValue("points"))))
+	if err != nil || points < 0 {
+		s.backToContestEdit(w, r, c, "比赛内分值要是不小于 0 的整数")
+		return
+	}
+	label := strings.TrimSpace(r.FormValue("label"))
+	if len(label) > 8 || strings.ContainsAny(label, "/\\ \t") {
+		s.backToContestEdit(w, r, c, "题号标签最多 8 个字符，不能含斜杠或空格")
+		return
+	}
+	if !p.Visible && !a.canEditProblem(p) {
+		s.backToContestEdit(w, r, c, "题目 "+p.PID+" 没公开，只有它的作者或持 "+permProblemEditAny+" 的人能挂进比赛")
+		return
+	}
+	cp := store.ContestProblem{ContestID: c.ID, ProblemID: p.ID, Points: points, Label: label}
+	if mounted, _ := s.db.ContestProblemMounted(r.Context(), c.ID, p.ID); mounted {
+		if _, err := s.db.UpdateContestProblem(r.Context(), cp); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		s.log.Info("contest problem updated", "cid", c.CID, "pid", p.PID, "by", a.User.Handle)
+		s.backToContestEdit(w, r, c, "已更新 "+p.PID+" 的比赛设置")
+		return
+	}
+	created, err := s.db.AddContestProblem(r.Context(), &cp)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			s.backToContestEdit(w, r, c, "挂不上去："+err.Error())
+			return
+		}
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("contest problem mounted", "cid", c.CID, "pid", p.PID, "label",
+		store.ContestLabel(created.Label, created.Ordinal), "by", a.User.Handle)
+	s.backToContestEdit(w, r, c, "已挂上 "+store.ContestLabel(created.Label, created.Ordinal)+"："+p.PID)
+}
+
+func (s *Server) handleContestProblemRemove(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestForEdit(w, r)
+	if !ok {
+		return
+	}
+	p, err := s.db.FindProblem(r.Context(), r.PathValue("problemKey"))
+	if err != nil {
+		s.backToContestEdit(w, r, c, "找不到题目")
+		return
+	}
+	if err := s.db.RemoveContestProblem(r.Context(), c.ID, p.ID); err != nil {
+		s.backToContestEdit(w, r, c, "这道题没挂在这场比赛里")
+		return
+	}
+	s.log.Info("contest problem removed", "cid", c.CID, "pid", p.PID, "by", a.User.Handle)
+	// History is untouched: submissions keep their contest_id and still pay, into a
+	// column the board marks 已移除.
+	s.backToContestEdit(w, r, c, "已移下 "+p.PID+"（历史提交照算，榜上会多一列「已移除」）")
+}
+
+func (s *Server) handleContestProblemMove(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestForEdit(w, r)
+	if !ok {
+		return
+	}
+	p, err := s.db.FindProblem(r.Context(), r.PathValue("problemKey"))
+	if err != nil {
+		s.backToContestEdit(w, r, c, "找不到题目")
+		return
+	}
+	up := r.FormValue("dir") == "up"
+	if err := s.db.MoveContestProblem(r.Context(), c.ID, p.ID, up); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("contest problem moved", "cid", c.CID, "pid", p.PID, "dir", r.FormValue("dir"), "by", a.User.Handle)
+	s.backToContestEdit(w, r, c, "已调整 "+p.PID+" 的顺序")
+}
+
+// defaultZero treats a blank number field as the neutral value rather than a typo,
+// because a browser posts every field of the form.
+func defaultZero(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "0"
+	}
+	return raw
+}
+
+// backToContestEdit is the one redirect every contest write ends with, so the flash
+// always lands on the page the host was working on.
+func (s *Server) backToContestEdit(w http.ResponseWriter, r *http.Request, c store.Contest, msg string) {
+	http.Redirect(w, r, "/contests/"+url.PathEscape(c.CID)+"/edit?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// contestHomeData is what the contest page shows a reader.
+type contestHomeData struct {
+	CID, Title   string
+	Statement    template.HTML
+	HasStatement bool
+	Phase        string
+	PhaseClass   string
+	Mode         string
+	Window       string
+	Countdown    string
+	TeamSize     int
+	PenaltyText  string
+	BoardOpen    bool
+	Private      bool
+	Problems     []contestProblemRow
+	Access       contestAccess
+	Members      int
+	CanManage    bool
+	EditLink     string
+}
+
+// handleContestHome is the contest front page: the window, the rules, and the
+// problem list as far as the reader is allowed to see it.
+func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
+	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	a, _ := s.authenticate(r)
+	if !c.Visible && !a.canManageContest(c) && !a.canHostContests() {
+		s.respondError(w, r, http.StatusNotFound, "没有这场比赛："+c.CID)
+		return
+	}
+	now := time.Now().UnixMilli()
+	access := s.contestAccessFor(r.Context(), c, a, now)
+	d := contestHomeData{
+		CID: c.CID, Title: c.Title, Statement: renderMarkdownHTML(c.Statement),
+		HasStatement: strings.TrimSpace(c.Statement) != "",
+		Mode:         contestModeLabel(c.Mode),
+		Window:       formatContestClock(c.StartAt) + " —— " + formatContestClock(c.EndAt),
+		TeamSize:     c.TeamSize, Access: access, CanManage: access.CanManage,
+		BoardOpen: c.StandingOpen,
+		Private:   c.JoinCode != "",
+		EditLink:  "/contests/" + url.PathEscape(c.CID) + "/edit",
+	}
+	switch c.Phase(now) {
+	case store.PhaseUpcoming:
+		d.Countdown = "距开始还有 " + formatSpan(c.StartAt-now)
+	case store.PhaseRunning:
+		d.Countdown = "距结束还有 " + formatSpan(c.EndAt-now)
+	case store.PhaseOver:
+		d.Countdown = "已结束 " + formatSpan(now-c.EndAt) + "，成绩不再变动"
+	}
+	d.Phase = c.Phase(now).Label()
+	d.PhaseClass = c.Phase(now).Badge()
+	penalty := c.PenaltyMS / 60000
+	d.PenaltyText = "每次未过尝试罚 " + strconv.FormatInt(penalty, 10) + " 分钟"
+	if c.PenaltyMS == 0 {
+		d.PenaltyText = "不设罚时"
+	}
+	if access.ShowProblems {
+		problems, err := s.db.ListContestProblems(r.Context(), c.ID)
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		for _, cp := range problems {
+			d.Problems = append(d.Problems, contestProblemOf(cp))
+		}
+		members, err := s.db.ListContestMembers(r.Context(), c.ID)
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		d.Members = len(members)
+	}
+	s.page(w, r, http.StatusOK, c.Title, "contest", a.viewer(), msgOf(r), d)
+}

@@ -1,0 +1,156 @@
+{{define "content"}}
+<h1>{{if .Data.IsNew}}新建比赛{{else}}编辑比赛 {{.Data.Key}}{{end}}</h1>
+<p class="meta">比赛说明走与题面同一套 Markdown + <code>$KaTeX$</code>。
+  时间按<b>本站服务器时区</b>填写和显示，格式 <code>2026-01-02T15:04</code>。
+{{if not .Data.IsNew}}<a href="/contests/{{.Data.Key}}">看比赛主页</a>{{end}}</p>
+
+{{if .Data.Errors}}
+<div class="flash">
+  {{range .Data.Errors}}<p>{{.}}</p>{{end}}
+</div>
+{{end}}
+
+<form method="post" action="{{.Data.Action}}">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+
+  <div class="row">
+    <div>
+      <label>编号（留空自动生成 C0001 这样）</label>
+      <input type="text" name="cid" value="{{.Data.CID}}" maxlength="32" autocomplete="off" spellcheck="false">
+    </div>
+    <div>
+      <label>开始时间</label>
+      <input type="datetime-local" name="start_at" value="{{.Data.StartText}}" required step="60">
+    </div>
+    <div>
+      <label>结束时间</label>
+      <input type="datetime-local" name="end_at" value="{{.Data.EndText}}" required step="60">
+    </div>
+  </div>
+
+  <label>标题</label>
+  <input type="text" name="title" value="{{.Data.Title}}" maxlength="200" required>
+
+  <label>计分模式</label>
+  <select name="mode">
+    {{$cur := .Data.Mode}}
+    {{range .Data.ModeOptions}}
+    <option value="{{.Value}}" {{if eq .Value $cur}}selected{{end}}>{{.Label}}</option>
+    {{end}}
+  </select>
+
+  <div class="row">
+    <div>
+      <label>每队人数（1 = 个人赛）</label>
+      <input type="number" name="team_size" value="{{.Data.TeamSizeText}}" min="1" max="5" step="1" required>
+    </div>
+    <div>
+      <label>ACM 罚时（秒/次未过，OI 用不上）</label>
+      <input type="number" name="penalty_s" value="{{.Data.PenaltyText}}" min="0" max="3600" step="1" required>
+    </div>
+  </div>
+
+  <div class="row">
+    <div style="flex:1 1 18rem">
+      <label>加入码（留空 = 公开赛，任何人免码加入）</label>
+      <input type="text" name="join_code" value="{{.Data.JoinCode}}" maxlength="32" autocomplete="off" spellcheck="false" placeholder="只有字母数字和 -">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button type="submit" name="newcode" value="1">随机生成</button>
+    </div>
+  </div>
+  <p class="meta">加入码只有你（和持 <code>contest.manage.any</code> 的人）看得到，列表、榜单与 URL 上都不会出现。</p>
+
+  <label class="check">
+    <input type="checkbox" name="visible" value="1" {{if .Data.Visible}}checked{{end}}>
+    出现在比赛列表（不勾只有你自己看得到）
+  </label>
+  <label class="check">
+    <input type="checkbox" name="standing_open" value="1" {{if .Data.StandingOpen}}checked{{end}}>
+    榜单公示（不勾 = 封榜，别人看不到你的行，自己仍能看到自己）
+  </label>
+
+  <label>比赛说明</label>
+  <textarea name="statement" rows="10" spellcheck="false" autocomplete="off" placeholder="## 说明&#10;&#10;本场共 $n$ 题……">{{.Data.Statement}}</textarea>
+
+  <p class="row">
+    <input type="submit" value="{{if .Data.IsNew}}创建并去挂题{{else}}保存{{end}}">
+    <button type="submit" name="preview" value="1">预览</button>
+  </p>
+</form>
+
+{{if .Data.Preview}}
+<h2>预览</h2>
+<article class="preview">{{.Data.Preview}}</article>
+{{end}}
+
+{{if not .Data.IsNew}}
+<h2>挂题</h2>
+<p class="meta">
+  现在 {{.Data.ProblemCount}} 题 · {{.Data.MemberCount}} 人 · {{.Data.PhaseLabel}}（{{.Data.Window}}）
+  <br>顺序就是题号：第 1 题是 A，第 2 题是 B；自己填的题号标签优先。
+  <br>比赛内分值 = 题目分值 ×（比赛设定分 ÷ 题目满分），所以设定分只是等比缩放，不能凭空加分。
+</p>
+
+<table>
+  <tr><th>题号</th><th>题目</th><th class="num">分值</th><th>操作</th></tr>
+  {{range .Data.Problems}}
+  <tr>
+    <td>{{.Label}}</td>
+    <td><a href="/problems/{{.PID}}">{{.PID}}</a> {{.Title}}{{if .Hidden}} <span class="hidden">未公开</span>{{end}}{{if .NoCases}} <span class="bad">没有判题用例</span>{{end}}</td>
+    <td class="num">{{.PointsText}}</td>
+    <td class="ops">
+      <form class="inline" method="post" action="/contests/{{$.Data.Key}}/problems/{{.PID}}/move">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <input type="hidden" name="dir" value="up">
+        <button type="submit">↑</button>
+      </form>
+      <form class="inline" method="post" action="/contests/{{$.Data.Key}}/problems/{{.PID}}/move">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <input type="hidden" name="dir" value="down">
+        <button type="submit">↓</button>
+      </form>
+      <form class="inline" method="post" action="/contests/{{$.Data.Key}}/problems/{{.PID}}/remove"
+            onsubmit="return confirm('把 {{.PID}} 移下比赛？历史提交照算，榜上会多一列「已移除」。')">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <button type="submit" class="danger">移下</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="4">还没挂题。</td></tr>
+  {{end}}
+</table>
+
+<form method="post" action="/contests/{{.Data.Key}}/problems" class="row">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div style="flex:1 1 18rem">
+    <label>题目编号（已挂过的题再填一次就是改它的分值）</label>
+    <input type="text" name="problem" list="bank" autocomplete="off" spellcheck="false" placeholder="P1001" required>
+    <datalist id="bank">
+      {{range .Data.Bank}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
+    </datalist>
+  </div>
+  <div>
+    <label>比赛内分值（0 = 用题目满分）</label>
+    <input type="number" name="points" value="0" min="0" step="1">
+  </div>
+  <div>
+    <label>题号标签（可空）</label>
+    <input type="text" name="label" maxlength="8" autocomplete="off" spellcheck="false" placeholder="A">
+  </div>
+  <div>
+    <label>&nbsp;</label>
+    <input type="submit" value="挂上">
+  </div>
+</form>
+
+<h2>危险区</h2>
+<form method="post" action="/contests/{{.Data.Key}}/delete"
+      onsubmit="return confirm('删除 {{.Data.Key}}：名单、队伍与挂题记录都会没掉，选手的提交记录保留。')">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <p><button type="submit" class="danger">删除这场比赛</button></p>
+</form>
+{{end}}
+{{end}}

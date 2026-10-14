@@ -1,0 +1,38 @@
+{{define "content"}}
+<h1>{{.Data.Title}}</h1>
+
+<p class="meta">
+  <span class="badge {{.Data.PhaseClass}}">{{.Data.Phase}}</span>
+  {{.Data.CID}} · {{.Data.Mode}} 赛制 · {{.Data.Window}}
+  · {{.Data.Countdown}}
+  · 每队 {{.Data.TeamSize}} 人
+  · {{.Data.PenaltyText}}
+  · 榜单{{if .Data.BoardOpen}}公示{{else}}<span class="warn">封榜</span>{{end}}
+  {{if .Data.Private}} · <span class="warn">私有</span>{{end}}
+</p>
+
+{{if .Data.CanManage}}<p class="meta"><a href="{{.Data.EditLink}}">编辑比赛与挂题</a></p>{{end}}
+
+{{if .Data.HasStatement}}
+<article>{{.Data.Statement}}</article>
+{{end}}
+
+<h2>题目</h2>
+{{if .Data.Access.ShowProblems}}
+<table>
+  <tr><th>题号</th><th>题目</th><th class="num">分值</th></tr>
+  {{range .Data.Problems}}
+  <tr>
+    <td><a href="/problems/{{.PID}}">{{.Label}}</a></td>
+    <td><a href="/problems/{{.PID}}">{{.PID}}</a> {{.Title}}</td>
+    <td class="num">{{.PointsText}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="3">这场比赛还没挂题。</td></tr>
+  {{end}}
+</table>
+<p class="meta">共 {{.Data.Members}} 人参赛。题面里的判题详情按题目自己的级别走，比赛不额外放行。</p>
+{{else}}
+<p class="flash">{{.Data.Access.WhyNot}}</p>
+{{end}}
+{{end}}

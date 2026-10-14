@@ -39,6 +39,22 @@ func (a actor) canSeeTestcases(p store.Problem) bool {
 	return a.can(permTestcaseManage) || a.canEditProblem(p)
 }
 
+// canManageContest is the same ownership rule as authoring, one level up: whoever
+// created a contest keeps editing it, and contest.manage.any is only needed to touch
+// somebody else's.
+func (a actor) canManageContest(c store.Contest) bool {
+	if a.can(permContestManageAny) {
+		return true
+	}
+	return c.OwnerID != 0 && c.OwnerID == a.User.ID
+}
+
+// canHostContests is the weaker question the list page asks: may this reader see the
+// contests that are hidden from the public list.
+func (a actor) canHostContests() bool {
+	return a.can(permContestCreate) || a.can(permContestManageAny)
+}
+
 // requirePerm authenticates and enforces a single capability. The message names
 // the key rather than a label so it can never drift from what the database holds.
 func (s *Server) requirePerm(w http.ResponseWriter, r *http.Request, key string) (actor, bool) {

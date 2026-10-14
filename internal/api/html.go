@@ -65,6 +65,8 @@ type viewer struct {
 	Site   bool
 	// Author is the 出题 entry: creating a problem or editing anyone's problem.
 	Author bool
+	// Contests is the 办赛 entry: creating a contest or managing anyone's.
+	Contests bool
 	// Unread is the private-message badge in the nav bar.
 	Unread int
 	CSRF   string

@@ -204,7 +204,8 @@ func (a actor) viewer() *viewer {
 	return &viewer{
 		Handle: a.User.Handle, Name: name, Admin: a.Admin,
 		Manage: a.can(permPermissionManage), Site: a.can(permSiteSettings),
-		Author: a.can(permProblemCreate) || a.can(permProblemEditAny),
-		Unread: a.Unread, CSRF: a.Session.CSRF,
+		Author:   a.can(permProblemCreate) || a.can(permProblemEditAny),
+		Contests: a.canHostContests(),
+		Unread:   a.Unread, CSRF: a.Session.CSRF,
 	}
 }
