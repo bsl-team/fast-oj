@@ -41,10 +41,11 @@
     <td class="num">{{.Time}}</td>
     {{range .Cells}}
     <td class="num">
-      {{if .Removed}}<span class="muted" title="题目已移下比赛，成绩照算">{{.Text}}</span>
-      {{else if .PID}}<a href="/problems/{{.PID}}" title="{{.Title}}">{{.Text}}</a>
-      {{else}}{{.Text}}{{end}}
-      {{if .Extra}}<br><span class="badge {{.Class}}">{{.Extra}}</span>{{end}}
+      {{if .Seen}}
+      {{if .PID}}<a class="score {{.Class}}" href="/problems/{{.PID}}" title="{{.Title}}{{if .Removed}} · 已移下比赛，成绩照算{{end}}">{{.Text}}</a>
+      {{else}}<span class="score {{.Class}}">{{.Text}}</span>{{end}}
+      {{if .When}}<br><span class="when">{{.When}}</span>{{end}}
+      {{else}}<span class="when">—</span>{{end}}
     </td>
     {{end}}
   </tr>

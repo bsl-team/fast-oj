@@ -126,3 +126,18 @@ article.dm .body { white-space: pre-wrap; }
 /* daily check-in */
 form.checkin { display: flex; gap: .7rem; align-items: center; margin-top: .8rem; }
 form.checkin .meta { margin: 0; }
+
+/* 比赛成绩榜：得分数字按「本题得分百分比」从红渐变到绿，时间一律灰字不带颜色。
+   混色走 --bad/--ok，所以暗色主题的对比度跟着主题变量一起调。 */
+.score { font-weight: 600; font-variant-numeric: tabular-nums; text-decoration: none; }
+.score.sc0 { color: var(--bad); }
+.score.sc1 { color: color-mix(in oklab, var(--bad) 89%, var(--ok)); }
+.score.sc2 { color: color-mix(in oklab, var(--bad) 78%, var(--ok)); }
+.score.sc3 { color: color-mix(in oklab, var(--bad) 67%, var(--ok)); }
+.score.sc4 { color: color-mix(in oklab, var(--bad) 56%, var(--ok)); }
+.score.sc5 { color: color-mix(in oklab, var(--bad) 44%, var(--ok)); }
+.score.sc6 { color: color-mix(in oklab, var(--bad) 33%, var(--ok)); }
+.score.sc7 { color: color-mix(in oklab, var(--bad) 22%, var(--ok)); }
+.score.sc8 { color: color-mix(in oklab, var(--bad) 11%, var(--ok)); }
+.score.sc9 { color: var(--ok); }
+table .when { color: var(--muted); font-size: .8rem; }

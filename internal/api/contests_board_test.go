@@ -133,10 +133,21 @@ func TestContestStandingsOIMode(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("standings = %d", code)
 	}
-	for _, want := range []string{"成绩榜", "OI 榜", "oi_best", "oi_half", "10/10", "5/10", "每题取最高分"} {
+	for _, want := range []string{"成绩榜", "OI 榜", "oi_best", "oi_half", "每题取最高分"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("board missing %q:\n%s", want, page)
 		}
+	}
+	// 满分那格在色阶最绿的端点，半分那格还在红→绿中间；数字不再带 /100 的分母。
+	if !strings.Contains(page, `class="score sc9" href="/problems/P7000" title="十分题 · 本题满分 10">10</a>`) {
+		t.Errorf("a full-mark cell should be the green end of the scale:\n%s", page)
+	}
+	if !strings.Contains(page, `class="score sc4" href="/problems/P7001"`) || !strings.Contains(page, `>5</a>`) {
+		t.Errorf("a half-scored cell should sit mid-scale and print only its number:\n%s", page)
+	}
+	// 时间是灰字另起一行，自己不带颜色。
+	if !strings.Contains(page, `<span class="when">`) {
+		t.Errorf("the clock should be printed under the score:\n%s", page)
 	}
 	// The perfect score leads, the half-scorer trails.
 	if strings.Index(page, ">oi_best</td>") > strings.Index(page, ">oi_half</td>") {
@@ -144,10 +155,6 @@ func TestContestStandingsOIMode(t *testing.T) {
 	}
 	if !strings.Contains(page, `class="me"`) {
 		t.Errorf("your own row should be highlighted:\n%s", page)
-	}
-	// The bundle that only half passed pays five, and the page says so in the cell.
-	if strings.Count(page, "5/10") < 1 {
-		t.Errorf("the half-passed bundle should read 5/10:\n%s", page)
 	}
 }
 
@@ -239,7 +246,7 @@ func TestContestStandingsACM(t *testing.T) {
 	h.submitAndJudge(slow, "P7021", cid, "WA", 0)
 
 	page := h.getPage(fast, "/contests/C7020/standings")
-	for _, want := range []string{"ACM", "解题", "罚时", "acm_fast", "acm_slow", "不罚时", "未过"} {
+	for _, want := range []string{"ACM", "解题", "罚时", "acm_fast", "acm_slow", "不罚时"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("ACM board missing %q:\n%s", want, page)
 		}
@@ -247,11 +254,16 @@ func TestContestStandingsACM(t *testing.T) {
 	if strings.Index(page, ">acm_fast</td>") > strings.Index(page, ">acm_slow</td>") {
 		t.Errorf("equal solves should be ordered by penalty:\n%s", page)
 	}
-	// A problem nobody solved shows how many tries it took, not a score. The solved
-	// one shows the time of its first accept.
-	if !strings.Contains(page, `P7021" title="case ready">2</a>`) ||
-		strings.Contains(page, `P7021" title="case ready">0</a>`) {
-		t.Errorf("the unsolved problem should show two attempts, not a score:\n%s", page)
+	// 没做出来的题：数字是尝试次数，颜色在最红的一端，也没有时间。
+	if !strings.Contains(page, `class="score sc0" href="/problems/P7021" title="case ready · 未解出">2</a>`) {
+		t.Errorf("the unsolved problem should print two attempts at the red end:\n%s", page)
+	}
+	// 做出来的题：最绿的一端，首过时刻走下面的灰字。
+	if !strings.Contains(page, `class="score sc9" href="/problems/P7020" title="case ready · 已解出">1</a>`) {
+		t.Errorf("a solved problem should be green:\n%s", page)
+	}
+	if !strings.Contains(page, `<span class="when">`) {
+		t.Errorf("the first-accept clock should be printed under the number:\n%s", page)
 	}
 }
 
@@ -285,7 +297,7 @@ func TestContestStandingsTeamMode(t *testing.T) {
 	h.submitAndJudge(lonely, "P7030", cid, "WA", 1, 0)
 
 	page := h.getPage(lonely, "/contests/C7030/standings")
-	for _, want := range []string{"冠军队", "team_a、team_b", "队伍名次", "2/2", "team_c"} {
+	for _, want := range []string{"冠军队", "team_a、team_b", "队伍名次", "team_c", `class="score sc9" href="/problems/P7030"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("team board missing %q:\n%s", want, page)
 		}
@@ -325,4 +337,31 @@ func TestContestStandingsIgnoreUnfinishedRows(t *testing.T) {
 	if !strings.Contains(page, "pending_one") || !strings.Contains(page, "你现在第 1 名") {
 		t.Errorf("the judged row should be on the board:\n%s", page)
 	}
+}
+
+func TestScoreColorScale(t *testing.T) {
+	// 红→绿的挡位按「本题得分百分比」走，满分必须在最绿的一档，0 分在最红的一档。
+	for in, want := range map[[2]int]string{
+		{0, 10}: "sc0", {1, 10}: "sc0", {9, 10}: "sc8", {10, 10}: "sc9",
+		{5, 10}: "sc4", {50, 100}: "sc4", {100, 0}: "sc0", {-1, 10}: "sc0",
+		{3, 7}: "sc3", {7, 7}: "sc9",
+	} {
+		if got := scoreClass(in[0], in[1]); got != want {
+			t.Errorf("scoreClass(%d,%d) = %s, want %s", in[0], in[1], got, want)
+		}
+	}
+	// 一个格子只该有十档之一，别生成出 style.css 里没有的类名。
+	for _, cls := range []string{"sc0", "sc9"} {
+		if !strings.Contains(styleSheet(), "."+cls) {
+			t.Errorf("style.css lost the %s colour step", cls)
+		}
+	}
+}
+
+func styleSheet() string {
+	body, err := assetFS.ReadFile("static/style.css")
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }

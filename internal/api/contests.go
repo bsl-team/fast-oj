@@ -951,17 +951,30 @@ func (s *Server) handleContestProblemEntry(w http.ResponseWriter, r *http.Reques
 
 // --- M14d: the independent board ---
 
-// standingCellView is one competitor/problem square. The two modes print different
-// things in it, so the store hands over the numbers and the page decides.
+// standingCellView is one competitor/problem square. The number is the score (OI) or
+// the attempt count (ACM) and carries the colour; the time always goes underneath in
+// grey, because a coloured clock reads like a verdict.
 type standingCellView struct {
 	Label   string
 	PID     string
 	Title   string
 	Text    string
-	Extra   string
 	Class   string
+	When    string
 	Seen    bool
 	Removed bool
+}
+
+// scoreClass is the red→green scale: the further a score is from the problem's own
+// maximum, the redder the number. 0 分 = sc0（红），满分 = sc9（绿）。
+func scoreClass(points, max int) string {
+	if max <= 0 || points <= 0 {
+		return "sc0"
+	}
+	if points >= max {
+		return "sc9"
+	}
+	return "sc" + strconv.Itoa(points*9/max)
 }
 
 type standingRowView struct {
@@ -1089,7 +1102,7 @@ func cellView(mode string, cell store.Cell) standingCellView {
 		Label: cell.Label, PID: cell.PID, Title: cell.Title,
 		Seen: cell.Seen, Removed: cell.Removed,
 	}
-	if !cell.Seen {
+	if !v.Seen {
 		v.Text = "—"
 		return v
 	}
@@ -1098,24 +1111,22 @@ func cellView(mode string, cell store.Cell) standingCellView {
 		attempts = strconv.Itoa(cell.Attempts) + " 次"
 	}
 	if mode == store.ContestACM {
+		// 一题只认首次 AC：数字是尝试次数，绿色即已解出，时间放下面。
+		v.Text, v.Class = strconv.Itoa(cell.Attempts), "sc0"
+		v.Title = cell.Title + " · 未解出"
 		if cell.Solved {
-			v.Text, v.Extra, v.Class = formatClock(cell.TimeMS), attempts, "AC"
-			return v
+			v.Class = "sc9"
+			v.Title = cell.Title + " · 已解出"
+			v.When = formatClock(cell.TimeMS)
 		}
-		v.Text, v.Extra, v.Class = strconv.Itoa(cell.Attempts), "未过", "bad"
 		return v
 	}
-	v.Text = strconv.Itoa(cell.Points) + "/" + strconv.Itoa(cell.Max)
-	switch {
-	case cell.Max > 0 && cell.Points == cell.Max:
-		v.Class = "AC"
-	case cell.Points > 0:
-		v.Class = "warn"
-	default:
-		v.Class = "bad"
-	}
-	if cell.TimeMS > 0 {
-		v.Extra = formatClock(cell.TimeMS)
+	v.Text = strconv.Itoa(cell.Points)
+	v.Class = scoreClass(cell.Points, cell.Max)
+	v.Title = cell.Title + " · 本题满分 " + strconv.Itoa(cell.Max)
+	v.When = formatClock(cell.TimeMS)
+	if attempts != "" {
+		v.When += " · " + attempts
 	}
 	return v
 }
