@@ -209,11 +209,11 @@ func (db *DB) DeleteProblem(ctx context.Context, id int64) error {
 // Detail levels. They are stored as text so the console can show them without a
 // join, and an unknown value falls back to the middle of the range.
 const (
-	DetailNone  = "none"
-	DetailCase  = "case"
-	DetailDiff  = "diff"
-	DetailFull  = "full"
-	DetailMax   = DetailFull
+	DetailNone    = "none"
+	DetailCase    = "case"
+	DetailDiff    = "diff"
+	DetailFull    = "full"
+	DetailMax     = DetailFull
 	defaultDetail = DetailDiff
 )
 

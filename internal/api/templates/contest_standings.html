@@ -1,0 +1,65 @@
+{{define "content"}}
+<h1>{{.Data.Title}} · 成绩榜</h1>
+
+<p class="meta">
+  <span class="badge {{.Data.PhaseClass}}">{{.Data.Phase}}</span>
+  {{.Data.CID}} · {{.Data.Mode}} 赛制 · {{.Data.Window}}
+  · {{.Data.Members}} 人
+  {{if .Data.TeamMode}}· 队伍名次（队内每题取最优，尝试次数按队求和）{{end}}
+</p>
+
+<p class="meta">
+  <a href="{{.Data.Back}}">回比赛主页</a>
+  {{if .Data.BoardOpen}}· 榜单公示{{else}}· <span class="warn">封榜中</span>{{end}}
+  {{if .Data.CanManage}}{{if .Data.Sealed}}（你是 host，看到的是完整榜单）{{end}}{{end}}
+  · {{.Data.PenaltyText}}
+</p>
+
+{{if .Data.SelfRank}}
+<p class="flash">你现在{{.Data.SelfRank}}，下面只有你自己这一行。</p>
+{{end}}
+
+{{if .Data.Rows}}
+<table>
+  <tr>
+    <th class="num">#</th><th>{{if .Data.TeamMode}}队伍{{else}}选手{{end}}</th>
+    {{if .Data.TeamMode}}<th>成员</th>{{end}}
+    {{if eq .Data.Mode "ACM"}}<th class="num">解题</th>{{else}}<th class="num">得分</th>{{end}}
+    <th class="num">{{if eq .Data.Mode "ACM"}}罚时{{else}}用时{{end}}</th>
+    {{range .Data.Columns}}<th class="num">{{.}}</th>{{end}}
+  </tr>
+  {{range .Data.Rows}}
+  <tr{{if .Me}} class="me"{{end}}>
+    <td class="num">{{.Rank}}</td>
+    <td>{{.Name}}</td>
+    {{if $.Data.TeamMode}}<td>{{.Members}}</td>{{end}}
+    {{if eq $.Data.Mode "ACM"}}
+    <td class="num">{{.Solved}}</td>
+    {{else}}
+    <td class="num">{{.Score}}</td>
+    {{end}}
+    <td class="num">{{.Time}}</td>
+    {{range .Cells}}
+    <td class="num">
+      {{if .Removed}}<span class="muted" title="题目已移下比赛，成绩照算">{{.Text}}</span>
+      {{else if .PID}}<a href="/problems/{{.PID}}" title="{{.Title}}">{{.Text}}</a>
+      {{else}}{{.Text}}{{end}}
+      {{if .Extra}}<br><span class="badge {{.Class}}">{{.Extra}}</span>{{end}}
+    </td>
+    {{end}}
+  </tr>
+  {{end}}
+</table>
+<p class="meta">
+  {{if eq .Data.Mode "ACM"}}
+  比解题数，同数再比「首过时刻 + 罚时」；编译错误与判机故障不罚时，判机故障也不算尝试。
+  {{else}}
+  每题取最高分（不是最后一次），同分再比总用时；带捆绑的用例组要整组过才给分。
+  {{end}}
+</p>
+{{else if .Data.WhyNot}}
+<p class="flash">{{.Data.WhyNot}}</p>
+{{else}}
+<p class="meta">还没有判完的提交，榜上暂时没有人。</p>
+{{end}}
+{{end}}

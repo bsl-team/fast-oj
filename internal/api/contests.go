@@ -322,7 +322,9 @@ func (s *Server) contestAccessFor(ctx context.Context, c store.Contest, a actor,
 	// contest see it, a passing reader does not.
 	v.ShowProblems = v.CanManage || v.Joined
 	v.ShowMembers = v.CanManage || v.Joined
-	v.ShowBoard = c.StandingOpen || v.CanManage
+	// Anyone inside the contest sees a board: the whole field when it is open, their
+	// own row when it is sealed. Only an outsider is turned away.
+	v.ShowBoard = c.StandingOpen || v.CanManage || v.Joined
 	switch {
 	case v.ShowProblems:
 	case c.JoinCode != "" && c.Phase(now) != store.PhaseOver:
@@ -699,10 +701,8 @@ type contestHomeData struct {
 	Members      int
 	CanJoin      bool
 	CanManage    bool
-	// SelfRank is the reader's own place, which stays visible while the board is
-	// sealed. Empty when they are not in the contest or have not submitted yet.
-	SelfRank string
-	EditLink string
+	EditLink     string
+	StandLink    string
 }
 
 // contestTeamRow is one team on the roster.
@@ -737,8 +737,9 @@ func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
 		BoardOpen: c.StandingOpen,
 		Private:   c.JoinCode != "",
 		// 已结束不再收人：赛后补进榜会把榜单变成一份事后总结。
-		CanJoin:  !access.Joined && c.Phase(now) != store.PhaseOver,
-		EditLink: "/contests/" + url.PathEscape(c.CID) + "/edit",
+		CanJoin:   !access.Joined && c.Phase(now) != store.PhaseOver,
+		EditLink:  "/contests/" + url.PathEscape(c.CID) + "/edit",
+		StandLink: "/contests/" + url.PathEscape(c.CID) + "/standings",
 	}
 	switch c.Phase(now) {
 	case store.PhaseUpcoming:
@@ -946,4 +947,175 @@ func (s *Server) handleContestProblemEntry(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	s.backToContest(w, r, c, "这场比赛没有第 "+label+" 题")
+}
+
+// --- M14d: the independent board ---
+
+// standingCellView is one competitor/problem square. The two modes print different
+// things in it, so the store hands over the numbers and the page decides.
+type standingCellView struct {
+	Label   string
+	PID     string
+	Title   string
+	Text    string
+	Extra   string
+	Class   string
+	Seen    bool
+	Removed bool
+}
+
+type standingRowView struct {
+	Rank    int
+	Name    string
+	Members string
+	Solved  int
+	Score   string
+	Time    string
+	Cells   []standingCellView
+	Me      bool
+}
+
+type standingsData struct {
+	CID, Title  string
+	Mode        string
+	Phase       string
+	PhaseClass  string
+	Window      string
+	Sealed      bool
+	BoardOpen   bool
+	CanManage   bool
+	Rows        []standingRowView
+	Columns     []string
+	PenaltyText string
+	Members     int
+	SelfRank    string
+	WhyNot      string
+	Back        string
+	TeamMode    bool
+}
+
+// handleContestStandings is the contest's own board. The whole field is always
+// computed, because a sealed board still owes the reader a true place; what changes is
+// how many rows are printed.
+func (s *Server) handleContestStandings(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestByKey(w, r)
+	if !ok {
+		return
+	}
+	now := time.Now().UnixMilli()
+	access := s.contestAccessFor(r.Context(), c, a, now)
+	d := standingsData{
+		CID: c.CID, Title: c.Title, Mode: contestModeLabel(c.Mode),
+		Phase: c.Phase(now).Label(), PhaseClass: c.Phase(now).Badge(),
+		Window:    formatContestClock(c.StartAt) + " —— " + formatContestClock(c.EndAt),
+		BoardOpen: c.StandingOpen, CanManage: access.CanManage,
+		Sealed:   !c.StandingOpen,
+		Back:     "/contests/" + url.PathEscape(c.CID),
+		TeamMode: c.TeamSize > store.MinTeamSize,
+	}
+	if members, err := s.db.ListContestMembers(r.Context(), c.ID); err == nil {
+		d.Members = len(members)
+	}
+	if !access.ShowBoard {
+		// 封榜 and not inside the contest: nothing to show, and the page says why
+		// rather than printing an empty table that looks like a bug.
+		d.WhyNot = "这场比赛正在封榜，别人看不到榜单；加入之后能看到你自己的名次。"
+		if c.Phase(now) == store.PhaseOver {
+			d.WhyNot = "这场比赛已经结束，主办方还没放榜。加入过的人仍能看到自己那一行。"
+		}
+		s.page(w, r, http.StatusOK, "成绩榜 "+c.CID, "contest_standings", a.viewer(), msgOf(r), d)
+		return
+	}
+
+	rows, err := s.db.ContestScoreboard(r.Context(), c)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	// The columns are the same for every row, so they are read off the first one.
+	if len(rows) > 0 {
+		for _, cell := range rows[0].Cells {
+			d.Columns = append(d.Columns, cell.Label)
+		}
+	}
+	penalty := c.PenaltyMS / 60000
+	d.PenaltyText = "每次未过尝试罚 " + strconv.FormatInt(penalty, 10) + " 分钟"
+	if c.PenaltyMS == 0 {
+		d.PenaltyText = "不设罚时"
+	}
+
+	// A sealed board shows a member their own row only, so nobody can read the field
+	// over someone's shoulder. The host sees everything, marked as sealed.
+	onlySelf := d.Sealed && !access.CanManage
+	for _, row := range rows {
+		me := false
+		for _, id := range row.UserIDs {
+			if id == a.User.ID {
+				me = true
+			}
+		}
+		if onlySelf && !me {
+			continue
+		}
+		view := standingRowView{
+			Rank: row.Rank, Name: row.Name, Members: strings.Join(row.Handles, "、"),
+			Solved: row.Solved, Me: me,
+		}
+		if c.Mode == store.ContestACM {
+			view.Score = "-"
+			view.Time = formatClock(row.TimeMS)
+		} else {
+			view.Score = strconv.Itoa(row.Score)
+			view.Time = formatClock(row.TimeMS)
+		}
+		for _, cell := range row.Cells {
+			view.Cells = append(view.Cells, cellView(c.Mode, cell))
+		}
+		d.Rows = append(d.Rows, view)
+	}
+	if onlySelf {
+		// The rank still comes from the whole field, so a private board can tell the
+		// truth about your place without printing anyone else.
+		if own, found, err := s.db.ContestSelfStanding(r.Context(), c, a.User.ID); err == nil && found {
+			d.SelfRank = "第 " + strconv.Itoa(own.Rank) + " 名"
+		}
+	}
+	s.page(w, r, http.StatusOK, "成绩榜 "+c.CID, "contest_standings", a.viewer(), msgOf(r), d)
+}
+
+// cellView turns one stored square into what a reader should see for that mode.
+func cellView(mode string, cell store.Cell) standingCellView {
+	v := standingCellView{
+		Label: cell.Label, PID: cell.PID, Title: cell.Title,
+		Seen: cell.Seen, Removed: cell.Removed,
+	}
+	if !cell.Seen {
+		v.Text = "—"
+		return v
+	}
+	attempts := ""
+	if cell.Attempts > 1 {
+		attempts = strconv.Itoa(cell.Attempts) + " 次"
+	}
+	if mode == store.ContestACM {
+		if cell.Solved {
+			v.Text, v.Extra, v.Class = formatClock(cell.TimeMS), attempts, "AC"
+			return v
+		}
+		v.Text, v.Extra, v.Class = strconv.Itoa(cell.Attempts), "未过", "bad"
+		return v
+	}
+	v.Text = strconv.Itoa(cell.Points) + "/" + strconv.Itoa(cell.Max)
+	switch {
+	case cell.Max > 0 && cell.Points == cell.Max:
+		v.Class = "AC"
+	case cell.Points > 0:
+		v.Class = "warn"
+	default:
+		v.Class = "bad"
+	}
+	if cell.TimeMS > 0 {
+		v.Extra = formatClock(cell.TimeMS)
+	}
+	return v
 }

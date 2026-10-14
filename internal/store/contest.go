@@ -1125,6 +1125,12 @@ func (db *DB) ContestScoreboard(ctx context.Context, c Contest) ([]StandingRow, 
 			}
 			row.Cells = append(row.Cells, cell)
 		}
+		// Only people who have actually been judged are on the board: a roster of
+		// hundreds would otherwise bury the dozen who played, and a sealed board would
+		// hand out a first place to someone who never submitted.
+		if !rowTouched(row) {
+			continue
+		}
 		rows = append(rows, row)
 	}
 
@@ -1160,6 +1166,16 @@ func (db *DB) bareProblems(ctx context.Context, ids []int64) ([]ContestProblem, 
 		out = append(out, cp)
 	}
 	return out, rows.Err()
+}
+
+// rowTouched reports whether a competitor has at least one judged submission.
+func rowTouched(row StandingRow) bool {
+	for _, cell := range row.Cells {
+		if cell.Seen {
+			return true
+		}
+	}
+	return false
 }
 
 // contestMax is the most a problem can pay inside a contest: the override when the

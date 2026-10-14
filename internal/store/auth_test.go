@@ -203,4 +203,3 @@ func TestLoginThrottleWindow(t *testing.T) {
 		t.Fatalf("after clear = %d %v", n, err)
 	}
 }
-

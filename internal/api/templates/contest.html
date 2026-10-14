@@ -12,7 +12,8 @@
 </p>
 
 <p class="meta">
-  {{if .Data.CanManage}}<a href="{{.Data.EditLink}}">编辑比赛与挂题</a>{{end}}
+  <a href="{{.Data.StandLink}}">成绩榜</a>
+  {{if .Data.CanManage}}· <a href="{{.Data.EditLink}}">编辑比赛与挂题</a>{{end}}
   {{if .Data.Access.Joined}}· 你已加入{{end}}
 </p>
 
@@ -34,7 +35,8 @@
   <tr><td colspan="3">这场比赛还没挂题。</td></tr>
   {{end}}
 </table>
-<p class="meta">判题详情按题目自己设的级别给，比赛不额外放行；比赛内分值 = 题目分值 ×（设定分 ÷ 题目满分）。</p>
+<p class="meta">判题详情按题目自己设的级别给，比赛不额外放行；比赛内分值 = 题目分值 ×（设定分 ÷ 题目满分）。
+  名次与每题最好成绩在 <a href="{{.Data.StandLink}}">成绩榜</a>。</p>
 {{else}}
 <p class="flash">{{.Data.Access.WhyNot}}</p>
 {{end}}
