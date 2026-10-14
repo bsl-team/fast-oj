@@ -8,6 +8,15 @@
   {{if .Data.Hidden}} · <span class="hidden">未公开</span>{{end}}
 </p>
 
+{{if .Data.Contest.ID}}
+<p class="flash">
+  本场比赛：<a href="{{.Data.Contest.Back}}">{{.Data.Contest.CID}}　{{.Data.Contest.Title}}</a>
+  · 题号 <b>{{.Data.Contest.Label}}</b>
+  · <span class="badge {{.Data.Contest.PhaseClass}}">{{.Data.Contest.Phase}}</span>{{.Data.Contest.Countdown}}
+  · 这里的提交计入该比赛的榜单
+</p>
+{{end}}
+
 {{if or .Data.CanEdit .Data.CanCases}}
 <p class="meta">{{if .Data.CanEdit}}<a href="/problems/{{.Data.PID}}/edit">编辑题面</a>{{end}}
   {{if .Data.CanCases}}<a href="/problems/{{.Data.PID}}/cases">用例管理</a>{{end}}</p>
@@ -25,9 +34,12 @@
 {{end}}
 
 <h2>提交代码</h2>
-{{if .Me}}
+{{if .Data.Contest.WhyNot}}
+<p class="flash">{{.Data.Contest.WhyNot}}</p>
+{{else if .Me}}
 <form method="post" action="/problems/{{.Data.PID}}/submit">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  {{if .Data.Contest.ID}}<input type="hidden" name="contest" value="{{.Data.Contest.ID}}">{{end}}
   <div class="row">
     <div>
       <label>语言</label>

@@ -111,8 +111,8 @@ type editData struct {
 	MemMB                 string
 	// Preview is Markdown already rendered through the app-wide pipeline, which is
 	// the only reason it is safe to hand to the template unescaped.
-	Preview              template.HTML
-	Visible, IsNew       bool
+	Preview        template.HTML
+	Visible, IsNew bool
 	// Detail is the chosen 详情级别 and DetailOptions the selector next to it.
 	Detail               string
 	DetailOptions        []detailOption

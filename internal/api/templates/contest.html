@@ -11,7 +11,10 @@
   {{if .Data.Private}} · <span class="warn">私有</span>{{end}}
 </p>
 
-{{if .Data.CanManage}}<p class="meta"><a href="{{.Data.EditLink}}">编辑比赛与挂题</a></p>{{end}}
+<p class="meta">
+  {{if .Data.CanManage}}<a href="{{.Data.EditLink}}">编辑比赛与挂题</a>{{end}}
+  {{if .Data.Access.Joined}}· 你已加入{{end}}
+</p>
 
 {{if .Data.HasStatement}}
 <article>{{.Data.Statement}}</article>
@@ -23,16 +26,90 @@
   <tr><th>题号</th><th>题目</th><th class="num">分值</th></tr>
   {{range .Data.Problems}}
   <tr>
-    <td><a href="/problems/{{.PID}}">{{.Label}}</a></td>
-    <td><a href="/problems/{{.PID}}">{{.PID}}</a> {{.Title}}</td>
+    <td><a href="{{.Entry}}">{{.Label}}</a></td>
+    <td><a href="{{.Entry}}">{{.PID}}</a> {{.Title}}{{if .NoCases}} <span class="bad">没有判题用例</span>{{end}}</td>
     <td class="num">{{.PointsText}}</td>
   </tr>
   {{else}}
   <tr><td colspan="3">这场比赛还没挂题。</td></tr>
   {{end}}
 </table>
-<p class="meta">共 {{.Data.Members}} 人参赛。题面里的判题详情按题目自己的级别走，比赛不额外放行。</p>
+<p class="meta">判题详情按题目自己设的级别给，比赛不额外放行；比赛内分值 = 题目分值 ×（设定分 ÷ 题目满分）。</p>
 {{else}}
 <p class="flash">{{.Data.Access.WhyNot}}</p>
+{{end}}
+
+{{if .Data.CanJoin}}
+<h2>加入比赛</h2>
+{{if .Me}}
+<form method="post" action="/contests/{{.Data.CID}}/join" class="row">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div style="flex:1 1 18rem">
+    <label>加入码{{if not .Data.Private}}（公开赛，留空即可）{{else}}（本场必填）{{end}}</label>
+    <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="32">
+  </div>
+  <div>
+    <label>&nbsp;</label>
+    <input type="submit" value="加入">
+  </div>
+</form>
+{{else}}
+<p class="meta"><a href="/login?next=/contests/{{.Data.CID}}">登录</a> 或 <a href="/register">注册</a> 之后就能加入。</p>
+{{end}}
+{{end}}
+
+{{if .Data.Access.ShowMembers}}
+<h2>名单（{{.Data.Members}} 人）</h2>
+{{if .Data.Teams}}
+<table>
+  <tr><th>队伍</th><th>成员</th></tr>
+  {{range .Data.Teams}}
+  <tr>
+    <td>{{.Name}}{{if .Full}} <span class="muted">已满</span>{{end}}</td>
+    <td>{{range .Members}}<a href="/u/{{.}}">{{.}}</a> {{end}}</td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+{{if .Data.Solo}}
+<p class="meta">个人：{{range .Data.Solo}}<a href="/u/{{.}}">{{.}}</a> {{end}}</p>
+{{end}}
+{{if not .Data.Members}}
+<p class="meta">还没有人加入。</p>
+{{end}}
+{{end}}
+
+{{if .Me}}
+{{if .Data.Access.Joined}}
+<div class="row">
+  {{if gt .Data.TeamSize 1}}
+  <form method="post" action="/contests/{{.Data.CID}}/teams" class="row">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <div style="flex:1 1 14rem">
+      <label>队名（最多 {{.Data.TeamSize}} 人一队）</label>
+      <input type="text" name="name" maxlength="40" autocomplete="off" spellcheck="false">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button type="submit" name="op" value="create">建队并进队</button>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button type="submit" name="op" value="join">加入同名队</button>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <button type="submit" name="op" value="leave">退出队伍</button>
+    </div>
+  </form>
+  {{end}}
+  <form method="post" action="/contests/{{.Data.CID}}/leave"
+        onsubmit="return confirm('退出这场比赛？之前的提交仍算比赛内记录。')">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <button type="submit" class="danger">退出比赛</button>
+  </form>
+</div>
+<p class="meta">改每队人数不会把已经超编的队伍拆开，只是不再允许新的人加入。</p>
+{{end}}
 {{end}}
 {{end}}

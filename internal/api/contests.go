@@ -277,6 +277,10 @@ type contestProblemRow struct {
 	PointsText string
 	NoCases    bool
 	Hidden     bool
+	// Entry is the contest's own way into the problem, so the submission form knows
+	// which contest it belongs to. Empty on the management page, where the plain
+	// problem link is what the host wants.
+	Entry string
 }
 
 func contestProblemOf(cp store.ContestProblem) contestProblemRow {
@@ -311,18 +315,18 @@ type contestAccess struct {
 
 func (s *Server) contestAccessFor(ctx context.Context, c store.Contest, a actor, now int64) contestAccess {
 	v := contestAccess{CanManage: a.canManageContest(c)}
-	// Until a roster exists the mount list belongs to the host alone; M14c widens
-	// this to members once joining is possible.
-	if mm, ok := s.db.ContestMemberOf(ctx, c.ID, a.User.ID); ok {
-		v.Joined = mm.UserID != 0
+	if a.User.ID != 0 {
+		_, v.Joined = s.db.ContestMemberOf(ctx, c.ID, a.User.ID)
 	}
+	// A mount list is the contest's own material: the host and the people inside the
+	// contest see it, a passing reader does not.
 	v.ShowProblems = v.CanManage || v.Joined
 	v.ShowMembers = v.CanManage || v.Joined
 	v.ShowBoard = c.StandingOpen || v.CanManage
 	switch {
 	case v.ShowProblems:
 	case c.JoinCode != "" && c.Phase(now) != store.PhaseOver:
-		v.WhyNot = "这是一场私有比赛，加入之后才能看题目。"
+		v.WhyNot = "这是一场私有比赛，凭加入码进来之后才能看题目。"
 	case c.Phase(now) == store.PhaseOver:
 		v.WhyNot = "这场比赛已经结束，题目只对当时的成员开放。"
 	default:
@@ -689,14 +693,28 @@ type contestHomeData struct {
 	BoardOpen    bool
 	Private      bool
 	Problems     []contestProblemRow
+	Teams        []contestTeamRow
+	Solo         []string
 	Access       contestAccess
 	Members      int
+	CanJoin      bool
 	CanManage    bool
-	EditLink     string
+	// SelfRank is the reader's own place, which stays visible while the board is
+	// sealed. Empty when they are not in the contest or have not submitted yet.
+	SelfRank string
+	EditLink string
 }
 
-// handleContestHome is the contest front page: the window, the rules, and the
-// problem list as far as the reader is allowed to see it.
+// contestTeamRow is one team on the roster.
+type contestTeamRow struct {
+	ID      int64
+	Name    string
+	Members []string
+	Full    bool
+}
+
+// handleContestHome is the contest front page: the window, the rules, the roster and
+// the problem list as far as the reader is allowed to see it.
 func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
 	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
 	if err != nil {
@@ -718,7 +736,9 @@ func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
 		TeamSize:     c.TeamSize, Access: access, CanManage: access.CanManage,
 		BoardOpen: c.StandingOpen,
 		Private:   c.JoinCode != "",
-		EditLink:  "/contests/" + url.PathEscape(c.CID) + "/edit",
+		// 已结束不再收人：赛后补进榜会把榜单变成一份事后总结。
+		CanJoin:  !access.Joined && c.Phase(now) != store.PhaseOver,
+		EditLink: "/contests/" + url.PathEscape(c.CID) + "/edit",
 	}
 	switch c.Phase(now) {
 	case store.PhaseUpcoming:
@@ -742,14 +762,188 @@ func (s *Server) handleContestHome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, cp := range problems {
-			d.Problems = append(d.Problems, contestProblemOf(cp))
+			row := contestProblemOf(cp)
+			// Inside a contest the entry point carries the contest, so the problem
+			// page knows which submission belongs where.
+			row.Entry = "/contests/" + url.PathEscape(c.CID) + "/p/" + url.PathEscape(row.Label)
+			d.Problems = append(d.Problems, row)
 		}
+	}
+	if access.ShowMembers {
 		members, err := s.db.ListContestMembers(r.Context(), c.ID)
 		if err != nil {
 			s.writeStoreError(w, r, err)
 			return
 		}
 		d.Members = len(members)
+		for _, r := range store.TeamRoster(members) {
+			if r.TeamID == 0 {
+				d.Solo = append(d.Solo, r.Handles...)
+				continue
+			}
+			d.Teams = append(d.Teams, contestTeamRow{
+				ID: r.TeamID, Name: r.Name, Members: r.Handles, Full: len(r.Handles) >= c.TeamSize,
+			})
+		}
 	}
 	s.page(w, r, http.StatusOK, c.Title, "contest", a.viewer(), msgOf(r), d)
+}
+
+// contestByKey loads {key} for the pages that any reader may reach.
+func (s *Server) contestByKey(w http.ResponseWriter, r *http.Request) (actor, store.Contest, bool) {
+	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return actor{}, c, false
+	}
+	a, _ := s.authenticate(r)
+	if !c.Visible && !a.canManageContest(c) && !a.canHostContests() {
+		s.respondError(w, r, http.StatusNotFound, "没有这场比赛："+c.CID)
+		return a, c, false
+	}
+	return a, c, true
+}
+
+// backToContest is the one redirect every contest write ends with, so the flash lands
+// on the page the reader was on.
+func (s *Server) backToContest(w http.ResponseWriter, r *http.Request, c store.Contest, msg string) {
+	http.Redirect(w, r, "/contests/"+url.PathEscape(c.CID)+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+}
+
+// signedInToContest sends an anonymous browser to the login page with the contest as
+// the way back, because "请先登录" alone is not something a person can act on.
+func (s *Server) signedInToContest(w http.ResponseWriter, r *http.Request, c store.Contest) (actor, bool) {
+	a, err := s.authenticate(r)
+	if err != nil || a.User.ID == 0 {
+		http.Redirect(w, r, "/login?next="+url.QueryEscape("/contests/"+c.CID), http.StatusSeeOther)
+		return a, false
+	}
+	return a, true
+}
+
+func (s *Server) handleContestJoin(w http.ResponseWriter, r *http.Request) {
+	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	a, ok := s.signedInToContest(w, r, c)
+	if !ok {
+		return
+	}
+	if _, err := s.db.JoinContest(r.Context(), c.ID, a.User.ID, r.FormValue("code"), ""); err != nil {
+		s.backToContest(w, r, c, err.Error())
+		return
+	}
+	s.log.Info("contest joined", "cid", c.CID, "user", a.User.Handle)
+	s.backToContest(w, r, c, "已加入「"+c.Title+"」，可以去做题了")
+}
+
+func (s *Server) handleContestLeave(w http.ResponseWriter, r *http.Request) {
+	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	a, ok := s.signedInToContest(w, r, c)
+	if !ok {
+		return
+	}
+	// Existing submissions keep their contest_id: leaving does not rewrite history.
+	if err := s.db.LeaveContest(r.Context(), c.ID, a.User.ID); err != nil {
+		s.backToContest(w, r, c, err.Error())
+		return
+	}
+	s.log.Info("contest left", "cid", c.CID, "user", a.User.Handle)
+	s.backToContest(w, r, c, "已退出这场比赛，之前的提交记录还在")
+}
+
+// handleContestTeam is the one form for the three team moves: create a team and join
+// it, join an existing one by name, or step out.
+func (s *Server) handleContestTeam(w http.ResponseWriter, r *http.Request) {
+	c, err := s.db.FindContest(r.Context(), r.PathValue("key"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	a, ok := s.signedInToContest(w, r, c)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	op := r.FormValue("op")
+	if op != "leave" && !store.ValidTeamName(name) {
+		s.backToContest(w, r, c, "队名要 1.."+strconv.Itoa(store.MaxTeamNameLen)+" 个字符，且不含斜杠")
+		return
+	}
+	switch op {
+	case "leave":
+		if err := s.db.SetTeam(r.Context(), c.ID, a.User.ID, 0); err != nil {
+			s.backToContest(w, r, c, err.Error())
+			return
+		}
+		s.backToContest(w, r, c, "已退出队伍，现在按个人算名次")
+		return
+	case "create":
+		team, err := s.db.CreateTeam(r.Context(), c.ID, name)
+		if err != nil {
+			if errors.Is(err, store.ErrConflict) {
+				s.backToContest(w, r, c, "已经有队伍叫 "+name+" 了，用「加入队伍」吧")
+				return
+			}
+			s.writeStoreError(w, r, err)
+			return
+		}
+		if err := s.db.SetTeam(r.Context(), c.ID, a.User.ID, team.ID); err != nil {
+			s.backToContest(w, r, c, err.Error())
+			return
+		}
+		s.log.Info("contest team created", "cid", c.CID, "team", name, "by", a.User.Handle)
+		s.backToContest(w, r, c, "已创建队伍 "+name)
+		return
+	case "join":
+		team, err := s.db.FindTeam(r.Context(), c.ID, name)
+		if err != nil {
+			s.backToContest(w, r, c, "没有队伍叫 "+name)
+			return
+		}
+		if err := s.db.SetTeam(r.Context(), c.ID, a.User.ID, team.ID); err != nil {
+			s.backToContest(w, r, c, err.Error())
+			return
+		}
+		s.log.Info("contest team joined", "cid", c.CID, "team", name, "by", a.User.Handle)
+		s.backToContest(w, r, c, "已加入队伍 "+name)
+		return
+	}
+	s.backToContest(w, r, c, "不认识的操作："+op)
+}
+
+// handleContestProblemEntry is the contest's own link into a problem: it resolves the
+// letter inside this contest and hands the browser over to the problem page with the
+// contest attached. Only members and the host get in, so a shared link cannot be used
+// to read a sealed contest's statements.
+func (s *Server) handleContestProblemEntry(w http.ResponseWriter, r *http.Request) {
+	a, c, ok := s.contestByKey(w, r)
+	if !ok {
+		return
+	}
+	access := s.contestAccessFor(r.Context(), c, a, time.Now().UnixMilli())
+	if !access.ShowProblems {
+		s.backToContest(w, r, c, access.WhyNot)
+		return
+	}
+	label := strings.TrimSpace(r.PathValue("label"))
+	problems, err := s.db.ListContestProblems(r.Context(), c.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	for _, cp := range problems {
+		if strings.EqualFold(store.ContestLabel(cp.Label, cp.Ordinal), label) {
+			http.Redirect(w, r, "/problems/"+url.PathEscape(cp.PID)+
+				"?contest="+strconv.FormatInt(c.ID, 10), http.StatusSeeOther)
+			return
+		}
+	}
+	s.backToContest(w, r, c, "这场比赛没有第 "+label+" 题")
 }

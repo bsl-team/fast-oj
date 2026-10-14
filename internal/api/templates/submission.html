@@ -5,6 +5,8 @@
   <a href="/u/{{.Data.Handle}}">{{.Data.Handle}}</a> →
   <a href="/problems/{{.Data.PID}}">{{.Data.PID}}　{{.Data.Title}}</a>
   · {{.Data.Language}} · <span class="badge {{.Data.Class}}">{{.Data.Outcome}}</span>
+  {{if .Data.Contest}}· 比赛 <a href="{{.Data.ContestLink}}">{{.Data.Contest}}</a>{{end}}
+  {{if .Data.ContestGone}}· <span class="muted">比赛已删除（记录保留）</span>{{end}}
 </p>
 
 <h2 class="{{.Data.Class}}">{{.Data.Headline}}</h2>

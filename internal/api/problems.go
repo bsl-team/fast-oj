@@ -51,11 +51,14 @@ func (s *Server) handleProblemGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) {
+	// A problem mounted in a contest is readable by that contest's members even when
+	// it is unpublished: mounting was already gated on the right to show it.
+	contest := s.contestOfProblem(r, a, p)
+	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) && contest.ID == 0 {
 		s.respondError(w, r, http.StatusNotFound, "problem "+p.PID+" not found")
 		return
 	}
-	s.problemPage(w, r, a, p)
+	s.problemPage(w, r, a, p, contest)
 }
 
 func clip(s string, n int) string {

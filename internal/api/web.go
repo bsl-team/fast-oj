@@ -162,6 +162,22 @@ func msgOf(r *http.Request) string {
 
 type samplePair struct{ Name, In, Out string }
 
+// problemContest is the contest context a problem page may be shown inside. It is
+// built from the ?contest= link and re-checked, never trusted. A zero value means no
+// contest, which keeps the templates free of nil dereferences.
+type problemContest struct {
+	ID         int64
+	CID        string
+	Title      string
+	Label      string
+	Phase      string
+	PhaseClass string
+	Countdown  string
+	Back       string
+	CanSubmit  bool
+	WhyNot     string
+}
+
 type problemData struct {
 	PID, Title  string
 	Time, Mem   string
@@ -176,12 +192,65 @@ type problemData struct {
 	// a problem is enough for both, testcase.manage only buys the case page.
 	CanEdit   bool
 	CanCases  bool
+	Contest   problemContest
 	Statement template.HTML
 	Samples   []samplePair
 	Recent    []subRow
 }
 
-func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p store.Problem) {
+// contestOfProblem turns the ?contest= of a contest problem link into a checked
+// context. Anything that does not hold — an unknown id, a problem that is not mounted
+// there, a reader who is not inside the contest — answers "no context", which is the
+// ordinary problem page. A contest is not announced to someone outside it.
+func (s *Server) contestOfProblem(r *http.Request, a actor, p store.Problem) problemContest {
+	raw := strings.TrimSpace(r.URL.Query().Get("contest"))
+	if raw == "" {
+		return problemContest{}
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return problemContest{}
+	}
+	c, err := s.db.GetContestByID(r.Context(), id)
+	if err != nil {
+		return problemContest{}
+	}
+	cp, err := s.db.GetContestProblem(r.Context(), c.ID, p.ID)
+	if err != nil {
+		return problemContest{}
+	}
+	now := time.Now().UnixMilli()
+	access := s.contestAccessFor(r.Context(), c, a, now)
+	if !access.ShowProblems {
+		return problemContest{}
+	}
+	phase := c.Phase(now)
+	pc := problemContest{
+		ID: c.ID, CID: c.CID, Title: c.Title,
+		Label: store.ContestLabel(cp.Label, cp.Ordinal),
+		Phase: phase.Label(), PhaseClass: phase.Badge(),
+		Back: "/contests/" + url.PathEscape(c.CID),
+	}
+	switch phase {
+	case store.PhaseUpcoming:
+		pc.Countdown = "距开始还有 " + formatSpan(c.StartAt-now)
+	case store.PhaseRunning:
+		pc.Countdown = "距结束还有 " + formatSpan(c.EndAt-now)
+	case store.PhaseOver:
+		pc.Countdown = "已结束"
+	}
+	pc.CanSubmit = phase == store.PhaseRunning || access.CanManage
+	switch {
+	case pc.CanSubmit:
+	case phase == store.PhaseUpcoming:
+		pc.WhyNot = "这场比赛还没开始，开始后这里才会收代码。"
+	default:
+		pc.WhyNot = "这场比赛已经结束，不再收提交。"
+	}
+	return pc
+}
+
+func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p store.Problem, contest problemContest) {
 	cases, err := s.db.ListTestcases(r.Context(), p.ID, false)
 	if err != nil {
 		s.writeStoreError(w, r, err)
@@ -216,7 +285,14 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		judged++
 	}
 
-	recent, err := s.db.ListSubmissionDetails(r.Context(), store.DetailFilter{ProblemID: p.ID, Limit: 10})
+	// The recent list is scoped below when the page is a contest page.
+	filter := store.DetailFilter{ProblemID: p.ID, Limit: 10}
+	if contest.ID != 0 {
+		// Inside a contest the recent list is your own: other people's verdicts on a
+		// problem that is still being played are the answer sheet.
+		filter.UserID = a.User.ID
+	}
+	recent, err := s.db.ListSubmissionDetails(r.Context(), filter)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -244,6 +320,7 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		Hidden:    !p.Visible,
 		CanEdit:   a.canEditProblem(p),
 		CanCases:  a.canSeeTestcases(p),
+		Contest:   contest,
 		Statement: renderMarkdownHTML(p.Statement),
 		Samples:   samples,
 		Recent:    rows,
@@ -306,12 +383,18 @@ type submissionData struct {
 	JudgeName string
 	Created   string
 	Judged    string
-	Runs      []runRow
-	Detail    string
-	Source    string
-	View      detailView
-	Partial   bool
-	Waiting   bool
+	// Contest is the cid when the submission was made inside a contest; ContestGone
+	// covers the case where the contest has since been deleted, so the page can say so
+	// instead of linking at nothing.
+	Contest     string
+	ContestLink string
+	ContestGone bool
+	Runs        []runRow
+	Detail      string
+	Source      string
+	View        detailView
+	Partial     bool
+	Waiting     bool
 }
 
 func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor, d store.SubmissionDetail, view detailView, source, detail string, runs []store.Run) {
@@ -349,6 +432,11 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 	if d.JudgeID != 0 {
 		judgeName = strconv.FormatInt(d.JudgeID, 10)
 	}
+	contested := d.ContestID != 0
+	var contestLink string
+	if d.ContestCID != "" {
+		contestLink = "/contests/" + url.PathEscape(d.ContestCID) + "/standings"
+	}
 
 	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
 		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
@@ -356,10 +444,13 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,
 		Created: agoMS(d.CreatedAt), Judged: agoMS(d.JudgedAt),
-		Runs: rows, Detail: detail, Source: source,
-		View: view,
-		Partial:    !(view.Runs && view.Perf && view.Diff && view.Judge && view.Source),
-		Waiting:    judge.Status(d.Status).InFlight(),
+		Contest:     d.ContestCID,
+		ContestLink: contestLink,
+		ContestGone: contested && d.ContestCID == "",
+		Runs:        rows, Detail: detail, Source: source,
+		View:    view,
+		Partial: !(view.Runs && view.Perf && view.Diff && view.Judge && view.Source),
+		Waiting: judge.Status(d.Status).InFlight(),
 	})
 }
 
@@ -557,51 +648,134 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createSubmission is the single validation path for both the JSON API and the
-// web form, so the two front doors cannot drift.
-func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language, source string) (store.Submission, string, error) {
+// createSubmission is the single validation path for every way a person can hand in
+// code, so the checks cannot drift depending on where the form came from. contestID
+// is the optional 归属 the contest pages attach; naming it in a form is a claim, not a
+// fact, so the window, the roster and the mount table are all re-read here.
+//
+// It also answers where the browser should be sent back with the reason: a message
+// written onto a page the reader cannot open is a message nobody reads.
+func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language, source string, contestID int64) (store.Submission, string, string, error) {
 	key := strings.TrimSpace(problemKey)
 	lang := strings.ToLower(strings.TrimSpace(language))
 	if key == "" || lang == "" {
-		return store.Submission{}, "题目与语言都要填", errors.New("missing fields")
+		return store.Submission{}, "题目与语言都要填", rejectPath(key, 0), errors.New("missing fields")
 	}
 	if strings.ContainsRune(source, 0) {
-		return store.Submission{}, "源代码不能包含空字节", errors.New("nul in source")
+		return store.Submission{}, "源代码不能包含空字节", rejectPath(key, 0), errors.New("nul in source")
 	}
 	if len(strings.TrimSpace(source)) == 0 {
-		return store.Submission{}, "源代码是空的", errors.New("empty source")
+		return store.Submission{}, "源代码是空的", rejectPath(key, 0), errors.New("empty source")
 	}
 
 	p, err := s.db.FindProblem(r.Context(), key)
 	if err != nil {
-		return store.Submission{}, "找不到这道题", err
+		return store.Submission{}, "找不到这道题", rejectPath(key, 0), err
 	}
-	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) {
-		return store.Submission{}, "找不到这道题", store.ErrNotFound
+	inside, err := s.contestForSubmission(r, a, p, contestID)
+	if err != nil {
+		msg := err.Error()
+		if inside.CID != "" {
+			msg = "不能按「" + inside.CID + "」提交：" + msg
+		}
+		// The contest page is the one place that can explain a rejected membership, so
+		// send the reader there instead of at a problem they may not open. Only a
+		// contest that really exists can be that landing page.
+		return store.Submission{}, msg, rejectPath(key, inside.ContestID), err
+	}
+	problemPath := "/problems/" + url.PathEscape(p.PID)
+	if inside.ContestID != 0 {
+		// Keep the contest context the reader was working in, so the reason lands
+		// where they can act on it.
+		problemPath += "?contest=" + strconv.FormatInt(inside.ContestID, 10)
+	}
+	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) && !inside.Member {
+		return store.Submission{}, "找不到这道题", rejectPath(key, inside.ContestID), store.ErrNotFound
 	}
 	if !languageAllowed(p.Languages, lang) {
-		return store.Submission{}, fmt.Sprintf("这道题只收 %s，不收 %s", strings.Join(p.Languages, "/"), lang), errors.New("language")
+		return store.Submission{}, fmt.Sprintf("这道题只收 %s，不收 %s", strings.Join(p.Languages, "/"), lang),
+			problemPath, errors.New("language")
 	}
 	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
 	if err != nil {
-		return store.Submission{}, "数据库错误", err
+		return store.Submission{}, "数据库错误", problemPath, err
 	}
 	if total == 0 {
-		return store.Submission{}, "这道题还没有判题用例", errors.New("no cases")
+		return store.Submission{}, "这道题还没有判题用例", problemPath, errors.New("no cases")
 	}
 
 	sub, err := s.db.CreateSubmission(r.Context(), &store.Submission{
-		UserID: a.User.ID, ProblemID: p.ID, Language: lang, Source: source, TotalScore: total,
+		UserID: a.User.ID, ProblemID: p.ID, ContestID: inside.ContestID,
+		Language: lang, Source: source, TotalScore: total,
 	})
 	if err != nil {
-		return store.Submission{}, "数据库错误", err
+		return store.Submission{}, "数据库错误", problemPath, err
 	}
-	s.log.Info("submitted", "sid", sub.ID, "user", a.User.Handle, "pid", p.PID, "lang", lang)
-	return sub, "", nil
+	s.log.Info("submitted", "sid", sub.ID, "user", a.User.Handle, "pid", p.PID, "lang", lang,
+		"contest", sub.ContestID)
+	return sub, "", "", nil
 }
 
-// handleSubmitForm is the browser side of submitting code: same validation,
-// then a redirect to the result page instead of a body.
+// rejectPath is where a rejected submission lands with its reason. Inside a contest it
+// is the contest page, which is the one place that can explain a join problem and is
+// always readable; otherwise it stays the problem the form named. The numeric contest id
+// works in that URL because a contest is found by id as well as by label.
+func rejectPath(problemKey string, contestID int64) string {
+	if contestID > 0 {
+		return "/contests/" + strconv.FormatInt(contestID, 10)
+	}
+	return "/problems/" + url.PathEscape(strings.TrimSpace(problemKey))
+}
+
+// contestClaim is what the submission gate hands back: the contest to attribute to,
+// and whether the submitter is inside it as a member.
+type contestClaim struct {
+	ContestID int64
+	CID       string
+	Member    bool
+}
+
+// contestForSubmission re-checks a contest the form claimed. Nothing is trusted from
+// the field: the window, the roster and the mount table are all read again.
+func (s *Server) contestForSubmission(r *http.Request, a actor, p store.Problem, contestID int64) (contestClaim, error) {
+	if contestID == 0 {
+		return contestClaim{}, nil
+	}
+	c, err := s.db.GetContestByID(r.Context(), contestID)
+	if err != nil {
+		return contestClaim{}, errors.New("没有这场比赛")
+	}
+	claim := contestClaim{ContestID: c.ID, CID: c.CID}
+	mounted, err := s.db.ContestProblemMounted(r.Context(), c.ID, p.ID)
+	if err != nil {
+		return contestClaim{}, err
+	}
+	if !mounted {
+		return claim, errors.New("这道题不在这场比赛里")
+	}
+	if a.User.ID == 0 {
+		return claim, errors.New("提交前先登录并加入这场比赛")
+	}
+	// A manager may test their own contest outside the window; that is how a host
+	// checks the data before the door opens. Everyone else is bound by it.
+	manage := a.canManageContest(c)
+	if !manage {
+		if _, ok := s.db.ContestMemberOf(r.Context(), c.ID, a.User.ID); !ok {
+			return claim, errors.New("你还不是这场比赛的成员")
+		}
+		switch c.Phase(time.Now().UnixMilli()) {
+		case store.PhaseUpcoming:
+			return claim, errors.New("这场比赛还没开始")
+		case store.PhaseOver:
+			return claim, errors.New("这场比赛已经结束")
+		}
+	}
+	claim.Member = true
+	return claim, nil
+}
+
+// handleSubmitForm is the browser side of submitting code: the same validation, then a
+// redirect to the result page instead of a body.
 func (s *Server) handleSubmitForm(w http.ResponseWriter, r *http.Request) {
 	a, err := s.authenticate(r)
 	if err != nil || a.User.ID == 0 {
@@ -617,12 +791,18 @@ func (s *Server) handleSubmitForm(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusBadRequest, "表单解析失败: "+err.Error())
 		return
 	}
-	sub, msg, err := s.createSubmission(r, a, r.PathValue("key"), r.FormValue("language"), r.FormValue("source"))
+	// The contest travels in a hidden field, so it is a claim to verify, not a fact.
+	contestID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("contest")), 10, 64)
+	sub, msg, back, err := s.createSubmission(r, a, r.PathValue("key"), r.FormValue("language"), r.FormValue("source"), contestID)
 	if err != nil {
 		if msg == "" {
 			msg = "提交失败"
 		}
-		http.Redirect(w, r, "/problems/"+url.PathEscape(r.PathValue("key"))+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+		sep := "?"
+		if strings.Contains(back, "?") {
+			sep = "&"
+		}
+		http.Redirect(w, r, back+sep+"msg="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/submissions/"+strconv.FormatInt(sub.ID, 10), http.StatusSeeOther)
