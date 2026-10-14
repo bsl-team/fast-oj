@@ -189,7 +189,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /contests/{key}/problems/{problemKey}/remove|move  移下 / 调顺序",
 		"  POST /contests/{key}/join         加入（私有赛要码）；/leave 退出",
 		"  POST /contests/{key}/teams        建队 / 入队 / 退队",
-		"  GET  /contests/{key}/standings    该比赛独立榜（OI 取最高分，ACM 首过+罚时）",
+		"  GET  /contests/{key}/standings    该比赛独立榜（OI 取最后一次且赛中不出榜，IOI 取最高分，ACM 首过+罚时）",
 		"  GET  /contests/{key}/p/{题号}      比赛内题号入口，带上比赛归属",
 		"  GET  /submissions             提交列表（?user= &problem=）",
 		"  GET  /submissions/{id}        结果；判题中每 2 秒自动刷新，逐用例行一条条冒出来",
