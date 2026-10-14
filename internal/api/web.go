@@ -190,12 +190,14 @@ type problemData struct {
 	Hidden      bool
 	// CanEdit and CanCases are what the page shows the authoring links for: owning
 	// a problem is enough for both, testcase.manage only buys the case page.
-	CanEdit   bool
-	CanCases  bool
-	Contest   problemContest
-	Statement template.HTML
-	Samples   []samplePair
-	Recent    []subRow
+	CanEdit  bool
+	CanCases bool
+	// TopicsLink is where the 求助贴 for this problem live.
+	TopicsLink string
+	Contest    problemContest
+	Statement  template.HTML
+	Samples    []samplePair
+	Recent     []subRow
 }
 
 // contestOfProblem turns the ?contest= of a contest problem link into a checked
@@ -317,13 +319,14 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		LangText: langText, Langs: options,
 		JudgedCases: judged, TotalScore: total,
 		Solved: c.Solved, Submits: c.Submits,
-		Hidden:    !p.Visible,
-		CanEdit:   a.canEditProblem(p),
-		CanCases:  a.canSeeTestcases(p),
-		Contest:   contest,
-		Statement: renderMarkdownHTML(p.Statement),
-		Samples:   samples,
-		Recent:    rows,
+		Hidden:     !p.Visible,
+		CanEdit:    a.canEditProblem(p),
+		CanCases:   a.canSeeTestcases(p),
+		TopicsLink: "/problems/" + url.PathEscape(p.PID) + "/topics",
+		Contest:    contest,
+		Statement:  renderMarkdownHTML(p.Statement),
+		Samples:    samples,
+		Recent:     rows,
 	})
 }
 

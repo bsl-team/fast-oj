@@ -1,0 +1,22 @@
+{{define "content"}}
+<h1>{{.Data.Title}}</h1>
+
+<p class="meta">
+  <span class="badge {{if eq .Data.Kind "help"}}warn{{end}}">{{.Data.KindLabel}}</span>
+  <a href="/u/{{.Data.Author}}">{{.Data.DisplayName}}</a> · {{.Data.When}}
+  {{if .Data.HasProblem}} · 题目 <a href="/problems/{{.Data.ProblemPID}}">{{.Data.ProblemPID}}</a> {{.Data.ProblemName}}{{end}}
+</p>
+
+<article class="post-body">{{.Data.Body}}</article>
+
+<p class="meta">
+  <a href="{{.Data.BackLink}}">{{.Data.BackText}} →</a>
+  {{if .Data.CanDelete}}
+  <form class="inline" method="post" action="/topics/{{.Data.ID}}/delete"
+        onsubmit="return confirm('删掉这个帖子？评论会一起没掉。')">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <button type="submit" class="danger">删除帖子</button>
+  </form>
+  {{end}}
+</p>
+{{end}}

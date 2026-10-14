@@ -1,0 +1,58 @@
+{{define "content"}}
+<h1>发帖</h1>
+<p class="meta">标题 + 正文，正文走与题面同一套 Markdown + <code>$KaTeX$</code>。
+  求助贴必须写清是哪道题，这样别人才能在题目页找到它。</p>
+
+{{if .Data.Errors}}
+<div class="flash">
+  {{range .Data.Errors}}<p>{{.}}</p>{{end}}
+</div>
+{{end}}
+
+<form method="post" action="{{.Data.Action}}">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  {{if .Data.LockedProblem}}<input type="hidden" name="locked" value="1">{{end}}
+
+  <label>类型</label>
+  <p class="row">
+    {{$kind := .Data.Kind}}
+    <label class="check">
+      <input type="radio" name="kind" value="community" {{if eq $kind "community"}}checked{{end}}>
+      社区贴（不挂题目，在<a href="/topics">社区贴</a>页统一管理）
+    </label>
+    <label class="check">
+      <input type="radio" name="kind" value="help" {{if eq $kind "help"}}checked{{end}}>
+      求助贴（挂在一道题上，从题目页进入）
+    </label>
+  </p>
+
+  <div class="row">
+    <div style="flex:1 1 22rem">
+      <label>标题</label>
+      <input type="text" name="title" value="{{.Data.Title}}" maxlength="200" required>
+    </div>
+    <div style="flex:1 1 18rem">
+      <label>题目编号（求助贴必填）</label>
+      <input type="text" name="problem" list="bank" value="{{.Data.Problem}}"
+             autocomplete="off" spellcheck="false" {{if .Data.LockedProblem}}readonly{{end}}>
+      <datalist id="bank">
+        {{range .Data.Problems}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
+      </datalist>
+    </div>
+  </div>
+
+  <label>正文</label>
+  <textarea name="body" rows="14" maxlength="16000" spellcheck="false" autocomplete="off"
+            placeholder="哪里不对、你试了什么、想要什么帮助">{{.Data.Body}}</textarea>
+
+  <p class="row">
+    <input type="submit" value="发布">
+    <button type="submit" name="preview" value="1">预览</button>
+  </p>
+</form>
+
+{{if .Data.Preview}}
+<h2>预览</h2>
+<article class="preview">{{.Data.Preview}}</article>
+{{end}}
+{{end}}

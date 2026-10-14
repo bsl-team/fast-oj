@@ -45,6 +45,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /problems/{key}/cases/{id}/edit", s.handleCaseSave)
 	mux.HandleFunc("POST /problems/{key}/cases/{id}/delete", s.handleCaseDelete)
 	mux.HandleFunc("GET /problems/{key}/cases/{name}/{which}", s.handleCaseBody)
+	mux.HandleFunc("GET /problems/{key}/topics", s.handleProblemTopics)
+
+	mux.HandleFunc("GET /topics", s.handleTopicList)
+	mux.HandleFunc("GET /topics/new", s.handleTopicNew)
+	mux.HandleFunc("POST /topics", s.handleTopicCreate)
+	mux.HandleFunc("GET /topics/{id}", s.handleTopicGet)
+	mux.HandleFunc("POST /topics/{id}/delete", s.handleTopicDelete)
 
 	mux.HandleFunc("GET /submissions", s.handleSubmitList)
 	mux.HandleFunc("GET /submissions/{id}", s.handleSubmitGet)
@@ -167,6 +174,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /problems/{key}/cases/{id}/edit|delete  改用例 / 删用例",
 		"  POST /problems/{key}/cases/wipe    清空用例",
 		"  GET  /problems/{key}/cases/{name}/{in|out}  用例正文（样例公开）",
+		"  GET  /problems/{key}/topics  这道题的求助贴；从这里发帖会自动带上题号",
 		"  POST /problems/{key}/submit   提交代码",
 		"  GET  /contests                比赛列表（?q= &after= &limit=）",
 		"  GET  /contests/{key}          比赛主页：时间、赛制、题目（成员看得到）",
@@ -184,6 +192,8 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /submissions             提交列表（?user= &problem=）",
 		"  GET  /submissions/{id}        结果；判题中每 2 秒自动刷新，逐用例行一条条冒出来",
 		"  GET  /feed                    动态（?user= &after= &limit=）；POST /feed 发一条",
+		"  GET  /topics                  社区贴列表（?q= &after= &limit=）；/topics/new 发帖",
+		"  GET  /topics/{id}             帖子正文；POST /topics/{id}/delete 删帖（本人或 topic.moderate）",
 		"  POST /feed/{id}/delete        删动态（本人，或持 feed.moderate 删别人的）",
 		"  POST /feed/{id}/hide          隐藏/恢复动态（feed.moderate）",
 		"  GET  /rank                    排行榜",

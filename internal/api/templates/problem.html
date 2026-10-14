@@ -17,6 +17,8 @@
 </p>
 {{end}}
 
+<p class="meta"><a href="{{.Data.TopicsLink}}">求助贴</a> —— 不会做、WA 得莫名其妙，都在这里问。</p>
+
 {{if or .Data.CanEdit .Data.CanCases}}
 <p class="meta">{{if .Data.CanEdit}}<a href="/problems/{{.Data.PID}}/edit">编辑题面</a>{{end}}
   {{if .Data.CanCases}}<a href="/problems/{{.Data.PID}}/cases">用例管理</a>{{end}}</p>
