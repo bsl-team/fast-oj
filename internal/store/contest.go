@@ -17,7 +17,12 @@ import (
 // the way M13 computes them for practice.
 
 const (
-	ContestOI  = "oi"
+	// ContestOI is the CSP-J/S / NOIP / NOI rule: the last submission counts, equal
+	// totals share the rank, and nothing is published while the clock runs.
+	ContestOI = "oi"
+	// ContestIOI is the rule 0013 wrongly called "oi": every problem pays its best
+	// submission, and ties are broken by total time.
+	ContestIOI = "ioi"
 	ContestACM = "acm"
 
 	MaxCIDLen      = 32
@@ -40,7 +45,9 @@ var (
 	ErrNotContestMember = errors.New("你还不是这场比赛的成员")
 )
 
-func ValidContestMode(mode string) bool { return mode == ContestOI || mode == ContestACM }
+func ValidContestMode(mode string) bool {
+	return mode == ContestOI || mode == ContestIOI || mode == ContestACM
+}
 
 type Contest struct {
 	ID           int64
@@ -78,6 +85,16 @@ func (c Contest) Phase(now int64) Phase {
 		return PhaseOver
 	}
 	return PhaseRunning
+}
+
+// BoardLive says whether the scoreboard may be shown at all. OI is closed-book: a
+// real NOI contest publishes nothing until the clock stops, so showing a live board
+// would be the wrong shape of the sport rather than a nicer default.
+func (c Contest) BoardLive(now int64) bool {
+	if c.Mode == ContestOI && c.Phase(now) != PhaseOver {
+		return false
+	}
+	return true
 }
 
 func (p Phase) Label() string {
@@ -926,16 +943,21 @@ type problemStat struct {
 	penalise int
 	best     int
 	bestAt   int64
+	// last is the submission a real OI contest scores you on: the newest one the
+	// judge graded, however good or bad it turned out. A CE counts — that broken
+	// program is what was handed in.
+	last     int
 	solvedAt int64
 }
 
-// statOf folds a competitor's submissions on one problem into what both modes
+// statOf folds a competitor's submissions on one problem into what the three modes
 // need. Nothing here relies on the arrival order: the first AC and the best score
 // are picked by judged time, so two submissions finishing in the same second cannot
 // disagree about the answer.
 func statOf(evs []subEvent) problemStat {
 	var st problemStat
 	last := int64(-1)
+	lastOK := int64(-1)
 	for _, e := range evs {
 		st.seen = true
 		if e.verdict != "IE" {
@@ -950,8 +972,13 @@ func statOf(evs []subEvent) problemStat {
 		case e.raw == st.best && e.raw > 0 && e.at < st.bestAt:
 			st.bestAt = e.at
 		}
-		if e.at > last {
+		if e.at >= last {
 			last = e.at
+		}
+		// An IE is the judge breaking down, so it is not "the last submission" an OI
+		// board scores on: it must not wipe out a good answer that was already in.
+		if e.verdict != "IE" && e.at >= lastOK {
+			lastOK, st.last = e.at, e.raw
 		}
 	}
 	if st.best == 0 && last > 0 {
@@ -1117,12 +1144,17 @@ func (db *DB) ContestScoreboard(ctx context.Context, c Contest) ([]StandingRow, 
 					row.Solved++
 					row.TimeMS += cell.TimeMS + int64(st.penalise)*c.PenaltyMS
 				}
+			case ContestOI:
+				// 最后一次提交说了算，也不累计用时：OI 榜上没有罚时这一说。
+				cell.Points = st.last
+				cell.Solved = cell.Max > 0 && st.last == cell.Max
 			default:
 				cell.Points = st.best
+				cell.Solved = cell.Max > 0 && st.best == cell.Max
 				cell.TimeMS = clampAge(st.bestAt, c.StartAt)
-				row.Score += st.best
 				row.TimeMS += cell.TimeMS
 			}
+			row.Score += cell.Points
 			row.Cells = append(row.Cells, cell)
 		}
 		// Only people who have actually been judged are on the board: a roster of
@@ -1196,20 +1228,25 @@ func clampAge(at, start int64) int64 {
 	return at - start
 }
 
+// rankKey is what two competitors must agree on to share a rank. The name is not
+// part of it: it only keeps the printed order stable.
 type rankKey struct {
 	primary   int
 	secondary int64
-	name      string
 }
 
 // sortStandings ranks the field and writes the rank back. Equal keys share a rank,
 // which is what makes a tie visible instead of arbitrary.
 func sortStandings(rows []StandingRow, mode string) {
 	key := func(r StandingRow) rankKey {
-		if mode == ContestACM {
-			return rankKey{-r.Solved, r.TimeMS, r.Name}
+		switch mode {
+		case ContestACM:
+			return rankKey{-r.Solved, r.TimeMS}
+		case ContestOI:
+			// 同分就是同名次：OI 不比用时，也没有罚时可比。
+			return rankKey{-r.Score, 0}
 		}
-		return rankKey{-r.Score, r.TimeMS, r.Name}
+		return rankKey{-r.Score, r.TimeMS}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		ki, kj := key(rows[i]), key(rows[j])
@@ -1219,7 +1256,7 @@ func sortStandings(rows []StandingRow, mode string) {
 		if ki.secondary != kj.secondary {
 			return ki.secondary < kj.secondary
 		}
-		return ki.name < kj.name
+		return rows[i].Name < rows[j].Name
 	})
 	for i := range rows {
 		if i > 0 && key(rows[i-1]) == key(rows[i]) {

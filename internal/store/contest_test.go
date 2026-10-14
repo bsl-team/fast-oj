@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -528,9 +529,10 @@ func TeamRosterOf(db *DB, contestID int64) ([]ContestRoster, error) {
 	return TeamRoster(members), nil
 }
 
-func TestScoreboardOIModes(t *testing.T) {
+// TestScoreboardIOI is the 取最高分 + 比用时 rule, which is IOI's, not OI's.
+func TestScoreboardIOI(t *testing.T) {
 	db := openTestDB(t)
-	c := seedContest(t, db, &Contest{CID: "S1", Title: "OI 赛"})
+	c := seedContest(t, db, &Contest{CID: "S1", Title: "IOI 赛", Mode: ContestIOI})
 	a, b, d := mustUser(t, db, "aa"), mustUser(t, db, "bb"), mustUser(t, db, "dd")
 	p1 := seedProblem(t, db, "S1A", 10)   // one case worth 10
 	p2 := seedProblem(t, db, "S1B", 5, 5) // a bundle: two cases of 5
@@ -550,7 +552,7 @@ func TestScoreboardOIModes(t *testing.T) {
 	// bb: same total as aa but later, so the tie-break has to read the times.
 	seedSubmission(t, db, c.ID, b.ID, p1.ID, "AC", start+9*minuteMS, 10)
 	seedSubmission(t, db, c.ID, b.ID, p2.ID, "AC", start+11*minuteMS, 5, 5)
-	// dd: a second submission must not replace the best one.
+	// dd: under IOI a worse second submission must not replace the best one.
 	seedSubmission(t, db, c.ID, d.ID, p1.ID, "AC", start+minuteMS, 10)
 	seedSubmission(t, db, c.ID, d.ID, p1.ID, "WA", start+3*minuteMS, 0)
 
@@ -574,7 +576,7 @@ func TestScoreboardOIModes(t *testing.T) {
 	}
 	dd := findStanding(t, rows, "dd")
 	if dd.Score != 10 {
-		t.Errorf("dd must keep the best submission, not the last: %+v", dd)
+		t.Errorf("IOI keeps the best submission: %+v", dd)
 	}
 	if cell := cellOf(dd, "A"); cell.Attempts != 2 {
 		t.Errorf("dd attempts = %+v, want 2", cell)
@@ -710,7 +712,8 @@ func TestScoreboardACM(t *testing.T) {
 
 func TestScoreboardTeamMode(t *testing.T) {
 	db := openTestDB(t)
-	c := seedContest(t, db, &Contest{CID: "TM", Title: "团队赛", TeamSize: 2})
+	// 队内每题取最优是 IOI 的折叠方式；OI 的「最后一次」在队里不成立，所以这场用 IOI。
+	c := seedContest(t, db, &Contest{CID: "TM", Title: "团队赛", Mode: ContestIOI, TeamSize: 2})
 	a, b, e := mustUser(t, db, "alpha"), mustUser(t, db, "bravo"), mustUser(t, db, "echo")
 	p1 := seedProblem(t, db, "TMA", 10)
 	p2 := seedProblem(t, db, "TMB", 10)
@@ -832,5 +835,155 @@ func TestContestSubmissionAttribution(t *testing.T) {
 	}
 	if got, _ := db.GetSubmission(hctx, practice.ID); got.ContestID != 0 {
 		t.Errorf("practice submission got a contest: %+v", got)
+	}
+}
+
+// TestScoreboardOIisLastSubmission is the CSP/NOIP/NOI rule: the last submission is
+// the one you are scored on, equal totals share a rank, and the board has no clock.
+func TestScoreboardOIisLastSubmission(t *testing.T) {
+	db := openTestDB(t)
+	c := seedContest(t, db, &Contest{CID: "OI1", Title: "NOIP 风格赛", Mode: ContestOI})
+	broke := mustUser(t, db, "oi_broke")
+	mid := mustUser(t, db, "oi_mid")
+	midLate := mustUser(t, db, "oi_mid_late")
+	full := mustUser(t, db, "oi_full")
+	ie := mustUser(t, db, "oi_ie")
+	p1 := seedProblem(t, db, "OI1A", 10)
+	p2 := seedProblem(t, db, "OI1B", 5, 5)
+	for _, p := range []Problem{p1, p2} {
+		if _, err := db.AddContestProblem(hctx, &ContestProblem{ContestID: c.ID, ProblemID: p.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, u := range []User{broke, mid, midLate, full, ie} {
+		mustJoin(t, db, c, u.ID, "", "")
+	}
+	start := c.StartAt
+	// oi_broke solved A and then broke it: the last submission is the one scored.
+	seedSubmission(t, db, c.ID, broke.ID, p1.ID, "AC", start+minuteMS, 10)
+	seedSubmission(t, db, c.ID, broke.ID, p1.ID, "WA", start+2*minuteMS, 0)
+	seedSubmission(t, db, c.ID, broke.ID, p2.ID, "AC", start+3*minuteMS, 5, 5)
+	// These two land on the same 15, an hour apart: OI must not use the clock.
+	seedSubmission(t, db, c.ID, mid.ID, p1.ID, "AC", start+4*minuteMS, 10)
+	seedSubmission(t, db, c.ID, mid.ID, p2.ID, "WA", start+5*minuteMS, 5, 0)
+	seedSubmission(t, db, c.ID, midLate.ID, p1.ID, "AC", start+59*minuteMS, 10)
+	seedSubmission(t, db, c.ID, midLate.ID, p2.ID, "WA", start+60*minuteMS, 5, 0)
+	seedSubmission(t, db, c.ID, full.ID, p1.ID, "AC", start+61*minuteMS, 10)
+	seedSubmission(t, db, c.ID, full.ID, p2.ID, "AC", start+62*minuteMS, 5, 5)
+	// oi_ie: the judge broke down after the good answer. An IE is not "the last
+	// submission" — it must not erase the 10 that was already earned.
+	seedSubmission(t, db, c.ID, ie.ID, p1.ID, "AC", start+63*minuteMS, 10)
+	seedSubmission(t, db, c.ID, ie.ID, p1.ID, "IE", start+64*minuteMS)
+	seedSubmission(t, db, c.ID, ie.ID, p2.ID, "WA", start+65*minuteMS, 0, 0)
+
+	rows, err := db.ContestScoreboard(hctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := findStanding(t, rows, "oi_broke")
+	if bad.Score != 10 {
+		t.Errorf("the last submission must replace the good one: %+v", bad)
+	}
+	if cell := cellOf(bad, "A"); cell.Points != 0 || !cell.Seen || cell.Max != 10 || cell.Attempts != 2 {
+		t.Errorf("cell A should read the failed last try, with two attempts: %+v", cell)
+	}
+	if cell := cellOf(bad, "B"); cell.Points != 10 || !cell.Solved {
+		t.Errorf("cell B is a clean 10: %+v", cell)
+	}
+	a, b := findStanding(t, rows, "oi_mid"), findStanding(t, rows, "oi_mid_late")
+	if a.Score != 15 || b.Score != 15 || a.Rank != b.Rank {
+		t.Errorf("equal totals must share a rank: %+v / %+v", a, b)
+	}
+	if findStanding(t, rows, "oi_full").Rank != 1 {
+		t.Errorf("the only full score should lead: %+v", rows)
+	}
+	// 判机故障既不把你的分数清零，也不算一次尝试。
+	got := findStanding(t, rows, "oi_ie")
+	if got.Score != 10 {
+		t.Errorf("an IE must not erase an OI score: %+v", got)
+	}
+	if cell := cellOf(got, "A"); cell.Attempts != 1 || cell.Points != 10 {
+		t.Errorf("the IE row should be invisible to the board: %+v", cell)
+	}
+	// 用时不参与 OI：既不算也不排。
+	for _, r := range rows {
+		if r.TimeMS != 0 {
+			t.Errorf("%s accumulated %d ms on an OI board", r.Name, r.TimeMS)
+		}
+		for _, cell := range r.Cells {
+			if cell.TimeMS != 0 {
+				t.Errorf("%s/%s carries a clock: %+v", r.Name, cell.Label, cell)
+			}
+		}
+	}
+	// 并列之后的名次要跳过，和真实成绩表一样。
+	if rows[0].Rank != 1 || rows[1].Rank != 2 || rows[2].Rank != 2 || rows[3].Rank != 4 {
+		t.Errorf("ranks = %d %d %d %d, want 1 2 2 4", rows[0].Rank, rows[1].Rank, rows[2].Rank, rows[3].Rank)
+	}
+}
+
+// TestContestModeCheckAfterTheRebuild guards 0015: those four tables were rebuilt to
+// widen the mode CHECK, so the children's foreign keys have to point at the live
+// tables afterwards, and the CHECK still has to bite.
+func TestContestModeCheckAfterTheRebuild(t *testing.T) {
+	db := openTestDB(t)
+	for _, mode := range []string{ContestOI, ContestIOI, ContestACM} {
+		c := seedContest(t, db, &Contest{CID: "M" + mode, Title: "赛制 " + mode, Mode: mode})
+		if got, _ := db.GetContestByID(hctx, c.ID); got.Mode != mode {
+			t.Errorf("mode %q did not round-trip: %+v", mode, got)
+		}
+	}
+	_, err := db.SQL.ExecContext(hctx,
+		`INSERT INTO contests (cid, title, statement, start_at, end_at, mode, join_code,
+		                      standing_open, visible, team_size, penalty_ms, created_at, updated_at)
+		 VALUES ('X1', '不认识的赛制', '', 1, 2, 'swiss', '', 0, 1, 1, 0, 1, 1)`)
+	if err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Errorf("a fourth mode slipped through the CHECK: %v", err)
+	}
+
+	// The cascade is the proof the rename kept the children attached: dropping the
+	// parent must take the roster, the teams and the mount table with it.
+	c := seedContest(t, db, &Contest{CID: "CASC", Title: "级联检查", TeamSize: 2})
+	u := mustUser(t, db, "cascade_one")
+	p := seedProblem(t, db, "CASC1", 1)
+	if _, err := db.AddContestProblem(hctx, &ContestProblem{ContestID: c.ID, ProblemID: p.ID}); err != nil {
+		t.Fatal(err)
+	}
+	mustJoin(t, db, c, u.ID, "", "级联队")
+	if err := db.DeleteContest(hctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	for name, q := range map[string]string{
+		"contest_problems": `SELECT COUNT(*) FROM contest_problems`,
+		"contest_teams":    `SELECT COUNT(*) FROM contest_teams`,
+		"contest_members":  `SELECT COUNT(*) FROM contest_members`,
+	} {
+		var n int
+		if err := db.SQL.QueryRowContext(hctx, q).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if n != 0 {
+			t.Errorf("%s kept %d rows after the parent was dropped", name, n)
+		}
+	}
+	// foreign_key_check is the direct question: any orphan left by the rebuild shows here.
+	rows, err := db.SQL.QueryContext(hctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var broken []string
+	for rows.Next() {
+		var (
+			table, index    string
+			parentID, rowID int64
+		)
+		if err := rows.Scan(&table, &rowID, &parentID, &index); err != nil {
+			t.Fatal(err)
+		}
+		broken = append(broken, table)
+	}
+	if len(broken) != 0 {
+		t.Errorf("foreign_key_check found orphans in %v", broken)
 	}
 }
