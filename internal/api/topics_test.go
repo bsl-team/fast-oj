@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
 // createTopic posts the new-topic form as a browser and returns the page it lands on.
@@ -219,6 +221,16 @@ func (h *harness) topicCount() int {
 	return n
 }
 
+// topicProblemID reads a problem's row id, for tests that write topics directly.
+func (h *harness) topicProblemID(pid string) int64 {
+	h.t.Helper()
+	p, err := h.db.FindProblem(ctx(), pid)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return p.ID
+}
+
 // createTopicID posts the form without following the redirect, so the id comes from
 // the Location the browser would be sent to.
 func (h *harness) createTopicID(s session, values url.Values) int64 {
@@ -384,4 +396,42 @@ func (h *harness) commentCount() int {
 		h.t.Fatal(err)
 	}
 	return n
+}
+
+// --- M17d: the front page ---
+
+func TestHomeShowsTheTenNewestTopics(t *testing.T) {
+	h := newHarness(t)
+	h.signIn("home_author")
+	h.readyProblem("P8100")
+	authorID := h.user("home_author").ID
+
+	for i := 1; i <= 12; i++ {
+		kind, pid := store.TopicCommunity, int64(0)
+		if i%3 == 0 {
+			kind, pid = store.TopicHelp, h.topicProblemID("P8100")
+		}
+		if _, err := h.db.CreateTopic(ctx(), kind, fmt.Sprintf("首页贴 %02d", i), "正文", authorID, pid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := h.getPage(session{}, "/")
+	if !strings.Contains(page, `class="cards"`) {
+		t.Fatalf("the front page lost the card grid:\n%s", page)
+	}
+	if strings.Count(page, `class="card" href="/topics/`) != homeTopics {
+		t.Errorf("expected %d cards, got %d:\n%s", homeTopics, strings.Count(page, `class="card" href="/topics/`), page)
+	}
+	// The twelve newest are ordered newest-first, so #12 is in and #02 is out.
+	if !strings.Contains(page, "首页贴 12") || strings.Contains(page, "首页贴 02") {
+		t.Errorf("the window is not the ten newest:\n%s", page)
+	}
+	// Both kinds appear, and a 求助贴 says which problem it is about.
+	if !strings.Contains(page, "求助") || !strings.Contains(page, "社区") || !strings.Contains(page, "P8100") {
+		t.Errorf("the cards lost their kind or problem:\n%s", page)
+	}
+	// An anonymous reader gets the same cards and the same "login to post" hint.
+	if !strings.Contains(page, "/topics/new") || !strings.Contains(page, "登录后才能发") {
+		t.Errorf("the anonymous hint is missing:\n%s", page)
+	}
 }

@@ -22,6 +22,8 @@ const (
 	topicWindow     = time.Hour
 	maxTopicsHour   = 10
 	maxCommentsHour = 60
+	// homeTopics is how many posts the front page shows, two per row.
+	homeTopics = 10
 )
 
 // topicRow is one line in a list of posts.

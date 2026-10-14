@@ -18,6 +18,23 @@
   {{end}}
 </section>
 
+<h2>最新帖子</h2>
+<div class="cards">
+  {{range .Data.Topics}}
+  <a class="card" href="/topics/{{.ID}}">
+    <header>
+      <span class="badge {{if eq .Kind "help"}}warn{{end}}">{{.KindLabel}}</span>
+      <span class="when">{{.When}}</span>
+    </header>
+    <b class="card-title">{{.Title}}</b>
+    <p class="when">{{.DisplayName}}{{if .HasProblem}} · {{.ProblemPID}}{{end}} · 评论 {{.Comments}}</p>
+  </a>
+  {{else}}
+  <p class="meta">还没有帖子。<a href="/topics/new">来发第一帖</a>。</p>
+  {{end}}
+</div>
+<p class="meta"><a href="/topics">社区贴</a> · <a href="/topics/new">发帖</a>（登录后才能发）</p>
+
 {{template "composer" .}}
 {{template "posts" .}}
 

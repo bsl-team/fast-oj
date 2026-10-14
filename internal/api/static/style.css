@@ -148,3 +148,15 @@ article.reply header { display: flex; gap: .6rem; align-items: baseline; font-si
 article.reply .who { font-weight: 600; color: var(--fg); }
 article.reply .ops { margin-left: auto; }
 article.reply .body p { margin: .3rem 0; }
+
+/* 首页帖子：一行两个方块，窄屏退成一列。方块整体是个链接，所以文字颜色自己拿。 */
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin: .6rem 0 .4rem; }
+.card {
+  display: block; border: 1px solid var(--line); border-radius: 6px;
+  padding: .55rem .8rem; color: var(--fg); text-decoration: none;
+}
+.card:hover { border-color: var(--accent); background: var(--code); }
+.card header { display: flex; gap: .5rem; align-items: baseline; font-size: .8rem; }
+.card .card-title { display: block; margin: .3rem 0 .2rem; }
+.card p { margin: 0; }
+@media (max-width: 40rem) { .cards { grid-template-columns: 1fr; } }

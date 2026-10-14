@@ -82,6 +82,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	// The home page shows the ten newest posts of both kinds: a 求助贴 left off the
+	// front page is a question nobody sees.
+	topics, err := s.db.ListTopics(r.Context(), store.TopicFilter{Limit: homeTopics})
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	counts, err := s.db.Counts(r.Context())
 	if err != nil {
 		s.writeStoreError(w, r, err)
@@ -98,6 +105,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		"CheckIn":    checkIn,
 		"Problems":   problems.Items,
 		"Posts":      postRows(posts, a),
+		"Topics":     topicRows(topics),
 		"Counts":     counts,
 		"SignedIn":   a.User.ID != 0,
 		"Registered": s.registrationOpen(r),

@@ -94,6 +94,13 @@ curl -s localhost:8080/healthz          # ok
 | `GET` | `/contests/{key}/standings` | 见[比赛](#比赛限时--独立榜--加入码--队伍oiacm-双模式) | 该比赛独立榜，不影响 `/rank` |
 | `GET` | `/contests/{key}/p/{题号}` | 成员或主办方 | 比赛内题号入口，进去的提交自动归属该比赛 |
 | `GET` | `/rank` | 公开 | 排行榜 |
+| `GET` | `/topics` | 公开 | 社区贴列表（统一管理页），`?q=` `?after=` `?limit=` |
+| `GET` `/POST` | `/topics/new` `/topics` | 登录用户 | 发帖：类型（求助 / 社区）、标题、正文（可预览）、题号 |
+| `GET` | `/topics/{id}` | 公开 | 帖子正文与评论；未登录只能看 |
+| `POST` | `/topics/{id}/comment` | 登录用户 | 发表评论（每人每小时 60 条） |
+| `POST` | `/topics/{id}/delete` | 本人或 `topic.moderate` | 删帖（评论一起没） |
+| `POST` | `/topics/comments/{id}/delete` | 本人或 `topic.moderate` | 删一条评论 |
+| `GET` | `/problems/{key}/topics` | 公开 | 这道题的求助贴；从这里进发帖表单会锁主题目 |
 | `GET` | `/feed` | 公开 | 动态时间线，`?user=` `?after=` `?limit=` |
 | `POST` | `/feed` | 登录用户 | 发一条动态（每人每小时 20 条） |
 | `POST` | `/feed/{id}/delete` | 本人或 `feed.moderate` | 删除 |
@@ -324,6 +331,25 @@ zip -j cases.zip 1.in 1.out sample1.in sample1.out
 
 ---
 
+## 帖子（求助贴 / 社区贴 + 评论）
+
+两类帖子，一张表：
+
+| 类型 | 挂题目？ | 从哪进 | 谁在管 |
+|------|---------|--------|--------|
+| **求助贴** | 必须挂一道题 | 题目页的「求助贴」→ `/problems/{pid}/topics` | 按题目聚合，别人搜题就能看到 |
+| **社区贴** | 不允许挂题 | 导航栏「帖子」→ `/topics` | 一个页面统一管理 |
+
+- 「必须 / 不允许」写在表的 `CHECK` 里，不是靠每个调用方记得查——所以不会出现半条挂空的求助贴
+- **删除题目会连带删掉它的求助贴与评论**（外键级联），删号同理
+- 正文与评论都走题面同一套 Markdown + `$KaTeX$` 渲染管线，转义策略全站只有一份
+- **必须登录才能发帖与评论，未登录只能浏览**：写操作一律先回登录页并带上原地址
+- 节流：发帖每人每小时 10 帖、评论每人每小时 60 条，与动态分开算，灌水贴刷不掉别人的讨论
+- 删除权限：自己写的随时删；删别人的要 `topic.moderate`
+- 首页展出**最近 10 条**帖子（两类混合），一行两个方块卡片，窄屏自动退成一列
+
+---
+
 ## 身份与权限
 
 | 凭证 | 怎么来 | 能干什么 |
@@ -363,6 +389,7 @@ zip -j cases.zip 1.in 1.out sample1.in sample1.out
 | `permission.manage` | 授予与回收上面这些权限 |
 | `judge.view` | 查看判机框与队列 |
 | `feed.moderate` | 删除他人动态 |
+| `topic.moderate` | 删除他人帖子与评论 |
 | `site.settings` | 修改站点设置与首页 |
 | `submission.view.any` | 查看他人源码与逐用例明细（作弊调查用） |
 
