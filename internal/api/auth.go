@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -152,6 +153,10 @@ func csrfOK(r *http.Request, a actor) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(a.Session.CSRF)) == 1
 }
 
+// multipartMemory 是 multipart 请求体的内存预算：超出部分由 net/http 落到临时文件，
+// 所以几十 MB 的用例包不必整个压在内存里。
+const multipartMemory = 4 << 20
+
 // guardCSRF is the single choke point for state-changing browser requests. It
 // parses the form first so both the field and the header are visible, and fails
 // closed for any cookie-authenticated write without a matching token.
@@ -162,7 +167,23 @@ func (s *Server) guardCSRF(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isForm(r) {
+		switch {
+		case isMultipart(r):
+			// Go 1.25 起 ParseForm 与 FormValue 都不再看 multipart 请求体，隐藏字段里的
+			// csrf 于是永远读不到，网页上传用例包一律 403「表单已过期」。这一路只能自己解。
+			// 顺手给整个请求体封顶：不封的话匿名请求也能拿超大文件去堆磁盘上的临时文件。
+			r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUpload+multipartMemory)
+			if err := r.ParseMultipartForm(multipartMemory); err != nil {
+				var over *http.MaxBytesError
+				if errors.As(err, &over) {
+					s.respondError(w, r, http.StatusRequestEntityTooLarge,
+						fmt.Sprintf("上传太大，上限 %d MB", s.cfg.MaxUpload>>20))
+					return
+				}
+				s.respondError(w, r, http.StatusBadRequest, "表单解析失败: "+err.Error())
+				return
+			}
+		case isForm(r):
 			if err := r.ParseForm(); err != nil {
 				s.respondError(w, r, http.StatusBadRequest, "表单解析失败: "+err.Error())
 				return
@@ -179,8 +200,11 @@ func (s *Server) guardCSRF(next http.Handler) http.Handler {
 }
 
 func isForm(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") ||
-		strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded")
+}
+
+func isMultipart(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
 }
 
 // viewerOf describes the logged-in identity for the nav bar.

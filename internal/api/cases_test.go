@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -286,5 +287,38 @@ func TestCasePageNeedsCaseRights(t *testing.T) {
 	// And the author keeps the statement rights the maintainer does not have.
 	if code, _ := h.getAs(maintainer, "/problems/P702/edit"); code != http.StatusForbidden {
 		t.Fatalf("maintainer reached the statement editor = %d", code)
+	}
+}
+
+// 网页上传走的是 multipart + 隐藏 csrf 字段，和 raw zip + 头是两条解析路径：
+// Go 1.25 起 ParseForm 不再解 multipart，只测后者会让网页上传整体 403 而测试全绿。
+func TestCaseUploadFromTheBrowserForm(t *testing.T) {
+	h := newHarness(t)
+	setter := h.caseProblem("zipform", "P704")
+
+	code, body := h.uploadMultipart(setter, "/problems/P704/cases/upload", setter.csrf,
+		zipOf(map[string]string{"1.in": "1 2\n", "1.out": "3\n"}))
+	if code != http.StatusOK || !strings.Contains(body, "导入完成") {
+		t.Fatalf("browser upload = %d %s", code, short(body))
+	}
+	if n, _ := h.db.CountTestcases(ctx(), h.problem("P704").ID, false); n != 1 {
+		t.Fatalf("cases after the browser upload = %d, want 1", n)
+	}
+
+	// 修这条不能顺手把闸门拆了：令牌错或没有令牌，仍然要 403。
+	for _, csrf := range []string{"", "wrong-token"} {
+		if code, _ := h.uploadMultipart(setter, "/problems/P704/cases/upload", csrf,
+			zipOf(map[string]string{"2.in": "1 2\n", "2.out": "3\n"})); code != http.StatusForbidden {
+			t.Errorf("upload with csrf %q = %d, want 403", csrf, code)
+		}
+	}
+
+	// 超上限的请求体在解析阶段就该顶回去，而不是先落一盘临时文件。
+	huge := bytes.Repeat([]byte("x"), 2<<20)
+	if code, body := h.uploadMultipart(setter, "/problems/P704/cases/upload", setter.csrf, huge); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized upload = %d %s, want 413", code, short(body))
+	}
+	if n, _ := h.db.CountTestcases(ctx(), h.problem("P704").ID, false); n != 1 {
+		t.Errorf("the rejected uploads changed the case set: %d rows", n)
 	}
 }

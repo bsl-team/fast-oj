@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -93,6 +94,41 @@ func (h *harness) uploadZipAs(s session, path string, archive []byte) (int, stri
 	req.Header.Set("Accept", "text/html")
 	req.Header.Set("Cookie", s.cookie)
 	req.Header.Set(csrfHeader, s.csrf)
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, readAll(h.t, resp)
+}
+
+// uploadMultipart 按浏览器那个表单的样子发：multipart 请求体 + 隐藏 csrf 字段，
+// 不带 X-CSRF-Token 头。Go 1.25 起 ParseForm 不再解析 multipart 请求体，这两条路
+// 的解析方式不同，只测 raw zip 那条就会让网页上传悄悄坏掉。
+func (h *harness) uploadMultipart(s session, path, csrf string, archive []byte) (int, string) {
+	h.t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("csrf", csrf); err != nil {
+		h.t.Fatal(err)
+	}
+	file, err := mw.CreateFormFile("cases", "cases.zip")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if _, err := file.Write(archive); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		h.t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, &buf)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Cookie", s.cookie)
 	resp, err := h.srv.Client().Do(req)
 	if err != nil {
 		h.t.Fatal(err)
