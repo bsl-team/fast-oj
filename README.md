@@ -12,6 +12,25 @@
 
 ## 30 秒跑起来
 
+### Ubuntu / Debian：一条命令
+
+```bash
+./run.sh
+```
+
+四件事：确认 `go` 和 `g++`（缺了就告诉你 apt 装什么）、编译到 `dist/`、按 `127.0.0.1:8080` 起服务器并顺手带起一台判机、Ctrl-C 时两个一起收掉（不留孤儿判机空轮询）。两个令牌没给就随机生成并打印出来，想固定下来就 `export FASTOJ_ADMIN_TOKEN FASTOJ_JUDGE_TOKEN`——脚本里写死一对默认值迟早跟着仓库传到网上。
+
+```bash
+FASTOJ_ADDR=0.0.0.0:8080 ./run.sh   # 同网段都能访问（判机仍然走 127.0.0.1 连它）
+JUDGE=0 ./run.sh                    # 只起服务器，判机在另一台机器上
+./run.sh -no-register -v            # 其余参数原样传给服务器
+FASTOJ_DATA=/srv/fast-oj/data ./run.sh
+```
+
+端口上已经有一个 fast-oj 在跑时它会拒绝启动并提示换地址，不会留下一个"看起来起来了但其实没起来"的服务器。
+
+### Windows，或想手动分两步
+
 ```powershell
 powershell -File build.ps1        # 产出 dist\fast-oj.exe dist\fast-judge.exe
 ```
@@ -584,7 +603,8 @@ powershell -File build.ps1 -Test
 - 模块代理：国内直连 `proxy.golang.org` 会超时，已按 `go env -w GOPROXY=https://goproxy.cn,direct` 配置
 - 依赖只有三个：`modernc.org/sqlite`（纯 Go，无 CGO）、`gomarkdown/markdown`、`golang.org/x/sys`
 - 交叉编译：`build.ps1` 默认 `GOARCH=amd64`；`-Arch 386` 出 32 位判机框版本
-- 包结构：`internal/api`（HTTP + 三种视图）、`internal/store`（SQLite + 迁移 + 队列）、`internal/judge`（状态机 + 执行层）、`internal/judgeagent`（判机端）、`internal/protocol`（两端共享的线上类型）、`internal/casefs`（用例落盘）、`internal/config`
+- 三个脚本各管一台机器：`run.sh`（Ubuntu/Debian 一键：查依赖 + 编译 + 服务器带判机）、`build.ps1`（Windows 编译）、`scripts/judge.docker.sh`（判机装进容器）
+- 包结构：`internal/api`（HTTP + 页面）、`internal/store`（SQLite + 迁移 + 队列）、`internal/judge`（状态机 + 执行层）、`internal/judgeagent`（判机端）、`internal/protocol`（两端共享的线上类型）、`internal/casefs`（用例落盘）、`internal/config`
 
 ---
 
