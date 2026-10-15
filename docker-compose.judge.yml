@@ -21,7 +21,12 @@ services:
     cap_drop: [ALL]
     # SETUID/SETGID 用来把提交降权；KILL 是必须的：没有 CAP_KILL，root 的判机也发不出
     # SIGKILL 给 uid 65534 的子进程，超时的程序杀不掉、判机卡在管道上（实测踩过）。
-    cap_add: [SETUID, SETGID, KILL]
+    # SYS_ADMIN + NET_ADMIN 是判题沙盒（internal/jail）要的：每次运行要开 mount 与
+    # network 命名空间、把宿主只读 bind 进来再 chroot。少了它们沙盒建不起来，
+    # 判机会在启动日志与 /judges 上写明"未隔离"。
+    # SYS_PTRACE 让判机读得到降权子进程的 /proc/<pid>/statm——内存熔断靠它。没有它
+    # 判定仍然正确（峰值走 rusage），只是"超内存立刻掐"会变成"等它自己跑完再说"。
+    cap_add: [SETUID, SETGID, KILL, SYS_ADMIN, NET_ADMIN, SYS_PTRACE]
     security_opt:
       - no-new-privileges:true
     read_only: true

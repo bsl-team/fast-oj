@@ -468,13 +468,44 @@ Windows 本地判机（`runner_windows.go` + `runner.go`）：
 - 启动时把边界打印一次，避免有人在日常使用的机器上把判机当成沙箱
 - **Windows 上内存超限通常表现为 `RE`（分配被拒）而不是 `MLE`**，Linux sandbox 才给得出明确的 MLE
 
-**仍未隔离：文件系统、网络、以及"能不能弹窗口到你的桌面"。** 判题程序就是以 fast-judge 那个用户的身份在跑，能读写该用户能读写的一切，`system("shutdown -s -t 3600")` 这类调用会真的被系统接受 —— Job Object 的 UI 限制在 Vista 之后就被 Windows 作废了，`shutdown.exe` 也不是靠 `ExitWindowsEx` 的句柄限制能拦的。所以：
+**Windows 上仍未隔离：文件系统、网络、以及"能不能弹窗口到你的桌面"。** 判题程序就是以 fast-judge 那个用户的身份在跑，能读写该用户能读写的一切，`system("shutdown -s -t 3600")` 这类调用会真的被系统接受 —— Job Object 的 UI 限制在 Vista 之后就被 Windows 作废了，`shutdown.exe` 也不是靠 `ExitWindowsEx` 的句柄限制能拦的。Linux 上没有这个问题：判题沙盒已经把网络与文件系统这两道关上了（见下）。
 
 | 你要的强度 | 做法 |
 |-----------|------|
 | 本机自测、只跑自己的题 | 现在这样就够 |
-| 接受陌生人提交 | **别在登录用的账号上跑 fast-judge**。给它一个专用本地账号（判机账号对 `data\` 无权限，就读不到题库、源码与用户表），或直接上虚拟机/容器 |
-| 生产 | 判机放 Linux + 外部 sandbox（HOJ/exejail 那一类）。`judge.Guard` 接口已经留好，`runner_other.go` 是当前占位实现（只有超时击杀） |
+| 接受陌生人提交 | Linux 上开沙盒（默认就开），并给它一个专用账号或容器；**别在登录用的账号上跑 fast-judge**（Windows 上判机没有这层保护） |
+| 生产 | 判机放 Linux 容器 + 开沙盒（`docker-compose.judge.yml` 已经把需要的 cap 加好了）；要连内核攻击面一起收，再叠 seccomp（尚未做，见[已知限制](#已知限制)） |
+
+### 判题沙盒（`internal/jail`：一次运行一个牢房）
+
+Linux 上每次判题运行都被关进一组命名空间，靠的是**判机 exec 自己**：Go 没法在 fork 与
+exec 之间插东西，所以 `setrlimit`、`mount`、`chroot` 这些必须由子进程在 exec 提交程序
+之前自己做完。牢房里：
+
+| 面 | 手段 | 实测结果 |
+|----|------|---------|
+| 网络 | `CLONE_NEWNET` | 只剩一条 DOWN 的 lo；`connect(8.8.8.8:53)` 返回 `ENETUNREACH`。**阿里云元数据 `100.100.100.200` 一并废掉** |
+| 目录 | `CLONE_NEWNS` + 把系统目录只读 bind + `chroot` 到这次运行的工作目录 | `/etc/passwd`、`/var`、别人的源码都不存在；`fopen("/etc/xxx","w")` 失败 |
+| 进程 | `CLONE_NEWIPC`/`CLONE_NEWUTS` + `RLIMIT_NPROC` | fork 炸弹被内核掐住（实测 400 次 fork 在 8 的额度下被判 TLE 并整组杀掉） |
+| 时间 | 判机墙上时钟 + 整组击杀，另有 `RLIMIT_CPU` 宽两秒兜底 | 死循环仍是 `TLE`，且给出实测值 |
+| 内存 | 判机实测 `rusage` + `/proc` 轮询熔断，`RLIMIT_AS` 只留 512 MB 余量 | 吃 300 MB 而限 64 MB 仍是 **`MLE`**，不会被抢先打成 `RE` |
+| 身份 | root 判机降到 `-run-as` 的 uid；非 root 判机走非特权 user namespace，最后落到一个**未映射**的 uid | 宿主看到的是 nobody，判机的库、令牌、别人的提交都读不到 |
+
+`-sandbox=auto`（默认）能开就开，开不起来就在启动日志与 `/judges` 上写明"未隔离"，不影响判题；
+`-sandbox=on` 是硬要求，建不出牢房就每条判题报 `IE` 并说明原因——**不会悄悄按不隔离的路子重跑**。
+牢房建不起来时判机报 `IE` 而不是 `RE`：内核不给权限，不该让学生去查自己的代码。
+
+两个实测踩过的坑，改这块代码前先看：
+
+- **不能开 `CLONE_NEWPID`**。Go 是 fork 之后再 `unshare()` 的，而 `unshare(CLONE_NEWPID)`
+  只把调用者的**子进程**放进新 pid 命名空间，被 exec 的程序自己还在原来那个；留着它
+  拿不到好处，还会让被 exec 起来的 Go 程序（判机自己）在起线程时 `EINVAL`。
+- **`RLIMIT_AS` 不能卡到判定线上**。卡紧之后超内存的申请直接 `ENOMEM` 崩掉，判定从
+  `MLE` 变成 `RE`，等于用安全性换掉了判题口径。
+
+判机容器要多给三个能力：`SYS_ADMIN` + `NET_ADMIN`（开 mount/network 命名空间）、
+`SYS_PTRACE`（读降权子进程的 `/proc/<pid>/statm`，内存熔断靠它）。Docker **默认 seccomp
+profile 不需要放开**，实测照跑。
 
 ### 判机容器化（`Dockerfile.judge` + `docker-compose.judge.yml`）
 
@@ -499,7 +530,7 @@ REBUILD=1 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh  # 装了新工具
 
 | 手段 | 挡住什么 |
 |------|----------|
-| `cap_drop ALL` + `cap_add SETUID,SETGID,KILL`，`no-new-privileges` | 只保留"把提交降权"和"杀掉它"这两种能力，其余一律没有 |
+| `cap_drop ALL` + `cap_add SETUID,SETGID,KILL,SYS_ADMIN,NET_ADMIN,SYS_PTRACE`，`no-new-privileges` | 只保留"把提交降权""杀掉它""开牢房的那三个能力"，其余一律没有 |
 | `-run-as 65534:65534`（判机 root 起步，提交降到 nobody） | 提交读不到判机进程的环境（`/proc/1/environ`）与判机令牌，跨 uid 之后内核直接拒绝 |
 | `read_only` 根文件系统 + `/work` tmpfs（512 MiB，**必须带 `exec`**） | 改不了镜像里的任何东西；写盘有额度。Docker 给 `--tmpfs` 默认挂 `noexec`，而编译产物就在 `/work`，漏写 `exec` 时判题全部 `IE` |
 | `mem_limit` / `memswap_limit`（不给 swap） | 超内存被 cgroup 拦下，实测 512 MiB 的提交报出 524940 KB 并判 `MLE` |
@@ -507,11 +538,12 @@ REBUILD=1 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh  # 装了新工具
 | `--ulimit fsize=64MiB`、`core=0`、`cpu=120` | 写满磁盘、留下 core 文件、CPU 兜底 |
 | 判机侧 `Setpgid` + 整组击杀 | 超时的进程树不会变成孤儿继续吃 CPU |
 
-判机自己不发 rlimit 给子进程：Go 在 Linux 上没有"spawn 时带 rlimit"的通道
+判机以前不发 rlimit 给子进程：Go 在 Linux 上没有"spawn 时带 rlimit"的通道
 （`SysProcAttr.Rlimits` 只有 BSD 有），而绕道 shell 的 `ulimit` 会让判定结果依赖镜像里
-装的是 dash 还是 bash。硬上限由 cgroup 承担，判机负责**测量**（CPU 取 `wait4` 的
-rusage，内存取 `ru_maxrss`）并据此出判定，所以 Linux 容器的 `MLE` 比 Windows 的
-`RE` 更准确。
+装的是 dash 还是 bash。现在这一条由**牢房**解决：jailer 在 `exec` 提交程序之前自己
+`setrlimit`，所以内核层面有硬顶，而判定仍然来自判机的**测量**（CPU 取 `wait4` 的
+rusage，内存取 `ru_maxrss`），Linux 容器的 `MLE` 因此比 Windows 的 `RE` 更准确。
+cgroup 仍然是最外面那层（`mem_limit`/`pids_limit`），牢房是它里面一层。
 
 判定口径（`judge.Run`）：
 
@@ -587,6 +619,8 @@ data/
 | `-poll` | 500ms | 空队列轮询间隔 |
 | `-backoff` | 3s | 出错后的退避 |
 | `-tools` | 全部可用 | 只申报指定语言 |
+| `-run-as uid:gid` | 空 | root 判机把提交降到这个 uid（`FASTOJ_JUDGE_RUN_AS`）；Windows 上直接拒绝启动。开了沙盒时它是牢房外的第二道身份 |
+| `-sandbox` | `auto` | 判题沙盒：`auto` 能开就开、开不了就在 `/judges` 标注；`on` 建不出牢房就不判（报 `IE`）；`off` 明确不隔离（`FASTOJ_JUDGE_SANDBOX`） |
 | `-once` | — | 最多判一条就退出 |
 
 ---
@@ -660,7 +694,7 @@ powershell -File build.ps1 -Test
 | 事项 | 现状 |
 |------|------|
 | 语言 | 只有 C/C++；Python 判机的时间/内存测量另说 |
-| 判机隔离 | 容器化判机已就位（`Dockerfile.judge` + `docker-compose.judge.yml`）；不带容器直接跑在 Windows 上时只限内存/CPU/进程数，**文件系统、网络、桌面不隔离**，所以别在日常登录的账号上跑判机 |
+| 判机隔离 | Linux 上每次运行都有命名空间牢房（无网络、看不到宿主目录、内核 rlimit 兜 CPU/内存/进程数），root 与非 root 两种部署都能开；容器再套一层。仍**没有**：seccomp-bpf 系统调用白名单（牢房里仍能 `execve`/`ptrace`，只是无网、无宿主文件、无权限）、pid 命名空间（Go 的 `unshare` 语义拿不到，见[判题沙盒](#判题沙盒-internaljail一次运行一个牢房)）、Windows 上的任何文件/网络隔离（平台没有这套机制，`-sandbox=on` 会直接拒绝启动） |
 | 账号 | 注册可关；邮箱验证与「忘记密码」重置链接还没做，忘了密码要管理员改库 |
 | 比赛 | 已做（限时、加入码私有、队伍、OI/IOI/ACM 三种赛制独立榜、封榜）。OI 比赛中不出榜。仍**没有**：虚拟排名（参赛者不插进别人的榜）、比赛中改时限或换数据后对历史提交的重算、队长踢人/转让队长的完整 UI、比赛内单独的时限配置（用题目自己的时限）；时间全站按服务器时区，没有用户时区 |
 | 升级 0015 | 老比赛里 `mode='oi'` 的**算法口径变了**（0013 那版算的其实是 IOI 的最高分）。数据不迁移：表结构只是多认一个 `'ioi'`，历史 `oi` 比赛从这次起按「最后一次提交、同分同名次、赛中不出榜」算，主办方要复核老比赛的赛制选择 |
