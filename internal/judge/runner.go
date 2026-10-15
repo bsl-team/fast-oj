@@ -274,6 +274,12 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 			TimeMS: timeMS, MemKB: memKB, Exit: exitCode(w.err),
 			Stdout: stdout.Bytes(), Stderr: stderr.Bytes(),
 		}
+		if note, jailed := jailFailure(stderr.Bytes()); jailed {
+			// 牢房没建起来不是学生的错：判成 RE 会让他去查自己根本没跑起来的代码。
+			reportSandbox(false, note)
+			ex.Verdict, ex.Note = IE, note
+			return ex
+		}
 		v, note := verdictFor(lim, timeMS, memKB, ex.Exit, stdout.Overflowed())
 		ex.Verdict, ex.Note = v, note
 		if ex.Verdict == RE && w.err != nil {

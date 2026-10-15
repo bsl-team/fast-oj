@@ -39,14 +39,16 @@ func (g *plainGuard) Configure(cmd *exec.Cmd) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true, // so Kill takes the whole tree, not just the leader
 	}
-	if g.lim.RunAs != nil {
+	if _, jailed := jailFor(g.lim); !jailed && g.lim.RunAs != nil {
 		// Dropping the uid also means the program cannot read anything the judge
 		// owns, and RLIMIT-style per-user budgets stop competing with the judge.
+		// Inside a jail the identity is dropped by the jailer instead, after the
+		// mounts and chroot are done.
 		cmd.SysProcAttr.Credential = &syscall.Credential{
 			Uid: g.lim.RunAs.UID, Gid: g.lim.RunAs.GID, NoSetGroups: true,
 		}
 	}
-	return nil
+	return applyJail(cmd, g.lim)
 }
 
 func (g *plainGuard) Attach(p *os.Process) error {

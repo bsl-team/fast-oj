@@ -14,15 +14,66 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/liangbinchen2013/fast-oj/internal/jail"
 	"github.com/liangbinchen2013/fast-oj/internal/judge"
 	"github.com/liangbinchen2013/fast-oj/internal/judgeagent"
 )
 
 func main() {
+	// 判机被自己以 jailer 身份拉起时，这一行负责建牢房并 exec 提交程序，永不返回。
+	jail.Main()
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fast-judge:", err)
 		os.Exit(1)
 	}
+}
+
+// selfExe 是牢房要 exec 的那个"自己"。/proc/self/exe 在 chroot 之后仍然有效，
+// 而且不受工作目录被删之类的破事影响，所以优先用它。
+func selfExe() (string, error) {
+	if _, err := os.Stat("/proc/self/exe"); err == nil {
+		return "/proc/self/exe", nil
+	}
+	return os.Executable()
+}
+
+// jailIdentity 决定牢房里的 uid。非 root 判机走 userns：要挑一个**没有映射**的号，
+// 宿主上才会变成 nobody，判机的库与别人的源码才读不到。
+func jailIdentity(drop *judge.DropTo, userNS bool) (uint32, uint32) {
+	if !userNS {
+		if drop != nil {
+			return drop.UID, drop.GID
+		}
+		return nobody, nobody
+	}
+	uid, gid := uint32(nobody), uint32(nobody)
+	if os.Getuid() == int(uid) { // 判机本身就是 nobody：换一个没映射的号
+		uid, gid = nobody-1, nobody-1
+	}
+	return uid, gid
+}
+
+const nobody = 65534
+
+// setupSandbox 定下沙盒配置，并当场真建一次牢房。-sandbox=on 而建不起来就直接不启动：
+// 明确拒绝比悄悄少一层防护好；auto 则带着"未隔离"这句话继续干活。
+func setupSandbox(dir string, mode jail.Mode, drop *judge.DropTo) (string, error) {
+	userNS := os.Getuid() != 0
+	uid, gid := jailIdentity(drop, userNS)
+	self := ""
+	if mode != jail.Off {
+		path, err := selfExe()
+		if err != nil {
+			return "", fmt.Errorf("找不到判机自己的可执行文件，沙盒无从 exec：%w", err)
+		}
+		self = path
+	}
+	judge.SetSandbox(self, mode, userNS, uid, gid)
+	note, err := judge.ProbeSandbox(dir)
+	if err != nil && mode == jail.On {
+		return "", fmt.Errorf("-sandbox=on 但牢房建不起来：%w", err)
+	}
+	return note, nil
 }
 
 func defaultName() string {
@@ -43,6 +94,7 @@ func run() error {
 		once    = flag.Bool("once", false, "process at most one submission, then exit")
 		tools   = flag.String("tools", "", "comma list of languages to advertise (default: everything usable)")
 		runAs   = flag.String("run-as", envOr("FASTOJ_JUDGE_RUN_AS", ""), "run submissions as this uid:gid (Linux/containers; empty keeps the judge's own user)")
+		sbox    = flag.String("sandbox", envOr("FASTOJ_JUDGE_SANDBOX", "auto"), "判题沙盒：auto=能开就开，on=开不起来就不判，off=不隔离")
 		verbose = flag.Bool("v", false, "log each step")
 	)
 	flag.Parse()
@@ -51,10 +103,21 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	mode, err := jail.ParseMode(*sbox)
+	if err != nil {
+		return err
+	}
 	if drop != nil && runtime.GOOS == "windows" {
 		// Refusing beats a silently ignored flag: on Windows there is no way to
 		// hand the judged process a different identity here.
 		return fmt.Errorf("-run-as 在 Windows 上不生效，判机只能以自己的身份跑；要么去掉它，要么把判机放进容器")
+	}
+	if mode == jail.On && runtime.GOOS != "linux" {
+		return fmt.Errorf("-sandbox=on 需要 Linux 命名空间，%s 上没有；要么用 -sandbox=off，要么换 Linux/容器", runtime.GOOS)
+	}
+	if runtime.GOOS != "linux" {
+		// 非 Linux 没有"降级版"沙盒可言：直接按关闭处理，日志与 /judges 上都会写明。
+		mode = jail.Off
 	}
 
 	logf := func(format string, args ...any) {
@@ -71,13 +134,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// 沙盒配置要在任何一次判题之前定下来：agent.New 已经拿到了工作目录，自测就用它。
+	note, sandboxErr := setupSandbox(agent.Dir(), mode, drop)
+	if sandboxErr != nil {
+		return sandboxErr
+	}
+	agent.SetNote(note)
 	log.Printf("judge %s polling %s for [%v]", *name, *server, agent.Languages())
-	if drop != nil {
-		log.Printf("隔离边界：提交以 uid %d 运行（读不到判机的环境与其文件），环境变量只发最小集，内存/CPU/进程数受限；宿主侧边界由容器或账号承担。", drop.UID)
-	} else {
-		// Said out loud once at startup, because this default is not a sandbox: the
-		// judged program runs as this user, with this user's file access.
-		log.Printf("隔离边界：判题进程继承 fast-judge 的用户身份，仅限内存/CPU/进程数并只发最小环境变量；文件系统与网络不设边界。请用专用账号、容器或虚拟机运行判机。")
+	log.Printf("隔离边界：%s。环境变量只发最小集，内存/CPU/进程数与超时由判机实测加内核 rlimit 双重兜住。", note)
+	if mode == jail.Off {
+		log.Printf("警告：沙盒已关闭。提交的代码能读写这个账号能访问的一切并能出网——只在你信得过的机器上这么用。")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

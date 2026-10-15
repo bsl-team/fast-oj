@@ -37,7 +37,10 @@ type Config struct {
 	RunAs *judge.DropTo
 	// Languages to advertise; defaults to the keys of Tools.
 	Languages []string
-	Logf      func(format string, args ...any)
+	// Note is what /judges shows about this box: whether judged runs are actually
+	// jailed, which is the operator's first question about a judge.
+	Note string
+	Logf func(format string, args ...any)
 }
 
 type Agent struct {
@@ -89,8 +92,14 @@ func New(cfg Config) (*Agent, error) {
 
 func (a *Agent) Languages() []string { return a.cfg.Languages }
 
+// Dir 是每次运行的工作目录所在，启动时的沙盒自测要用它。
+func (a *Agent) Dir() string { return a.cfg.Dir }
+
+// SetNote 在自测之后补一句给 /judges 看的话：沙盒到底开没开，只有真建过一次才知道。
+func (a *Agent) SetNote(note string) { a.cfg.Note = note }
+
 func (a *Agent) greeting() protocol.Greeting {
-	return protocol.Greeting{Name: a.cfg.Name, Languages: a.cfg.Languages}
+	return protocol.Greeting{Name: a.cfg.Name, Languages: a.cfg.Languages, Note: a.cfg.Note}
 }
 
 // request sends an authenticated call and returns the status plus raw body.
