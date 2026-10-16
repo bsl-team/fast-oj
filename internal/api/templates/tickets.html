@@ -1,0 +1,57 @@
+{{define "content"}}
+<h1>{{.Data.Title}}</h1>
+
+<p class="meta">
+  <a href="/tickets?scope=mine">我的工单</a>
+  {{if .Data.Handler}} · <a href="/tickets?scope=queue">待处理{{if .Data.OpenCount}}（{{.Data.OpenCount}}）{{end}}</a>
+  · <a href="/tickets?scope=all">全部</a>{{end}}
+  · <a href="/tickets/new">提交工单</a>
+</p>
+
+<p class="meta">工单是私密的：只有你和处理它的人看得到内容。判题觉得判错了、站点有毛病、
+要举报谁、账号上的事，都可以提一张。</p>
+
+<form class="row" method="get" action="">
+  <input type="hidden" name="scope" value="{{.Data.Scope}}">
+  <div style="flex:1 1 14rem">
+    <label>搜索</label>
+    <input type="text" name="q" placeholder="标题或正文" value="{{.Data.Query}}">
+  </div>
+  <div>
+    <label>状态</label>
+    <select name="status">
+      <option value="">全部</option>
+      <option value="open"{{if eq .Data.Status "open"}} selected{{end}}>待处理</option>
+      <option value="doing"{{if eq .Data.Status "doing"}} selected{{end}}>处理中</option>
+      <option value="done"{{if eq .Data.Status "done"}} selected{{end}}>已解决</option>
+      <option value="closed"{{if eq .Data.Status "closed"}} selected{{end}}>已关闭</option>
+    </select>
+  </div>
+  <input type="submit" value="筛选">
+</form>
+
+<table>
+  <tr><th>类型</th><th>标题</th><th>状态</th><th>提交人</th><th>处理人</th><th class="num">回复</th><th>时间</th></tr>
+  {{range .Data.Rows}}
+  <tr>
+    <td><span class="badge {{if eq .Kind "report"}}warn{{end}}">{{.KindLabel}}</span></td>
+    <td>
+      <a href="/tickets/{{.ID}}">{{.Title}}</a>
+      {{if .HasProblem}}<span class="meta">（{{.ProblemPID}}）</span>{{end}}
+      {{if .HasSubmit}}<span class="meta">· 提交 <a href="/submissions/{{.Submission}}">#{{.Submission}}</a></span>{{end}}
+    </td>
+    <td><span class="badge {{.StatusClass}}">{{.StatusLabel}}</span></td>
+    <td><a href="/u/{{.Author}}">{{.DisplayName}}</a></td>
+    <td>{{if .Handler}}{{.Handler}}{{else}}<span class="meta">—</span>{{end}}</td>
+    <td class="num">{{.Replies}}</td>
+    <td>{{.Updated}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7">{{.Data.EmptyText}}</td></tr>
+  {{end}}
+</table>
+
+<p class="meta">
+  {{if .Data.Next}}<a href="?scope={{.Data.Scope}}&status={{.Data.Status}}{{with .Data.Query}}&q={{.}}{{end}}&after={{.Data.Next}}">更早的工单 →</a>{{end}}
+</p>
+{{end}}

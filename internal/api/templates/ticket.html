@@ -1,0 +1,79 @@
+{{define "content"}}
+<h1>{{.Data.Title}}</h1>
+
+<p class="meta">
+  <span class="badge {{if eq .Data.Kind "report"}}warn{{end}}">{{.Data.KindLabel}}</span>
+  <span class="badge {{.Data.StatusClass}}">{{.Data.StatusLabel}}</span>
+  <a href="/u/{{.Data.Author}}">{{.Data.DisplayName}}</a> · {{.Data.When}}
+  {{if .Data.HasProblem}} · 题目 <a href="/problems/{{.Data.ProblemPID}}">{{.Data.ProblemPID}}</a> {{.Data.ProblemName}}{{end}}
+  {{if .Data.HasSubmit}} · 提交 <a href="/submissions/{{.Data.Submission}}">#{{.Data.Submission}}</a>{{end}}
+  {{if .Data.Handler}} · 处理人 {{.Data.Handler}}{{end}}
+</p>
+
+<article class="post-body">{{.Data.Body}}</article>
+
+<h2>经过</h2>
+{{if .Data.Replies}}
+  {{range .Data.Replies}}
+  {{if .Event}}
+  <p class="meta">· {{.When}} · {{.Body}}</p>
+  {{else}}
+  <article class="reply">
+    <p class="meta">
+      <a href="/u/{{.Author}}">{{.DisplayName}}</a>
+      {{if .IsStaff}}<span class="badge ok">处理人</span>{{end}}
+      {{if .IsYou}}<span class="meta">（你）</span>{{end}}
+      · {{.When}}
+    </p>
+    <div class="post-body">{{.Body}}</div>
+  </article>
+  {{end}}
+  {{end}}
+{{else}}
+  <p class="meta">还没有回复。</p>
+{{end}}
+
+{{if .Data.SignedIn}}
+<form method="post" action="/tickets/{{.Data.ID}}/reply">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>补充或回复</label>
+  <textarea name="body" rows="5" maxlength="4000" spellcheck="false" autocomplete="off"
+            placeholder="把情况说清楚一点，一小时最多 30 条"></textarea>
+  <p><input type="submit" value="发送"></p>
+</form>
+{{end}}
+
+{{if or .Data.CanClose .Data.IsHandler}}
+<h2>{{if .Data.IsHandler}}处理这张工单{{else}}关闭{{end}}</h2>
+<form method="post" action="/tickets/{{.Data.ID}}/status">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div class="row">
+    <div>
+      <label>状态</label>
+      <select name="status">
+        {{range .Data.StatusOpts}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+      </select>
+    </div>
+    <div style="flex:1 1 18rem">
+      <label>备注（可空，会写成一条流水）</label>
+      <input type="text" name="note" maxlength="4000" autocomplete="off" spellcheck="false">
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <input type="submit" value="改状态">
+    </div>
+  </div>
+</form>
+{{end}}
+
+<p class="meta">
+  <a href="{{.Data.Back}}">{{if .Data.IsHandler}}工单队列{{else}}我的工单{{end}} →</a>
+  {{if .Data.CanDelete}}
+  <form class="inline" method="post" action="/tickets/{{.Data.ID}}/delete"
+        onsubmit="return confirm('删掉这张工单？回复会一起没掉，且不留底。')">
+    <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+    <button type="submit" class="danger">删除工单</button>
+  </form>
+  {{end}}
+</p>
+{{end}}

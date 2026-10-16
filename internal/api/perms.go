@@ -22,6 +22,7 @@ const (
 	permSiteSettings      = "site.settings"
 	permSubmissionViewAny = "submission.view.any"
 	permTopicModerate     = "topic.moderate"
+	permTicketHandle      = "ticket.handle"
 )
 
 func (a actor) can(key string) bool { return a.perms[key] }

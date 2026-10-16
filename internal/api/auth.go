@@ -32,6 +32,9 @@ type actor struct {
 	// Unread is how many private messages are waiting, and is only counted for
 	// cookie sessions: it drives the nav bar badge.
 	Unread int
+	// Tickets is the open-ticket queue, counted only for someone who may handle
+	// tickets: a normal user has no business seeing how much work is pending.
+	Tickets int
 }
 
 var (
@@ -87,6 +90,11 @@ func (s *Server) withPerms(r *http.Request, u store.User, admin, cookie bool) (a
 		// The badge only matters to a browser, so the API paths do not pay for it.
 		if a.Unread, err = s.db.CountDMUnread(r.Context(), u.ID); err != nil {
 			return actor{}, err
+		}
+		if a.can(permTicketHandle) {
+			if a.Tickets, err = s.db.CountOpenTickets(r.Context()); err != nil {
+				return actor{}, err
+			}
 		}
 	}
 	return a, nil
@@ -230,6 +238,7 @@ func (a actor) viewer() *viewer {
 		Manage: a.can(permPermissionManage), Site: a.can(permSiteSettings),
 		Author:   a.can(permProblemCreate) || a.can(permProblemEditAny),
 		Contests: a.canHostContests(),
-		Unread:   a.Unread, CSRF: a.Session.CSRF,
+		Unread:   a.Unread, Tickets: a.Tickets, CSRF: a.Session.CSRF,
+		HandleTickets: a.can(permTicketHandle),
 	}
 }

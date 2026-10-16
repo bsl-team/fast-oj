@@ -53,6 +53,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /topics/{id}", s.handleTopicGet)
 	mux.HandleFunc("POST /topics/{id}/delete", s.handleTopicDelete)
 	mux.HandleFunc("POST /topics/{id}/comment", s.handleTopicComment)
+	mux.HandleFunc("GET /tickets", s.handleTicketList)
+	mux.HandleFunc("GET /tickets/new", s.handleTicketNew)
+	mux.HandleFunc("POST /tickets", s.handleTicketCreate)
+	mux.HandleFunc("GET /tickets/{id}", s.handleTicketGet)
+	mux.HandleFunc("POST /tickets/{id}/reply", s.handleTicketReply)
+	mux.HandleFunc("POST /tickets/{id}/status", s.handleTicketStatus)
+	mux.HandleFunc("POST /tickets/{id}/delete", s.handleTicketDelete)
 	mux.HandleFunc("POST /topics/comments/{id}/delete", s.handleTopicCommentDelete)
 
 	mux.HandleFunc("GET /submissions", s.handleSubmitList)
@@ -198,6 +205,12 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /topics/{id}             帖子正文与评论；POST /topics/{id}/delete 删帖（本人或 topic.moderate）",
 		"  POST /topics/{id}/comment     发表评论（登录用户，一小时 60 条）",
 		"  POST /topics/comments/{id}/delete  删评论（本人或 topic.moderate）",
+		"  GET  /tickets                 工单列表：普通用户看自己的，持 ticket.handle 的看队列",
+		"  GET  /tickets/new             提交工单（申诉 / 故障建议 / 举报 / 账号 / 其他）",
+		"  GET  /tickets/{id}            工单详情与流水（只有作者与处理人读得到）",
+		"  POST /tickets/{id}/reply      追问或回复（登录用户，一小时 30 条）",
+		"  POST /tickets/{id}/status     改状态（处理人任意；作者只能关自己的单）",
+		"  POST /tickets/{id}/delete     删工单（ticket.handle）",
 		"  POST /feed/{id}/delete        删动态（本人，或持 feed.moderate 删别人的）",
 		"  POST /feed/{id}/hide          隐藏/恢复动态（feed.moderate）",
 		"  GET  /rank                    排行榜",

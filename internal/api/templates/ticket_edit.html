@@ -1,0 +1,63 @@
+{{define "content"}}
+<h1>提交工单</h1>
+<p class="meta">工单是私密的：只有你和处理它的人看得到。正文走与题面同一套 Markdown +
+  <code>$KaTeX$</code>。判题申诉请写清题号或提交编号，不然要来回问几轮。</p>
+
+{{if .Data.Errors}}
+<div class="flash">
+  {{range .Data.Errors}}<p>{{.}}</p>{{end}}
+</div>
+{{end}}
+
+<form method="post" action="/tickets">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+
+  <label>类型</label>
+  <p class="row">
+    {{$kind := .Data.Kind}}
+    <label class="check"><input type="radio" name="kind" value="appeal" {{if eq $kind "appeal"}}checked{{end}}> 判题申诉（数据弱、判定不对、想请人复核）</label>
+    <label class="check"><input type="radio" name="kind" value="bug" {{if eq $kind "bug"}}checked{{end}}> 故障或建议</label>
+    <label class="check"><input type="radio" name="kind" value="report" {{if eq $kind "report"}}checked{{end}}> 举报</label>
+    <label class="check"><input type="radio" name="kind" value="account" {{if eq $kind "account"}}checked{{end}}> 账号问题</label>
+    <label class="check"><input type="radio" name="kind" value="other" {{if eq $kind "other"}}checked{{end}}> 其他</label>
+  </p>
+
+  <div class="row">
+    <div style="flex:1 1 22rem">
+      <label>标题</label>
+      <input type="text" name="title" value="{{.Data.Title}}" maxlength="200" required
+             placeholder="一句话说清要办什么事">
+    </div>
+    <div>
+      <label>提交编号（可空）</label>
+      <input type="number" name="submission" value="{{if .Data.Submission}}{{.Data.Submission}}{{end}}"
+             min="1" placeholder="#123">
+    </div>
+  </div>
+
+  <div class="row">
+    <div style="flex:1 1 18rem">
+      <label>题目编号（可空）</label>
+      <input type="text" name="problem" list="bank" value="{{.Data.Problem}}"
+             autocomplete="off" spellcheck="false">
+      <datalist id="bank">
+        {{range .Data.Problems}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
+      </datalist>
+    </div>
+  </div>
+
+  <label>正文</label>
+  <textarea name="body" rows="14" maxlength="16000" spellcheck="false" autocomplete="off"
+            placeholder="现象、你试了什么、希望怎么处理">{{.Data.Body}}</textarea>
+
+  <p class="row">
+    <input type="submit" value="提交工单">
+    <button type="submit" name="preview" value="1">预览</button>
+  </p>
+</form>
+
+{{if .Data.Preview}}
+<h2>预览</h2>
+<article class="preview">{{.Data.Preview}}</article>
+{{end}}
+{{end}}

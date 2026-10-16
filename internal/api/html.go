@@ -69,7 +69,12 @@ type viewer struct {
 	Contests bool
 	// Unread is the private-message badge in the nav bar.
 	Unread int
-	CSRF   string
+	// Tickets is the open-ticket badge, and only a handler ever has a number here.
+	Tickets int
+	// HandleTickets is the 工单 entry: a user sees their own queue, a handler sees
+	// the one that needs work.
+	HandleTickets bool
+	CSRF          string
 }
 
 // shell is the envelope every page template sees: layout fields plus the page

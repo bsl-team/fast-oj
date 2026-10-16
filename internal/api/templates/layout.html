@@ -17,6 +17,7 @@
   <a href="/rank">排行榜</a>
   <a href="/submissions">提交</a>
   {{if .Me}}
+  <a href="/tickets">工单{{if .Me.Tickets}} <b class="badge bad">{{.Me.Tickets}}</b>{{end}}</a>
   {{if .Me.Author}}<a href="/problems/new">出题</a>{{end}}
   {{if .Me.Contests}}<a href="/contests/new">办赛</a>{{end}}
   {{if .Me.Manage}}<a href="/admin/perms">权限</a>{{end}}
