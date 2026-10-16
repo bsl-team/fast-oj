@@ -160,3 +160,8 @@ article.reply .body p { margin: .3rem 0; }
 .card .card-title { display: block; margin: .3rem 0 .2rem; }
 .card p { margin: 0; }
 @media (max-width: 40rem) { .cards { grid-template-columns: 1fr; } }
+
+/* 批量改用例那张表：输入框要跟单元格一样紧，否则 20 行会撑成一面墙。 */
+table.batch td { padding: .2rem .4rem; }
+table.batch input[type=number] { width: 5.5rem; }
+table.batch input[type=text] { width: 100%; min-width: 6rem; }

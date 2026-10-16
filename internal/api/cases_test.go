@@ -322,3 +322,164 @@ func TestCaseUploadFromTheBrowserForm(t *testing.T) {
 		t.Errorf("the rejected uploads changed the case set: %d rows", n)
 	}
 }
+
+// batchValues 是网页那张批量表的形状：每条用例三个字段，键上带着用例 id。
+func (h *harness) batchValues(pid string, names []string, scores []string, groups []string, samples []string) url.Values {
+	h.t.Helper()
+	v := url.Values{}
+	for i, name := range names {
+		id := idText(h.caseID(pid, name))
+		v.Set("score_"+id, scores[i])
+		v.Set("group_"+id, groups[i])
+		if samples != nil && samples[i] == "1" {
+			v.Set("sample_"+id, "1")
+		}
+	}
+	return v
+}
+
+func TestCasesBatchSavesTheWholeGrid(t *testing.T) {
+	h := newHarness(t)
+	setter := h.caseProblem("batchsetter", "P710")
+	names := []string{"sample1", "1", "2", "3"}
+	if code, body := h.uploadZipAs(setter, "/problems/P710/cases/upload", zipOf(map[string]string{
+		"sample1.in": "1 2\n", "sample1.out": "3\n",
+		"1.in": "1 2\n", "1.out": "3\n", "2.in": "2 3\n", "2.out": "5\n", "3.in": "3 4\n", "3.out": "7\n",
+	})); code != http.StatusOK {
+		t.Fatalf("import = %d:\n%s", code, body)
+	}
+
+	v := h.batchValues("P710", names,
+		[]string{"0", "40", "30", "30"}, []string{"", "sub1", "sub1", "sub2"}, nil)
+	if _, body := h.postAs(setter, "/problems/P710/cases/batch", v); !strings.Contains(body, "已保存 4 条用例") {
+		t.Fatalf("batch save:\n%s", body)
+	}
+	type want struct {
+		name, group string
+		score       int
+		sample      bool
+	}
+	for _, w := range []want{
+		{"sample1", "", 0, false},
+		{"1", "sub1", 40, false},
+		{"2", "sub1", 30, false},
+		{"3", "sub2", 30, false},
+	} {
+		tc, err := h.db.GetTestcase(ctx(), h.problem("P710").ID, w.name)
+		if err != nil {
+			t.Fatalf("case %s: %v", w.name, err)
+		}
+		if tc.Score != w.score || tc.GroupName != w.group {
+			t.Errorf("%s = %d/%q, want %d/%q", w.name, tc.Score, tc.GroupName, w.score, w.group)
+		}
+	}
+	if total, _ := h.db.ProblemScoreTotal(ctx(), h.problem("P710").ID); total != 100 {
+		t.Errorf("total = %d, want 100", total)
+	}
+	// 捆绑汇总跟着新组名走：sub1 两条共 70 分。
+	page := h.getPage(setter, "/problems/P710/cases")
+	for _, mark := range []string{"sub1", "sub2", "70"} {
+		if !strings.Contains(page, mark) {
+			t.Errorf("the group summary lost %q:\n%s", mark, page)
+		}
+	}
+}
+
+// 样例不计分：勾上样例还填了分，保存的是 0，不是那句报错。
+func TestCasesBatchSamplePaysNothing(t *testing.T) {
+	h := newHarness(t)
+	setter := h.caseProblem("sampleset", "P711")
+	h.uploadZipAs(setter, "/problems/P711/cases/upload", zipOf(map[string]string{
+		"1.in": "1 2\n", "1.out": "3\n", "2.in": "2 3\n", "2.out": "5\n",
+	}))
+	v := h.batchValues("P711", []string{"1", "2"}, []string{"50", "50"}, []string{"", ""}, []string{"1", "0"})
+	if _, body := h.postAs(setter, "/problems/P711/cases/batch", v); !strings.Contains(body, "已保存 2 条") {
+		t.Fatalf("batch:\n%s", body)
+	}
+	first, _ := h.db.GetTestcase(ctx(), h.problem("P711").ID, "1")
+	if !first.IsSample || first.Score != 0 {
+		t.Errorf("the sample case should pay nothing: %+v", first)
+	}
+	if total, _ := h.db.ProblemScoreTotal(ctx(), h.problem("P711").ID); total != 50 {
+		t.Errorf("total = %d, want 50 (only the judged case counts)", total)
+	}
+}
+
+// 一格填坏就整批不保存：半张分值表会让下一次提交按一个不存在的总分判。
+func TestCasesBatchIsAllOrNothing(t *testing.T) {
+	h := newHarness(t)
+	setter := h.caseProblem("atomsetter", "P712")
+	h.uploadZipAs(setter, "/problems/P712/cases/upload", zipOf(map[string]string{
+		"1.in": "1 2\n", "1.out": "3\n", "2.in": "2 3\n", "2.out": "5\n",
+	}))
+	before := map[string]int{}
+	for _, name := range []string{"1", "2"} {
+		tc, _ := h.db.GetTestcase(ctx(), h.problem("P712").ID, name)
+		before[name] = tc.Score
+	}
+	v := h.batchValues("P712", []string{"1", "2"}, []string{"7", "99999"}, []string{"g", "g"}, nil)
+	code, body := h.postAs(setter, "/problems/P712/cases/batch", v)
+	if code == http.StatusOK || !strings.Contains(body, "0..10000") {
+		t.Fatalf("a bad score slipped through: %d\n%s", code, body)
+	}
+	for _, name := range []string{"1", "2"} {
+		tc, _ := h.db.GetTestcase(ctx(), h.problem("P712").ID, name)
+		if tc.Score != before[name] || tc.GroupName != "" {
+			t.Errorf("case %s changed anyway: %+v", name, tc)
+		}
+	}
+}
+
+// 批量表只列这道题的用例：伪造别题的字段名不会改到别人的数据。
+func TestCasesBatchCannotReachAnotherProblemsCases(t *testing.T) {
+	h := newHarness(t)
+	owner := h.caseProblem("otherowner", "P713")
+	setter := h.caseProblem("batchsetter2", "P714")
+	h.uploadZipAs(owner, "/problems/P713/cases/upload", zipOf(map[string]string{"1.in": "1\n", "1.out": "1\n"}))
+	h.uploadZipAs(setter, "/problems/P714/cases/upload", zipOf(map[string]string{"1.in": "2\n", "1.out": "2\n"}))
+
+	foreign := idText(h.caseID("P713", "1"))
+	v := url.Values{"score_" + foreign: {"500"}, "group_" + foreign: {"偷改"}}
+	own := idText(h.caseID("P714", "1"))
+	v.Set("score_"+own, "9")
+	if _, body := h.postAs(setter, "/problems/P714/cases/batch", v); !strings.Contains(body, "已保存 1 条") {
+		t.Fatalf("batch:\n%s", body)
+	}
+	kept, _ := h.db.GetTestcase(ctx(), h.problem("P713").ID, "1")
+	if kept.Score == 500 || kept.GroupName == "偷改" {
+		t.Errorf("another problem's case was edited: %+v", kept)
+	}
+	moved, _ := h.db.GetTestcase(ctx(), h.problem("P714").ID, "1")
+	if moved.Score != 9 {
+		t.Errorf("this problem's own case did not change: %+v", moved)
+	}
+	// 没权限的人连这张表都提交不了。
+	stranger := h.signIn("batchstranger")
+	if code, _ := h.postAs(stranger, "/problems/P714/cases/batch", v); code != http.StatusForbidden {
+		t.Errorf("stranger batch = %d, want 403", code)
+	}
+}
+
+// 平分是个"先填好再保存"的助手：除不尽的余数摊给前面几条，且不动样例。
+func TestCasesBatchSplitIsAPreviewNotAnApply(t *testing.T) {
+	h := newHarness(t)
+	setter := h.caseProblem("splitter", "P715")
+	h.uploadZipAs(setter, "/problems/P715/cases/upload", zipOf(map[string]string{
+		"sample1.in": "1\n", "sample1.out": "1\n",
+		"1.in": "1\n", "1.out": "1\n", "2.in": "2\n", "2.out": "2\n", "3.in": "3\n", "3.out": "3\n",
+	}))
+	// 复选框在真实表单里总是带着当前状态提交的：勾着样例的那行必须继续勾上。
+	v := h.batchValues("P715", []string{"sample1", "1", "2", "3"},
+		[]string{"0", "1", "1", "1"}, []string{"", "", "", ""}, []string{"1", "0", "0", "0"})
+	v.Set("apply", "split")
+	v.Set("split_total", "100")
+	_, page := h.postAs(setter, "/problems/P715/cases/batch", v)
+	for _, mark := range []string{`value="34"`, `value="33"`, "平分"} {
+		if !strings.Contains(page, mark) {
+			t.Errorf("the preview is missing %q:\n%s", mark, page)
+		}
+	}
+	if total, _ := h.db.ProblemScoreTotal(ctx(), h.problem("P715").ID); total != 3 {
+		t.Errorf("apply=split saved to the database (total %d); it should only fill the form", total)
+	}
+}

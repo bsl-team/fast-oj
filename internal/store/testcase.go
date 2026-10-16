@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -174,4 +175,45 @@ func (db *DB) PutTestcase(ctx context.Context, tc *Testcase) (Testcase, error) {
 		return Testcase{}, err
 	}
 	return db.GetTestcase(ctx, tc.ProblemID, tc.Name)
+}
+
+// TestcaseMeta is the part of a case that is safe to rewrite in bulk: the label and
+// the two file paths stay put, so a batch edit can never rename a case out from
+// under its own files or collide with another name.
+type TestcaseMeta struct {
+	ID        int64
+	Score     int
+	GroupName string
+	IsSample  bool
+}
+
+// UpdateTestcaseMeta writes a whole set of cases in one transaction: either every
+// row lands or none does. A half-applied score table would leave the problem's
+// total pointing somewhere in the middle of an edit, and the next submission would
+// be scored against that.
+//
+// Each UPDATE carries problem_id in its WHERE clause, so an id that belongs to
+// another problem affects zero rows and the whole call fails rather than quietly
+// editing someone else's test data.
+func (db *DB) UpdateTestcaseMeta(ctx context.Context, problemID int64, rows []TestcaseMeta) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return db.InTx(ctx, func(tx *sql.Tx) error {
+		for _, r := range rows {
+			if r.IsSample {
+				r.Score = 0 // 样例不计分，给了分也只是让人误读总分
+			}
+			res, err := tx.ExecContext(ctx,
+				`UPDATE testcases SET score=?, group_name=?, is_sample=? WHERE id=? AND problem_id=?`,
+				r.Score, r.GroupName, boolInt(r.IsSample), r.ID, problemID)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("用例 %d 不属于这道题，整批没有保存", r.ID)
+			}
+		}
+		return nil
+	})
 }

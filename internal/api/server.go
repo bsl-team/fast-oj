@@ -40,6 +40,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /problems/{key}/cases", s.handleCasesPage)
 	mux.HandleFunc("POST /problems/{key}/cases", s.handleCaseCreate)
 	mux.HandleFunc("POST /problems/{key}/cases/upload", s.handleCaseUpload)
+	mux.HandleFunc("POST /problems/{key}/cases/batch", s.handleCasesBatch)
 	mux.HandleFunc("POST /problems/{key}/cases/wipe", s.handleCaseWipe)
 	mux.HandleFunc("GET /problems/{key}/cases/{id}/edit", s.handleCaseEditPage)
 	mux.HandleFunc("POST /problems/{key}/cases/{id}/edit", s.handleCaseSave)
@@ -181,6 +182,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /problems/{key}/cases    加一条用例",
 		"  POST /problems/{key}/cases/upload  批量导入用例 zip",
 		"  POST /problems/{key}/cases/{id}/edit|delete  改用例 / 删用例",
+		"  POST /problems/{key}/cases/batch   批量改分值与捆绑（一次保存整张表）",
 		"  POST /problems/{key}/cases/wipe    清空用例",
 		"  GET  /problems/{key}/cases/{name}/{in|out}  用例正文（样例公开）",
 		"  GET  /problems/{key}/topics  这道题的求助贴；从这里发帖会自动带上题号",

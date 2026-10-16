@@ -17,12 +17,14 @@ import (
 const maxInlineCase = 256 << 10
 
 type caseRow struct {
-	ID              int64
-	Ordinal         int
-	Name            string
-	Kind            string
-	Group           string
-	Score           int
+	ID      int64
+	Ordinal int
+	Name    string
+	Kind    string
+	Group   string
+	Score   int
+	// IsSample drives the batch grid's checkbox; Kind is what the read-only table shows.
+	IsSample        bool
 	InSize, OutSize string
 	Missing         bool
 }
@@ -73,10 +75,11 @@ func (s *Server) loadCases(r *http.Request, p store.Problem) ([]store.Testcase, 
 		}
 		rows = append(rows, caseRow{
 			ID: tc.ID, Ordinal: tc.Ordinal, Name: tc.Name, Score: tc.Score, Group: tc.GroupName,
-			Kind:    kind,
-			InSize:  formatBytes(in, errIn),
-			OutSize: formatBytes(out, errOut),
-			Missing: errIn != nil || errOut != nil,
+			Kind:     kind,
+			IsSample: tc.IsSample,
+			InSize:   formatBytes(in, errIn),
+			OutSize:  formatBytes(out, errOut),
+			Missing:  errIn != nil || errOut != nil,
 		})
 	}
 	return cases, rows, nil
@@ -100,39 +103,46 @@ func (s *Server) handleCasesPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cases, rows, err := s.loadCases(r, p)
+	_, rows, err := s.loadCases(r, p)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	judged := 0
+	s.renderCases(w, r, a, p, rows, msgOf(r))
+}
+
+// renderCases draws the case page from whatever rows the caller has: the ones in the
+// database, or the ones a batch form is about to save. The preview and the saved
+// view must be the same table, or "核对一眼再保存" is a lie.
+func (s *Server) renderCases(w http.ResponseWriter, r *http.Request, a actor, p store.Problem, rows []caseRow, msg string) {
+	judged, total := 0, 0
 	// Groups keep the order their cases are declared in, so the summary does not
 	// reshuffle between two visits to the same page.
 	var groups []groupRow
 	index := map[string]int{}
-	for _, tc := range cases {
-		if tc.IsSample {
+	for _, row := range rows {
+		if row.IsSample {
 			continue
 		}
 		judged++
-		if tc.GroupName == "" {
+		total += row.Score
+		if row.Group == "" {
 			continue
 		}
-		at, seen := index[tc.GroupName]
+		at, seen := index[row.Group]
 		if !seen {
 			at = len(groups)
-			index[tc.GroupName] = at
-			groups = append(groups, groupRow{Name: tc.GroupName})
+			index[row.Group] = at
+			groups = append(groups, groupRow{Name: row.Group})
 		}
 		groups[at].Cases++
-		groups[at].Points += tc.Score
+		groups[at].Points += row.Score
 	}
-	s.page(w, r, http.StatusOK, "用例 "+p.PID, "problem_cases", a.viewer(), msgOf(r), casesData{
+	code := http.StatusOK
+	if strings.HasPrefix(msg, "批量修改没有保存") {
+		code = http.StatusBadRequest
+	}
+	s.page(w, r, code, "用例 "+p.PID, "problem_cases", a.viewer(), msg, casesData{
 		PID: p.PID, Title: p.Title, Rows: rows, Groups: groups, Judged: judged, Total: total,
 	})
 }
@@ -375,4 +385,112 @@ func (s *Server) casesDone(w http.ResponseWriter, r *http.Request, p store.Probl
 // backToCases is the rejected-write half of casesDone.
 func (s *Server) backToCases(w http.ResponseWriter, r *http.Request, p store.Problem, msg string) {
 	s.casesDone(w, r, p, msg)
+}
+
+// handleCasesBatch 一次改一整批用例的分值与捆绑。
+//
+// 要改 20 个测试点还是一条一条点开改，是折磨出题人。这里唯一不能省的是"以库里的
+// 用例为准"：行 id 不从浏览器收，浏览器只能改它被允许看到的那道题名下的行，
+// 而且整批一个事务——半张分值表比慢一点改完危险得多。
+func (s *Server) handleCasesBatch(w http.ResponseWriter, r *http.Request) {
+	a, p, ok := s.requireCaseAccess(w, r, r.PathValue("key"))
+	if !ok {
+		return
+	}
+	_, rows, err := s.loadCases(r, p)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	var errs []string
+	for i := range rows {
+		row := &rows[i]
+		field := func(suffix string) string {
+			return r.FormValue(suffix + "_" + strconv.FormatInt(row.ID, 10))
+		}
+		raw := strings.TrimSpace(field("score"))
+		if raw == "" {
+			raw = "0"
+		}
+		score, err := strconv.Atoi(raw)
+		if err != nil || score < 0 || score > 10000 {
+			errs = append(errs, row.Name+"：分值要 0..10000 的整数")
+			continue
+		}
+		group := strings.TrimSpace(field("group"))
+		if len(group) > 40 || strings.ContainsAny(group, "/\\") {
+			errs = append(errs, row.Name+"：组名最多 40 个字符，不能含斜杠")
+			continue
+		}
+		row.IsSample = field("sample") == "1"
+		if row.IsSample {
+			score = 0 // 样例不计分，否则总分读起来是假的
+		}
+		row.Score, row.Group = score, group
+	}
+	if len(errs) > 0 {
+		s.renderCases(w, r, a, p, rows, "批量修改没有保存："+strings.Join(errs, "；"))
+		return
+	}
+	// 两个助手不直接落库：它们只是把表填好，让人核对一眼再点保存。
+	switch r.FormValue("apply") {
+	case "split":
+		splitScores(rows, r.FormValue("split_total"))
+		s.renderCases(w, r, a, p, rows, "已按平分填好，核对后点「保存整批」")
+		return
+	case "group":
+		name := strings.TrimSpace(r.FormValue("set_group"))
+		for i := range rows {
+			if !rows[i].IsSample {
+				rows[i].Group = name
+			}
+		}
+		s.renderCases(w, r, a, p, rows, "已把判题用例的组名填成同一个，核对后点「保存整批」")
+		return
+	}
+	meta := make([]store.TestcaseMeta, 0, len(rows))
+	for _, row := range rows {
+		meta = append(meta, store.TestcaseMeta{ID: row.ID, Score: row.Score, GroupName: row.Group, IsSample: row.IsSample})
+	}
+	if err := s.db.UpdateTestcaseMeta(r.Context(), p.ID, meta); err != nil {
+		s.renderCases(w, r, a, p, rows, "批量修改没有保存："+err.Error())
+		return
+	}
+	s.log.Info("cases batch-updated", "pid", p.PID, "rows", len(meta), "by", a.User.Handle)
+	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.backToCases(w, r, p, fmt.Sprintf("已保存 %d 条用例，判题总分 %d", len(meta), total))
+}
+
+// splitScores 把总分摊到判题用例上：除不尽的余数摊给前面几条，这样 100 分 3 条是
+// 34/33/33，而不是最后一条莫名其妙少了 1 分没人察觉。
+func splitScores(rows []caseRow, rawTotal string) {
+	n := 0
+	for _, row := range rows {
+		if !row.IsSample {
+			n++
+		}
+	}
+	if n == 0 {
+		return
+	}
+	total, err := strconv.Atoi(strings.TrimSpace(rawTotal))
+	if err != nil || total <= 0 {
+		total = 100
+	}
+	base, rem := total/n, total%n
+	i := 0
+	for k := range rows {
+		if rows[k].IsSample {
+			continue
+		}
+		rows[k].Score = base
+		if i < rem {
+			rows[k].Score++
+		}
+		i++
+	}
 }
