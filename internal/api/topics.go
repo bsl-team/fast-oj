@@ -39,9 +39,13 @@ type topicRow struct {
 	HasProblem  bool
 	ProblemPID  string
 	ProblemName string
+	// CanDelete is per row, not per page: the author may delete their own post and
+	// a moderator may delete anyone's, and the list is where a moderator actually
+	// browses to clean up.
+	CanDelete bool
 }
 
-func topicRows(items []store.Topic) []topicRow {
+func topicRows(items []store.Topic, a actor) []topicRow {
 	rows := make([]topicRow, 0, len(items))
 	for _, t := range items {
 		name := t.Author
@@ -53,6 +57,7 @@ func topicRows(items []store.Topic) []topicRow {
 			Title: t.Title, Author: t.Author, DisplayName: name,
 			When: agoMS(t.CreatedAt), Comments: t.Comments,
 			HasProblem: t.ProblemID != 0, ProblemPID: t.ProblemPID, ProblemName: t.ProblemTitle,
+			CanDelete: a.User.ID != 0 && (a.User.ID == t.AuthorID || a.can(permTopicModerate)),
 		})
 	}
 	return rows
@@ -89,7 +94,7 @@ func (s *Server) handleTopicList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.page(w, r, http.StatusOK, "社区贴", "topics", a.viewer(), msgOf(r), topicListData{
-		Rows: topicRows(items), Title: "社区贴", SignedIn: a.User.ID != 0,
+		Rows: topicRows(items, a), Title: "社区贴", SignedIn: a.User.ID != 0,
 		Next: nextTopicCursor(items, limit), Limit: limit, Query: search,
 		NewTopic:  "/topics/new",
 		EmptyText: "还没有社区贴。",
@@ -118,7 +123,7 @@ func (s *Server) handleProblemTopics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.page(w, r, http.StatusOK, "题目帖子 "+p.PID, "topics", a.viewer(), msgOf(r), topicListData{
-		Rows: topicRows(items), Title: "关于 " + p.PID + " 的求助", SignedIn: a.User.ID != 0,
+		Rows: topicRows(items, a), Title: "关于 " + p.PID + " 的求助", SignedIn: a.User.ID != 0,
 		Next: nextTopicCursor(items, limit), Limit: limit,
 		Problem: p.PID, ProblemName: p.Title,
 		NewTopic:  "/topics/new?problem=" + url.QueryEscape(p.PID),

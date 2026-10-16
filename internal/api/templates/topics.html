@@ -15,7 +15,7 @@
 </form>
 
 <table>
-  <tr><th>类型</th><th>标题</th><th>作者</th><th class="num">评论</th><th>时间</th></tr>
+  <tr><th>类型</th><th>标题</th><th>作者</th><th class="num">评论</th><th>时间</th>{{if .Me}}<th>操作</th>{{end}}</tr>
   {{range .Data.Rows}}
   <tr>
     <td><span class="badge {{if eq .Kind "help"}}warn{{end}}">{{.KindLabel}}</span></td>
@@ -26,9 +26,20 @@
     <td><a href="/u/{{.Author}}">{{.DisplayName}}</a></td>
     <td class="num">{{.Comments}}</td>
     <td>{{.When}}</td>
+    {{if $.Me}}
+    <td>
+      {{if .CanDelete}}
+      <form class="inline" method="post" action="/topics/{{.ID}}/delete"
+            onsubmit="return confirm('删掉「{{.Title}}」？评论会一起没掉。')">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <button type="submit">删除</button>
+      </form>
+      {{end}}
+    </td>
+    {{end}}
   </tr>
   {{else}}
-  <tr><td colspan="5">{{.Data.EmptyText}}</td></tr>
+  <tr><td colspan="{{if .Me}}6{{else}}5{{end}}">{{.Data.EmptyText}}</td></tr>
   {{end}}
 </table>
 

@@ -105,7 +105,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		"CheckIn":    checkIn,
 		"Problems":   problems.Items,
 		"Posts":      postRows(posts, a),
-		"Topics":     topicRows(topics),
+		"Topics":     topicRows(topics, a),
 		"Counts":     counts,
 		"SignedIn":   a.User.ID != 0,
 		"Registered": s.registrationOpen(r),

@@ -185,6 +185,30 @@ func TestTopicDeletePermissions(t *testing.T) {
 	if page := h.getPage(author, path); !strings.Contains(page, "删除帖子") {
 		t.Errorf("the author lost their own delete button:\n%s", page)
 	}
+
+	// 列表页上也要能删：管理员清理版面本来就该在列表里做，而不是逐条点进详情页。
+	row := fmt.Sprintf("/topics/%d/delete", id)
+	if page := h.getPage(stranger, "/topics"); strings.Contains(page, row) {
+		t.Errorf("a stranger was offered the delete button on the list:\n%s", page)
+	}
+	for _, who := range []struct {
+		name string
+		s    session
+	}{{"author", author}, {"moderator", mod}} {
+		if page := h.getPage(who.s, "/topics"); !strings.Contains(page, row) {
+			t.Errorf("the %s lost the delete button on the list:\n%s", who.name, page)
+		}
+	}
+	if _, page := h.htmlGet("/topics", ""); strings.Contains(page, "<th>操作</th>") {
+		t.Errorf("anonymous readers were given an empty 操作 column:\n%s", page)
+	}
+	// 从列表删掉之后，详情页也一起没了。
+	if _, page := h.postAs(mod, path+"/delete", url.Values{}); !strings.Contains(page, "已删除帖子") {
+		t.Errorf("delete from the list page:\n%s", page)
+	}
+	if code, _ := h.htmlGet(path, ""); code != http.StatusNotFound {
+		t.Errorf("topic after the list delete = %d, want 404", code)
+	}
 }
 
 func TestTopicRateLimit(t *testing.T) {

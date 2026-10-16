@@ -113,7 +113,7 @@ curl -s localhost:8080/healthz          # ok
 | `GET` | `/contests/{key}/standings` | 见[比赛](#比赛限时--独立榜--加入码--队伍oiioiacm-三种赛制) | 该比赛独立榜，不影响 `/rank`；OI 比赛结束前除主办方外看不到 |
 | `GET` | `/contests/{key}/p/{题号}` | 成员或主办方 | 比赛内题号入口，进去的提交自动归属该比赛 |
 | `GET` | `/rank` | 公开 | 排行榜 |
-| `GET` | `/topics` | 公开 | 社区贴列表（统一管理页），`?q=` `?after=` `?limit=` |
+| `GET` | `/topics` | 公开 | 社区贴列表（统一管理页），`?q=` `?after=` `?limit=`；登录后每行带上「你能删」的删除按钮 |
 | `GET` `/POST` | `/topics/new` `/topics` | 登录用户 | 发帖：类型（求助 / 社区）、标题、正文（可预览）、题号 |
 | `GET` | `/topics/{id}` | 公开 | 帖子正文与评论；未登录只能看 |
 | `POST` | `/topics/{id}/comment` | 登录用户 | 发表评论（每人每小时 60 条） |
