@@ -53,7 +53,7 @@ func ticketRows(items []store.Ticket) []ticketRow {
 	for _, t := range items {
 		rows = append(rows, ticketRow{
 			ID: t.ID, Kind: t.Kind, KindLabel: store.TicketKindLabel(t.Kind),
-			Title: t.Title, Author: t.Author, DisplayName: t.DisplayName,
+			Title: t.Title, Author: t.Author, DisplayName: ticketName(t.DisplayName, t.Author),
 			When: agoMS(t.CreatedAt), Updated: agoMS(t.UpdatedAt),
 			Status: t.Status, StatusLabel: store.TicketStatusLabel(t.Status),
 			StatusClass: store.TicketStatusClass(t.Status),
@@ -375,7 +375,7 @@ func (s *Server) handleTicketGet(w http.ResponseWriter, r *http.Request) {
 	}
 	d := ticketData{
 		ID: tk.ID, Kind: tk.Kind, KindLabel: store.TicketKindLabel(tk.Kind),
-		Title: tk.Title, Author: tk.Author, DisplayName: tk.DisplayName,
+		Title: tk.Title, Author: tk.Author, DisplayName: ticketName(tk.DisplayName, tk.Author),
 		When: agoMS(tk.CreatedAt), Updated: agoMS(tk.UpdatedAt),
 		Body:   renderMarkdownHTML(tk.Body),
 		Status: tk.Status, StatusLabel: store.TicketStatusLabel(tk.Status),
@@ -397,17 +397,14 @@ func (s *Server) handleTicketGet(w http.ResponseWriter, r *http.Request) {
 	} else if d.CanClose {
 		d.StatusOpts = append(d.StatusOpts, detailOption{Value: store.TicketClosed, Label: "关闭这张工单"})
 	}
-	staffIDs := map[int64]bool{}
-	if handler {
-		staffIDs[a.User.ID] = true
-	}
 	for _, rep := range replies {
 		d.Replies = append(d.Replies, ticketReplyRow{
-			ID: rep.ID, Author: rep.Author, DisplayName: rep.DisplayName,
+			ID: rep.ID, Author: rep.Author, DisplayName: ticketName(rep.DisplayName, rep.Author),
 			When: agoMS(rep.CreatedAt), Body: renderMarkdownHTML(rep.Body),
-			Event:   rep.Event != "",
-			IsYou:   rep.AuthorID == a.User.ID,
-			IsStaff: rep.AuthorID == tk.HandlerID || staffIDs[rep.AuthorID],
+			Event: rep.Event != "",
+			IsYou: rep.AuthorID == a.User.ID,
+			// 「处理人」只给真正接手这单的人：有权限不等于在办。
+			IsStaff: rep.AuthorID == tk.HandlerID,
 		})
 	}
 	s.page(w, r, http.StatusOK, "工单 "+strconv.FormatInt(tk.ID, 10), "ticket", a.viewer(), msgOf(r), d)
@@ -513,6 +510,15 @@ func (s *Server) handleTicketDelete(w http.ResponseWriter, r *http.Request) {
 
 // backToTicket 回到工单页并带一句话。303 而不是 302：POST 之后要让浏览器换成 GET，
 // 否则刷新会再提交一次回复。
+// ticketName falls back to the handle when the user never set a nickname: an empty
+// link is unreadable and unclickable-looking.
+func ticketName(display, handle string) string {
+	if strings.TrimSpace(display) != "" {
+		return display
+	}
+	return handle
+}
+
 func (s *Server) backToTicket(w http.ResponseWriter, r *http.Request, path, msg string) {
 	sep := "?"
 	if strings.Contains(path, "?") {
