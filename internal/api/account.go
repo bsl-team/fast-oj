@@ -180,6 +180,13 @@ func (s *Server) loginFailed(w http.ResponseWriter, r *http.Request, msg string,
 }
 
 func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
+	// 已经登录就别给看注册表单：这个页面以前带着 nil viewer 渲染，导航栏骗你说没登录，
+	// 而浏览器其实带着 session cookie——你一提交就撞上 CSRF 闸门，得到一句莫名其妙的
+	// 「表单已过期」。/login 早就这么挡了，注册没道理例外。
+	if a, err := s.authenticate(r); err == nil && a.User.ID != 0 {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	if !s.registrationOpen(r) {
 		s.errorPage(w, r, http.StatusForbidden, "当前未开放注册")
 		return

@@ -53,6 +53,24 @@ func (h *harness) formPage(path string, values url.Values) (int, string) {
 	return code, body
 }
 
+// 已登录的浏览器不该看到注册表单：那表单没有 CSRF 字段（匿名不需要），带着 cookie
+// 一提交就会被闸门挡成一句看不懂的「表单已过期」。
+func TestRegisterPageRedirectsSignedIn(t *testing.T) {
+	h := newHarness(t)
+	user := h.signIn("already_in")
+	// 客户端会跟着 303 走到首页，所以断言"落在首页、看不到注册表单"。
+	for _, path := range []string{"/register", "/login"} {
+		code, body := h.getAs(user, path)
+		if code != http.StatusOK || strings.Contains(body, "密码（至少 10 位）") {
+			t.Errorf("signed-in GET %s = %d and the register form is still on screen:\n%s", path, code, short(body))
+		}
+	}
+	// 匿名仍然要能看到并填这张表单。
+	if code, body := h.htmlGet("/register", ""); code != http.StatusOK || !strings.Contains(body, "密码") {
+		t.Errorf("anonymous register page = %d", code)
+	}
+}
+
 func TestLoginFailureIsIndistinguishable(t *testing.T) {
 	h := newHarness(t)
 	if _, err := h.db.CreateAccount(ctx(), store.AccountInput{
