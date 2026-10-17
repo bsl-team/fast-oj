@@ -234,7 +234,7 @@ func (s *Server) handleTopicNew(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	d.Banned, _ = a.bannedFrom(permTopicPost, "发帖")
+	d.Banned = s.topicNotice(r, a)
 	s.page(w, r, http.StatusOK, "发帖", "topic_edit", a.viewer(), msgOf(r), d)
 }
 
@@ -271,7 +271,7 @@ func (s *Server) handleTopicCreate(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?next=/topics/new", http.StatusSeeOther)
 		return
 	}
-	if msg, banned := a.bannedFrom(permTopicPost, "发帖"); banned {
+	if msg := s.topicNotice(r, a); msg != "" {
 		s.respondError(w, r, http.StatusForbidden, msg)
 		return
 	}
@@ -466,6 +466,12 @@ func (s *Server) handleTopicComment(w http.ResponseWriter, r *http.Request) {
 	a, err := s.authenticate(r)
 	if err != nil || a.User.ID == 0 {
 		http.Redirect(w, r, "/login?next="+url.QueryEscape("/topics/"+r.PathValue("id")), http.StatusSeeOther)
+		return
+	}
+	// 站级开关关掉帖子时，评论也一并停：评论是帖子的一部分，只关发帖的话，
+	// 老帖子下面还能继续盖楼。
+	if !s.site(r.Context()).AllowTopics {
+		s.featureClosed(w, r, "评论")
 		return
 	}
 	id, ok := pathID(r)

@@ -20,7 +20,9 @@
   {{end}}
 </section>
 
-{{if .Data.CanSend}}
+{{if .Data.Closed}}
+<p class="flash">本站已关闭私信。</p>
+{{else if .Data.CanSend}}
 <form method="post" action="/messages/{{.Data.Peer}}" class="composer">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
   <label>发私信给 {{.Data.PeerName}}（最长 {{.Data.MaxBytes}} 字，{{.Data.RateNote}}）</label>

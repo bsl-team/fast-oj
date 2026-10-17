@@ -21,6 +21,12 @@ type SiteConfig struct {
 	APIHint       string     `json:"api_hint"`
 	Links         []SiteLink `json:"links"`
 	AllowRegister bool       `json:"allow_register"`
+	// The four feature switches a school site asks for: 关掉之后旧内容照样读得到，
+	// 只是不再收新的。注册是第五个，见 AllowRegister。
+	AllowFeed     bool `json:"allow_feed"`
+	AllowTopics   bool `json:"allow_topics"`
+	AllowContests bool `json:"allow_contests"`
+	AllowDM       bool `json:"allow_dm"`
 }
 
 // DefaultAPIHint is the footer line a fresh site shows. It names a port the
@@ -36,7 +42,23 @@ const (
 	setAPIHint       = "site.api_hint"
 	setLinks         = "site.links"
 	setAllowRegister = "site.allow_register"
+	setAllowFeed     = "site.allow_feed"
+	setAllowTopics   = "site.allow_topics"
+	setAllowContests = "site.allow_contests"
+	setAllowDM       = "site.allow_dm"
 )
+
+// openSwitch is the rule every feature switch follows: only an explicit "0" closes
+// it. A missing or half-written row must not silently lock a whole site out.
+func openSwitch(v string) bool { return v != "0" }
+
+// boolSwitch is the same rule seen from the writing side.
+func boolSwitch(on bool) string {
+	if on {
+		return "1"
+	}
+	return "0"
+}
 
 func (db *DB) Site(ctx context.Context) (SiteConfig, error) {
 	rows, err := db.SQL.QueryContext(ctx, `SELECT key, value FROM site_settings`)
@@ -52,6 +74,10 @@ func (db *DB) Site(ctx context.Context) (SiteConfig, error) {
 		setAPIHint:       DefaultAPIHint,
 		setLinks:         "[]",
 		setAllowRegister: "1",
+		setAllowFeed:     "1",
+		setAllowTopics:   "1",
+		setAllowContests: "1",
+		setAllowDM:       "1",
 	}
 	for rows.Next() {
 		var k, v string
@@ -74,9 +100,12 @@ func (db *DB) Site(ctx context.Context) (SiteConfig, error) {
 		Footer:  values[setFooter],
 		APIHint: values[setAPIHint],
 		Links:   links,
-		// Anything but an explicit "0" keeps registration open, so a missing row
-		// cannot silently lock the site.
-		AllowRegister: values[setAllowRegister] != "0",
+		// 五个开关都只在显式写"0"时关闭：缺行或写坏一行都不该把整个站点锁住。
+		AllowRegister: openSwitch(values[setAllowRegister]),
+		AllowFeed:     openSwitch(values[setAllowFeed]),
+		AllowTopics:   openSwitch(values[setAllowTopics]),
+		AllowContests: openSwitch(values[setAllowContests]),
+		AllowDM:       openSwitch(values[setAllowDM]),
 	}, nil
 }
 
@@ -91,17 +120,17 @@ func (db *DB) SetSiteAll(ctx context.Context, byUserID int64, in SiteConfig) err
 	if err != nil {
 		return err
 	}
-	allow := "0"
-	if in.AllowRegister {
-		allow = "1"
-	}
 	writes := []struct{ key, value string }{
 		{setTitle, in.Title},
 		{setTagline, in.Tagline},
 		{setFooter, in.Footer},
 		{setAPIHint, in.APIHint},
 		{setLinks, string(raw)},
-		{setAllowRegister, allow},
+		{setAllowRegister, boolSwitch(in.AllowRegister)},
+		{setAllowFeed, boolSwitch(in.AllowFeed)},
+		{setAllowTopics, boolSwitch(in.AllowTopics)},
+		{setAllowContests, boolSwitch(in.AllowContests)},
+		{setAllowDM, boolSwitch(in.AllowDM)},
 	}
 	return db.InTx(ctx, func(tx *sql.Tx) error {
 		for _, w := range writes {

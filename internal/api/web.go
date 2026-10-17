@@ -768,6 +768,10 @@ func (s *Server) contestForSubmission(r *http.Request, a actor, p store.Problem,
 	if a.User.ID == 0 {
 		return claim, errors.New("提交前先登录并加入这场比赛")
 	}
+	// 站级开关关掉比赛时赛内提交一并停：只挡加入与建赛的话，名单里的人还能继续交。
+	if !s.site(r.Context()).AllowContests {
+		return claim, errors.New("本站已关闭比赛，不再收提交。")
+	}
 	// 被禁止参加比赛的人连赛内提交也不能做：只挡住"加入"的话，已经在名单里的人
 	// 就还能继续交。这条放在管理员分支之前——被禁止的人不该靠自己是主办方绕过去。
 	if msg, banned := a.bannedFrom(permContestJoin, "参加比赛"); banned {

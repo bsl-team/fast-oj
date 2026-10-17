@@ -424,6 +424,10 @@ func (s *Server) handleContestCreate(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?next=/contests/new", http.StatusSeeOther)
 		return
 	}
+	if !s.site(r.Context()).AllowContests {
+		s.featureClosed(w, r, "建比赛")
+		return
+	}
 	if !a.can(permContestCreate) {
 		s.respondError(w, r, http.StatusForbidden, "缺少权限："+permContestCreate)
 		return
@@ -845,6 +849,10 @@ func (s *Server) handleContestJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	a, ok := s.signedInToContest(w, r, c)
 	if !ok {
+		return
+	}
+	if !s.site(r.Context()).AllowContests {
+		s.featureClosed(w, r, "参加比赛")
 		return
 	}
 	if msg, banned := a.bannedFrom(permContestJoin, "参加比赛"); banned {

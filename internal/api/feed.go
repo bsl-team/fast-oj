@@ -75,16 +75,10 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	// 被禁止发动态的人不该对着一个只会 403 的输入框浪费时间。匿名读者不算：
-	// 他什么都没有，该看到的是"登录后就能发"。
-	var banned string
-	if a.User.ID != 0 {
-		banned, _ = a.bannedFrom(permFeedPost, "发动态")
-	}
 	s.page(w, r, http.StatusOK, "动态", "feed", a.viewer(), msgOf(r), map[string]any{
 		"Posts":    postRows(posts, a),
 		"SignedIn": a.User.ID != 0,
-		"Banned":   banned,
+		"Banned":   s.feedNotice(r, a),
 		"Next":     nextCursor(posts, limit),
 	})
 }
@@ -102,6 +96,10 @@ func (s *Server) handlePostCreate(w http.ResponseWriter, r *http.Request) {
 	a, err := s.authenticate(r)
 	if err != nil {
 		http.Redirect(w, r, "/login?next=/feed", http.StatusSeeOther)
+		return
+	}
+	if !s.site(r.Context()).AllowFeed {
+		s.featureClosed(w, r, "动态发布")
 		return
 	}
 	if msg, banned := a.bannedFrom(permFeedPost, "发动态"); banned {

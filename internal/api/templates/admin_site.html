@@ -20,10 +20,31 @@
   <label>页脚 API 提示（留空则整行不显示）</label>
   <textarea name="api_hint" rows="2" maxlength="2000" spellcheck="false">{{.Data.Site.APIHint}}</textarea>
 
-  <label class="check">
-    <input type="checkbox" name="allow_register" value="1" {{if .Data.Site.AllowRegister}}checked{{end}}>
-    允许自助注册
-  </label>
+  <h2>功能开关</h2>
+  <p class="meta">关掉的意思是"不再收新的"：已发出去的内容、历史成绩、读这些页面都照旧。
+    考试周想安静点，就把动态、帖子、私信关掉，只留题目和比赛。</p>
+  <div class="switches">
+    <label class="check">
+      <input type="checkbox" name="allow_register" value="1" {{if .Data.Site.AllowRegister}}checked{{end}}>
+      允许自助注册
+    </label>
+    <label class="check">
+      <input type="checkbox" name="allow_feed" value="1" {{if .Data.Site.AllowFeed}}checked{{end}}>
+      允许发动态（犇犇）
+    </label>
+    <label class="check">
+      <input type="checkbox" name="allow_topics" value="1" {{if .Data.Site.AllowTopics}}checked{{end}}>
+      允许发帖与评论
+    </label>
+    <label class="check">
+      <input type="checkbox" name="allow_contests" value="1" {{if .Data.Site.AllowContests}}checked{{end}}>
+      允许建比赛、加入比赛与赛内提交
+    </label>
+    <label class="check">
+      <input type="checkbox" name="allow_dm" value="1" {{if .Data.Site.AllowDM}}checked{{end}}>
+      允许发私信
+    </label>
+  </div>
 
   <p><input type="submit" value="保存"></p>
 </form>

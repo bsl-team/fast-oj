@@ -102,6 +102,8 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 		"PeerName": nameOf(peer),
 		"Messages": rows,
 		"CanSend":  may && peer.ID != a.User.ID,
+		// 站级开关关掉私信时，页面上要留一句原因，而不是一个只会 403 的输入框。
+		"Closed":   !s.site(r.Context()).AllowDM,
 		"MaxBytes": store.MaxDMBody,
 		"RateNote": "每 2 秒最多 1 条",
 		"Inbox":    "/messages",
@@ -114,6 +116,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	a, err := s.authenticate(r)
 	if err != nil || a.User.ID == 0 {
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.Path), http.StatusSeeOther)
+		return
+	}
+	if !s.site(r.Context()).AllowDM {
+		s.featureClosed(w, r, "私信")
 		return
 	}
 	peer, err := s.db.GetUserByHandle(r.Context(), r.PathValue("handle"))

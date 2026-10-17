@@ -62,6 +62,39 @@ func (s *Server) registrationOpen(r *http.Request) bool {
 	return s.cfg.AllowRegister && s.site(r.Context()).AllowRegister
 }
 
+// featureClosed is the one answer every switched-off feature gives: the write stops
+// here with the reason, instead of a half-finished write or a bare 403.
+//
+// 403 rather than 503 keeps it consistent with the rest of the app's refusals (a
+// ban and a closed registration are 403 too), and a 5xx would have a proxy or a
+// monitoring box treating an operator's choice as an outage.
+func (s *Server) featureClosed(w http.ResponseWriter, r *http.Request, what string) {
+	s.respondError(w, r, http.StatusForbidden, "本站已关闭"+what+"。")
+}
+
+// feedNotice is why this reader cannot post to 动态 right now, or "" when they can.
+// The composer and the write path ask the same question, so the page never shows a
+// box that would only walk into a refusal.
+func (s *Server) feedNotice(r *http.Request, a actor) string {
+	if !s.site(r.Context()).AllowFeed {
+		return "本站已关闭动态发布。"
+	}
+	if a.User.ID == 0 {
+		return ""
+	}
+	msg, _ := a.bannedFrom(permFeedPost, "发动态")
+	return msg
+}
+
+// topicNotice is the same question for 帖子：站级开关优先，然后是这个账号的禁止。
+func (s *Server) topicNotice(r *http.Request, a actor) string {
+	if !s.site(r.Context()).AllowTopics {
+		return "本站已关闭发帖。"
+	}
+	msg, _ := a.bannedFrom(permTopicPost, "发帖")
+	return msg
+}
+
 type linkRow struct{ Title, URL string }
 
 func tooLong(s string, n int) bool { return utf8.RuneCountInString(s) > n }
@@ -109,6 +142,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		"Counts":     counts,
 		"SignedIn":   a.User.ID != 0,
 		"Registered": s.registrationOpen(r),
+		// 首页也有动态输入框，理由要给它同一个答案。
+		"Banned": s.feedNotice(r, a),
 	})
 }
 
@@ -205,8 +240,12 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 		Tagline: r.FormValue("tagline"),
 		Footer:  r.FormValue("footer"),
 		APIHint: r.FormValue("api_hint"),
-		// The checkbox is only present when checked.
+		// The checkbox is only present when checked, so every switch reads the same way.
 		AllowRegister: r.FormValue("allow_register") == "1",
+		AllowFeed:     r.FormValue("allow_feed") == "1",
+		AllowTopics:   r.FormValue("allow_topics") == "1",
+		AllowContests: r.FormValue("allow_contests") == "1",
+		AllowDM:       r.FormValue("allow_dm") == "1",
 	}
 	// A rejected save keeps what was typed: having to re-enter a whole home page
 	// because one link line was malformed is not a fair trade.
