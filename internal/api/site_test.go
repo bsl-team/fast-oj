@@ -74,19 +74,20 @@ func TestSiteSettingsRoundTripAndCache(t *testing.T) {
 func TestSiteAPIHintIsEditable(t *testing.T) {
 	h := newHarness(t)
 
-	// A fresh site ships the line, so nobody gets a footer that vanished on its own.
-	if _, home := h.htmlGet("/", ""); !strings.Contains(home, "<code>curl -s localhost:8080/problems</code>") {
-		t.Error("default api hint missing from the footer")
+	// 默认不再宣传纯文本 API 与 ?format=json：那两个入口早就撤掉了，留着这句就是让每个
+	// 新站点在页脚里教人去 curl 一个不存在的东西。空值意味着这一整行不出现。
+	if _, home := h.htmlGet("/", ""); strings.Contains(home, "format=json") || strings.Contains(home, "curl -s") {
+		t.Errorf("页脚还在宣传已经不存在的 API：\n%s", short(home))
 	}
 
 	code, out := h.postBearer("/admin/site", url.Values{
 		"title": {"我的 OJ"}, "allow_register": {"1"},
-		"api_hint": {"本机 API：`curl -s localhost:18080/problems`"},
+		"api_hint": {"健康检查：`curl -s localhost:18080/healthz`"},
 	}, h.admin)
 	if code != http.StatusOK || !strings.Contains(out, "已保存") {
 		t.Fatalf("save = %d %s", code, out)
 	}
-	if _, home := h.htmlGet("/", ""); !strings.Contains(home, "<code>curl -s localhost:18080/problems</code>") {
+	if _, home := h.htmlGet("/", ""); !strings.Contains(home, "<code>curl -s localhost:18080/healthz</code>") {
 		t.Errorf("edited hint not rendered:\n%s", home)
 	}
 
@@ -94,7 +95,7 @@ func TestSiteAPIHintIsEditable(t *testing.T) {
 	if _, out := h.postBearer("/admin/site", url.Values{"title": {"我的 OJ"}, "allow_register": {"1"}}, h.admin); !strings.Contains(out, "已保存") {
 		t.Fatal("second save failed")
 	}
-	if _, home := h.htmlGet("/", ""); strings.Contains(home, "本机 API") {
+	if _, home := h.htmlGet("/", ""); strings.Contains(home, "健康检查") {
 		t.Errorf("cleared hint still rendered:\n%s", home)
 	}
 }

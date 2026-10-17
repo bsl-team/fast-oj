@@ -29,10 +29,10 @@ type SiteConfig struct {
 	AllowDM       bool `json:"allow_dm"`
 }
 
-// DefaultAPIHint is the footer line a fresh site shows. It names a port the
-// operator may not be listening on, which is exactly why it is editable; an
-// explicit empty value hides the line.
-const DefaultAPIHint = "纯文本 API：`curl -s localhost:8080/problems`；机器可读加 `?format=json`。"
+// DefaultAPIHint is the footer line a fresh site shows. 纯文本 API 与 ?format=json
+// 早就撤掉了（网页是唯一给人类看的界面），所以默认值不能再宣传它们——留着这句话
+// 就是让每个新站点在页脚里教人去 curl 一个已经不存在的东西。
+const DefaultAPIHint = ""
 
 // Setting keys. They are data, so adding one needs no schema change.
 const (
