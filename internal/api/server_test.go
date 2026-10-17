@@ -33,6 +33,9 @@ func testConfig(t testing.TB) config.Config {
 		MaxCase:       1 << 20,
 		BCryptCost:    bcrypt.MinCost, // test speed, never a production default
 		AllowRegister: true,
+		// 一个用例里常常要注册好几个账号，全部来自同一个 127.0.0.1。生产默认是每分钟 1 次，
+		// 这里放开，测的就是别的逻辑；限流本身有用例单独测（newHarnessCfg 调回 1）。
+		RegisterPerMinute: 50,
 	}
 }
 

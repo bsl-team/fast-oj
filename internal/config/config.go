@@ -21,7 +21,10 @@ type Config struct {
 	// AllowRegister gates self-service signup; M10 moves the switch into the
 	// site settings the operator can edit in the browser.
 	AllowRegister bool
-	Verbose       bool
+	// RegisterPerMinute is how many signups one machine may submit per minute.
+	// 默认 1 是防刷；开学那天全班排队注册，把它调到 6 就够一节课用了。0 或负数按 1 处理。
+	RegisterPerMinute int
+	Verbose           bool
 }
 
 func envOr(key, fallback string) string {
@@ -61,6 +64,11 @@ func (c *Config) Validate() error {
 	if c.BCryptCost < 10 || c.BCryptCost > 14 {
 		return fmt.Errorf("bcrypt cost must be 10..14")
 	}
+	if c.RegisterPerMinute <= 0 {
+		// 0 does not mean "unlimited", it means unset: a site nobody can register for
+		// would look like a bug, and one everybody can flood looks like one too.
+		c.RegisterPerMinute = 1
+	}
 	abs, err := filepath.Abs(c.DataDir)
 	if err != nil {
 		return err
@@ -86,6 +94,7 @@ func Load(args []string) (Config, error) {
 	fs.IntVar(&c.BCryptCost, "bcrypt-cost", 11, "password hash cost (10 is weak, 14 is slow on login)")
 	fs.BoolVar(&c.Secure, "secure-cookies", false, "mark session cookies Secure (enable when serving over TLS)")
 	noRegister := fs.Bool("no-register", false, "关闭自助注册")
+	fs.IntVar(&c.RegisterPerMinute, "register-per-minute", 1, "每台机器每分钟可注册的账号数（开学集体注册时可以调大）")
 	fs.BoolVar(&c.Verbose, "v", false, "verbose request logging")
 	if err := fs.Parse(args); err != nil {
 		return c, err

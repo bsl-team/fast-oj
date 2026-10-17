@@ -14,8 +14,36 @@
   <label>密码（至少 10 位）</label>
   <input type="password" name="password" autocomplete="new-password" required>
 
+  <input type="hidden" name="device" id="device" value="">
+
   <p><input type="submit" value="注册并登录"></p>
 </form>
 
 <p class="meta">注册即表示同意判题结果以本系统记录为准。判题在本机以受限进程运行，详见 README 的隔离边界。</p>
+
+<script>
+  // 浏览器侧的"这台机器"标识：第一次访问生成一个随机号存进 localStorage，之后每次注册都带上它。
+  // 网卡的 MAC 地址在 HTTP 请求里根本不存在——它只属于同一个二层网络，出了路由器就被换成路由器
+  // 自己的地址，所以服务端能拿到的最接近的东西就是这个号。清掉站点数据会换一个新号，因此 IP
+  // 那条限流照旧保留，两条一起用。
+  (function () {
+    var KEY = 'fastoj_device';
+    try {
+      var id = localStorage.getItem(KEY);
+      if (!id) {
+        var bytes = new Uint8Array(18);
+        crypto.getRandomValues(bytes);
+        var parts = [];
+        for (var i = 0; i < bytes.length; i++) {
+          parts.push(('0' + bytes[i].toString(36)).slice(-2));
+        }
+        id = parts.join('');
+        localStorage.setItem(KEY, id);
+      }
+      document.getElementById('device').value = id;
+    } catch (e) {
+      // 隐私模式或浏览器没有 localStorage：照常提交，服务端退回到只按 IP 限流。
+    }
+  })();
+</script>
 {{end}}

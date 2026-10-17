@@ -17,7 +17,33 @@ const (
 	maxLoginFailures = 10
 	registerWindow   = time.Hour
 	maxRegistrations = 20
+	// 一台机器一分钟最多注册几个账号由 -register-per-minute 决定，默认 1。机房里一个出口
+	// IP 后面站着几十个学生，光看 IP 会误伤，光看设备号又能被清空存储绕过——所以两把键
+	// 一起看，任何一把超了就拒。
+	registerMinute = time.Minute
 )
+
+// deviceToken is the browser-side machine handle: a random id the register page
+// generates once and keeps in localStorage.
+//
+// 网卡 MAC 地址拿不到：它只存在于同一个二层网络里，HTTP 请求从头到尾不会带上它，
+// 路由器已经把它换成了自己的。能做到的是"这台机器的浏览器"这个级别的标识。
+// 校验格式而不是信任内容：这个值来自客户端，什么都能编，所以它只能用来做限流键，
+// 不能当身份、不能当授权依据。
+func deviceToken(raw string) string {
+	tok := strings.TrimSpace(raw)
+	if len(tok) < 16 || len(tok) > 64 {
+		return ""
+	}
+	for _, r := range tok {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return ""
+		}
+	}
+	return tok
+}
 
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -201,21 +227,43 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusForbidden, "当前未开放注册")
 		return
 	}
-	key := "register:" + clientIP(r)
-	allowed, err := s.db.LoginAllowed(r.Context(), key, registerWindow, maxRegistrations)
+	handle := strings.TrimSpace(r.FormValue("handle"))
+	email := strings.TrimSpace(r.FormValue("email"))
+	display := strings.TrimSpace(r.FormValue("display_name"))
+	password := r.FormValue("password")
+
+	ipKey := "register:ip:" + clientIP(r)
+	hourKey := "register:hour:" + clientIP(r)
+	// 一分钟几次的键：IP 加上浏览器设备号。两把键各自记一条计数，所以不能跟按小时那条
+	// 共用同一个键名——login_attempts 里一个键只有一行。
+	minuteKeys := []string{ipKey}
+	if dev := deviceToken(r.FormValue("device")); dev != "" {
+		minuteKeys = append(minuteKeys, "register:dev:"+dev)
+	}
+	for _, key := range minuteKeys {
+		allowed, err := s.db.LoginAllowed(r.Context(), key, registerMinute, s.cfg.RegisterPerMinute)
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		if !allowed {
+			s.renderRegisterForm(w, r, http.StatusTooManyRequests,
+				"这台机器一分钟内只能注册 "+strconv.Itoa(s.cfg.RegisterPerMinute)+" 个账号，等一分钟再试。",
+				handle, email, display)
+			return
+		}
+	}
+	// 然后才是每小时的总量上限。
+	allowed, err := s.db.LoginAllowed(r.Context(), hourKey, registerWindow, maxRegistrations)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
 	if !allowed {
-		s.page(w, r, http.StatusTooManyRequests, "注册", "register", nil, "这台机器的注册次数已达上限，明天再试", nil)
+		s.renderRegisterForm(w, r, http.StatusTooManyRequests,
+			"这台机器这一个小时里的注册次数已达上限，请稍后再试", handle, email, display)
 		return
 	}
-
-	handle := strings.TrimSpace(r.FormValue("handle"))
-	email := strings.TrimSpace(r.FormValue("email"))
-	display := strings.TrimSpace(r.FormValue("display_name"))
-	password := r.FormValue("password")
 
 	var problem string
 	switch {
@@ -250,9 +298,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	if _, err := s.db.RegisterLoginFailure(r.Context(), key, registerWindow); err != nil {
-		s.log.Error("register counter", "err", err)
+	// 注册成功也要计数：这些桶记的是"成功注册"，不是失败尝试，所以一条都不能漏。
+	count := func(key string, window time.Duration) {
+		if _, err := s.db.RegisterLoginFailure(r.Context(), key, window); err != nil {
+			s.log.Error("register counter", "err", err)
+		}
 	}
+	for _, key := range minuteKeys {
+		count(key, registerMinute)
+	}
+	count(hourKey, registerWindow)
 	// 站主先到先得：站点还没人认领时，第一个注册的人就是超级管理员。
 	claimed := s.claimSiteOwner(r, u)
 
