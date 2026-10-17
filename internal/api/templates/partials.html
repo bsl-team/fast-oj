@@ -20,8 +20,11 @@
       </form>
       {{end}}
     </span>
+    <details class="fold">
+      <summary><span class="open-word">展开</span><span class="close-word">收起</span></summary>
+      <div class="body">{{.Body}}</div>
+    </details>
   </header>
-  <div class="body">{{.Body}}</div>
 </article>
 {{end}}
 {{end}}

@@ -107,11 +107,32 @@ nav.top button:hover { color: var(--accent); }
 .composer textarea { min-height: 5rem; }
 article.post { border-bottom: 1px solid var(--line); padding: .9rem 0; }
 article.post.muted { opacity: .55; }
-article.post header { display: flex; gap: .6rem; align-items: baseline; margin-bottom: .3rem; }
+article.post header { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: .3rem; }
 article.post .who { font-weight: 600; }
 article.post .when { color: var(--muted); font-size: .85rem; }
 article.post .ops { margin-left: auto; font-size: .85rem; }
 article.post .body p { margin: .35rem 0; }
+/* 动态默认折成一屏一行：一行里只有谁、什么时候发的、和一个"展开"。正文要点开才出现，
+   出现之后也在自己的盒子里最多 500px，超出就滚动 —— 一张很长的图或一大段刷屏文本
+   不该把整页顶走（长图攻击）。display:contents 是为了让"展开"这一行和抬头排在同一行。 */
+article.post details.fold { display: contents; }
+article.post details.fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .85rem;
+  list-style: none;
+  user-select: none;
+}
+article.post details.fold > summary::-webkit-details-marker { display: none; }
+article.post details.fold .body {
+  flex-basis: 100%;
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+}
+article.post details.fold .body img { max-width: 100%; }
+article.post details.fold:not([open]) .close-word { display: none; }
+article.post details.fold[open] .open-word { display: none; }
 label.check { display: flex; gap: .4rem; align-items: center; margin: .8rem 0; }
 label.check input { width: auto; }
 section.bio { border-left: 3px solid var(--line); padding-left: .9rem; margin: 1rem 0 1.5rem; }

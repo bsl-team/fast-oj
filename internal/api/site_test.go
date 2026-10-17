@@ -215,6 +215,57 @@ func TestFeedPosting(t *testing.T) {
 	}
 }
 
+// 犇犇的隐藏：一条动态默认只占一行——谁、什么时候发的、一个"展开"。正文要点开才出现，
+// 出现之后也是在一个最多 500px 的盒子里滚动：一张长图不该把整页顶走。
+func TestFeedCollapsesToOneLine(t *testing.T) {
+	h := newHarness(t)
+	cookie, csrf := h.login("folder", "folder@example.com", testPassword)
+	if code, _ := h.postForm2("/feed", url.Values{"body": {"很长的一段正文"}}, cookie, csrf); code != http.StatusOK {
+		t.Fatalf("发动态 = %d", code)
+	}
+
+	_, page := h.htmlGet("/feed", "")
+	if strings.Contains(page, `<details class="fold" open`) {
+		t.Error("动态默认就该是折着的")
+	}
+	for _, want := range []string{`<details class="fold">`, "<summary>", "展开", "很长的一段正文"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("动态页缺了 %q：\n%s", want, short(page))
+		}
+	}
+	// 正文必须在折叠块里面，否则浏览器折叠状态也照样把它画出来。
+	fold := page[strings.Index(page, `<details class="fold">`):]
+	if end := strings.Index(fold, "</details>"); end < 0 || !strings.Contains(fold[:end], "很长的一段正文") {
+		t.Errorf("正文不在折叠块里：\n%s", short(fold))
+	}
+
+	css := h.stylesheet(page)
+	for _, want := range []string{"max-height: 500px", "overflow-y: auto", "display: contents"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("样式表缺了 %q，长图就拦不住", want)
+		}
+	}
+}
+
+// stylesheet 取出页面正在用的那份样式表：静态文件带着内容哈希，断言它而不是断言仓库里的
+// 文件，才说明页面真的加载了这一条规则。
+func (h *harness) stylesheet(page string) string {
+	h.t.Helper()
+	i := strings.Index(page, "/static/style.css?v=")
+	if i < 0 {
+		h.t.Fatal("页面没有引用样式表")
+	}
+	rest := page[i:]
+	if end := strings.IndexByte(rest, '"'); end > 0 {
+		rest = rest[:end]
+	}
+	code, css := h.htmlGet(rest, "")
+	if code != http.StatusOK {
+		h.t.Fatalf("样式表 %s = %d", rest, code)
+	}
+	return css
+}
+
 func TestFeedCursorOnlyOffersMoreWhenFull(t *testing.T) {
 	h := newHarness(t)
 	cookie, csrf := h.login("cursor9", "cursor9@example.com", testPassword)
