@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Counts struct {
@@ -138,6 +139,170 @@ func (db *DB) Leaderboard(ctx context.Context, limit int) ([]RankRow, error) {
 		}
 		r.LastAC = nullTime(lastAC)
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GlobalStats is what the admin statistics page answers: how many people, how many
+// submissions, and what the judge actually said.
+type GlobalStats struct {
+	Users       int `json:"users"`
+	ActiveUsers int `json:"active_users"`
+	BannedUsers int `json:"banned_users"`
+	Admins      int `json:"admins"`
+
+	Submissions int `json:"submissions"`
+	Submitters  int `json:"submitters"`
+	ACs         int `json:"acs"`
+	Queued      int `json:"queued"`
+
+	Problems  int `json:"problems"`
+	Visible   int `json:"visible_problems"`
+	Testcases int `json:"testcases"`
+
+	Posts        int `json:"posts"`
+	Topics       int `json:"topics"`
+	Comments     int `json:"comments"`
+	Tickets      int `json:"tickets"`
+	OpenTickets  int `json:"open_tickets"`
+	Contests     int `json:"contests"`
+	ContestSubs  int `json:"contest_submissions"`
+	JudgesOnline int `json:"judges_online"`
+}
+
+// AverageSubmits is 人均提交. The denominator is the people who actually submitted
+// something, not the headcount: dividing by every registered account would blend
+// "never opened the site" into the average and tell an operator nothing.
+func (g GlobalStats) AverageSubmits() float64 {
+	if g.Submitters == 0 {
+		return 0
+	}
+	return float64(g.Submissions) / float64(g.Submitters)
+}
+
+// ACRate is over finished runs only, so a queue full of in-flight submissions does
+// not look like a collapse.
+func (g GlobalStats) ACRate() float64 {
+	done := g.Submissions - g.Queued
+	if done <= 0 {
+		return 0
+	}
+	return float64(g.ACs) / float64(done) * 100
+}
+
+// NameCount is one row of a "how many of each" table.
+type NameCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+func (db *DB) GlobalStats(ctx context.Context) (GlobalStats, error) {
+	var g GlobalStats
+	scans := []struct {
+		dst *int
+		q   string
+	}{
+		{&g.Users, `SELECT COUNT(*) FROM users`},
+		{&g.ActiveUsers, `SELECT COUNT(*) FROM users WHERE status='active'`},
+		{&g.BannedUsers, `SELECT COUNT(*) FROM users WHERE status<>'active'`},
+		{&g.Admins, `SELECT COUNT(*) FROM users WHERE role='admin'`},
+		{&g.Submissions, `SELECT COUNT(*) FROM submissions`},
+		{&g.Submitters, `SELECT COUNT(DISTINCT user_id) FROM submissions`},
+		{&g.ACs, `SELECT COUNT(*) FROM submissions WHERE verdict='AC'`},
+		{&g.Queued, `SELECT COUNT(*) FROM submissions WHERE status IN ('queued','compiling','running')`},
+		{&g.Problems, `SELECT COUNT(*) FROM problems`},
+		{&g.Visible, `SELECT COUNT(*) FROM problems WHERE visible=1`},
+		{&g.Testcases, `SELECT COUNT(*) FROM testcases WHERE is_sample=0`},
+		{&g.Posts, `SELECT COUNT(*) FROM posts`},
+		{&g.Topics, `SELECT COUNT(*) FROM topics`},
+		{&g.Comments, `SELECT COUNT(*) FROM topic_comments`},
+		{&g.Tickets, `SELECT COUNT(*) FROM tickets`},
+		{&g.OpenTickets, `SELECT COUNT(*) FROM tickets WHERE status IN ('open','doing')`},
+		{&g.Contests, `SELECT COUNT(*) FROM contests`},
+		{&g.ContestSubs, `SELECT COUNT(*) FROM submissions WHERE contest_id <> 0`},
+	}
+	for _, s := range scans {
+		if err := db.SQL.QueryRowContext(ctx, s.q).Scan(s.dst); err != nil {
+			return g, fmt.Errorf("stats %s: %w", s.q, err)
+		}
+	}
+	// 在线判机数需要一个时间点参数，所以放在没有参数的那批外面单独问。
+	if err := db.SQL.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM judges WHERE last_seen_at >= ?`, nowMS()-int64(90*time.Second.Milliseconds())).
+		Scan(&g.JudgesOnline); err != nil {
+		return g, fmt.Errorf("stats judges: %w", err)
+	}
+	return g, nil
+}
+
+// VerdictCounts is the whole-site judgement mix, including the in-flight statuses so
+// an operator can see a stuck queue as a pile of "queued".
+func (db *DB) VerdictCounts(ctx context.Context) ([]NameCount, error) {
+	rows, err := db.SQL.QueryContext(ctx,
+		`SELECT CASE WHEN verdict='' THEN status ELSE verdict END AS k, COUNT(*)
+		 FROM submissions GROUP BY 1 ORDER BY 2 DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NameCount
+	for rows.Next() {
+		var n NameCount
+		if err := rows.Scan(&n.Name, &n.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// SubmitsByDay counts submissions per local calendar day, newest first. Days with no
+// activity are simply absent: an operator reading "周二 12 条" does not need the zeros.
+func (db *DB) SubmitsByDay(ctx context.Context, days int) ([]NameCount, error) {
+	if days <= 0 || days > 90 {
+		days = 7
+	}
+	cutoff := nowMS() - int64(days)*24*3600*1000
+	rows, err := db.SQL.QueryContext(ctx,
+		`SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch', 'localtime') AS d, COUNT(*)
+		 FROM submissions WHERE created_at >= ?
+		 GROUP BY d ORDER BY d DESC`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NameCount
+	for rows.Next() {
+		var n NameCount
+		if err := rows.Scan(&n.Name, &n.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// TopSubmittedProblems is the "which problem is people beating on" list.
+func (db *DB) TopSubmittedProblems(ctx context.Context, limit int) ([]NameCount, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := db.SQL.QueryContext(ctx,
+		`SELECT p.pid || '　' || p.title, COUNT(s.id)
+		 FROM submissions s JOIN problems p ON p.id=s.problem_id
+		 GROUP BY s.problem_id, p.pid, p.title
+		 ORDER BY 2 DESC, p.pid LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NameCount
+	for rows.Next() {
+		var n NameCount
+		if err := rows.Scan(&n.Name, &n.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
 	}
 	return out, rows.Err()
 }

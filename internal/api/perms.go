@@ -29,6 +29,8 @@ const (
 	permFeedPost    = "feed.post"
 	permTopicPost   = "topic.post"
 	permContestJoin = "contest.join"
+	// permStatsView 是统计页的键：能改首页文案的人不必看到运营数据。
+	permStatsView = "stats.view"
 )
 
 // bannedFrom is the refusal for those three: the account is still active and can

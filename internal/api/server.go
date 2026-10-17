@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/liangbinchen2013/fast-oj/internal/casefs"
@@ -12,12 +13,34 @@ import (
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
+// hitCounters counts requests by method for the statistics page. They live in
+// memory on purpose: persisting them would mean a write on every request, which is
+// exactly the hot path this project keeps short. They therefore read "since this
+// process started", and a restart resets them.
+type hitCounters struct {
+	get   atomic.Uint64
+	post  atomic.Uint64
+	other atomic.Uint64
+}
+
+func (h *hitCounters) note(method string) {
+	switch method {
+	case http.MethodGet:
+		h.get.Add(1)
+	case http.MethodPost:
+		h.post.Add(1)
+	default: // HEAD、OPTIONS 和任何别的动词，都不冒充成 GET
+		h.other.Add(1)
+	}
+}
+
 type Server struct {
 	cfg     config.Config
 	log     *slog.Logger
 	db      *store.DB
 	cases   *casefs.Store
 	cache   *siteCache
+	hits    hitCounters
 	started time.Time
 }
 
@@ -135,6 +158,7 @@ func (s *Server) Handler() http.Handler {
 	// 批量建号：一个班 40 个学生，不该用注册表单填 40 遍。
 	mux.HandleFunc("GET /admin/accounts/new", s.handleAccountsNew)
 	mux.HandleFunc("POST /admin/accounts", s.handleAccountsCreate)
+	mux.HandleFunc("GET /admin/stats", s.handleStats)
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
@@ -230,6 +254,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /admin/site              站点设置（site.settings）",
 		"  GET  /admin/claim             首次接管：用管理令牌给 admin 账号设网页密码",
 		"  GET  /admin/perms             权限控制台（permission.manage）",
+		"  GET  /admin/stats             站点统计：人数、提交、人均、判定分布、GET/POST 请求量（stats.view）",
 		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
 		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁（超级管理员除外）",
 		"  GET  /admin/accounts/new      批量建号表单（user.manage）",
@@ -281,6 +306,7 @@ func (r *recorded) Write(p []byte) (int, error) {
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		s.hits.note(r.Method)
 		rec := &recorded{ResponseWriter: w}
 		defer func() {
 			if p := recover(); p != nil {

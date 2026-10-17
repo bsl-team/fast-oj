@@ -74,7 +74,9 @@ type viewer struct {
 	// HandleTickets is the 工单 entry: a user sees their own queue, a handler sees
 	// the one that needs work.
 	HandleTickets bool
-	CSRF          string
+	// Stats is the 统计 entry: only someone holding stats.view sees the link.
+	Stats bool
+	CSRF  string
 }
 
 // shell is the envelope every page template sees: layout fields plus the page

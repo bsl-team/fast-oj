@@ -240,5 +240,6 @@ func (a actor) viewer() *viewer {
 		Contests: a.canHostContests(),
 		Unread:   a.Unread, Tickets: a.Tickets, CSRF: a.Session.CSRF,
 		HandleTickets: a.can(permTicketHandle),
+		Stats:         a.can(permStatsView),
 	}
 }
