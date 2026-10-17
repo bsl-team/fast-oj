@@ -27,7 +27,9 @@
 {{end}}
 
 {{define "composer"}}
-{{if .Data.SignedIn}}
+{{if .Data.Banned}}
+<p class="flash">{{.Data.Banned}}</p>
+{{else if .Data.SignedIn}}
 <form method="post" action="/feed" class="composer">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
   <label>说点什么（支持 Markdown 与 $KaTeX$ 公式）</label>

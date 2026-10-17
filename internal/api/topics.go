@@ -204,6 +204,10 @@ type topicFormData struct {
 	// fixed to 求助 and the reader does not get to un-pick the problem.
 	LockedProblem bool
 	Action        string
+	// Banned is the reason this reader may not post at all; empty means the form
+	// is usable. Like the feed composer, the page says so instead of letting the
+	// submit button walk into a 403.
+	Banned string
 }
 
 func newTopicFormData(p store.Problem, locked bool) topicFormData {
@@ -230,6 +234,7 @@ func (s *Server) handleTopicNew(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	d.Banned, _ = a.bannedFrom(permTopicPost, "发帖")
 	s.page(w, r, http.StatusOK, "发帖", "topic_edit", a.viewer(), msgOf(r), d)
 }
 
@@ -264,6 +269,10 @@ func (s *Server) handleTopicCreate(w http.ResponseWriter, r *http.Request) {
 	a, err := s.authenticate(r)
 	if err != nil || a.User.ID == 0 {
 		http.Redirect(w, r, "/login?next=/topics/new", http.StatusSeeOther)
+		return
+	}
+	if msg, banned := a.bannedFrom(permTopicPost, "发帖"); banned {
+		s.respondError(w, r, http.StatusForbidden, msg)
 		return
 	}
 	f := s.parseTopicForm(r)

@@ -3,6 +3,9 @@
 <p class="meta">标题 + 正文，正文走与题面同一套 Markdown + <code>$KaTeX$</code>。
   求助贴必须写清是哪道题，这样别人才能在题目页找到它。</p>
 
+{{if .Data.Banned}}
+<div class="flash"><p>{{.Data.Banned}}</p></div>
+{{end}}
 {{if .Data.Errors}}
 <div class="flash">
   {{range .Data.Errors}}<p>{{.}}</p>{{end}}

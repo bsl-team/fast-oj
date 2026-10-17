@@ -847,6 +847,10 @@ func (s *Server) handleContestJoin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if msg, banned := a.bannedFrom(permContestJoin, "参加比赛"); banned {
+		s.backToContest(w, r, c, msg)
+		return
+	}
 	if _, err := s.db.JoinContest(r.Context(), c.ID, a.User.ID, r.FormValue("code"), ""); err != nil {
 		s.backToContest(w, r, c, err.Error())
 		return

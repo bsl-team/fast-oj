@@ -23,7 +23,23 @@ const (
 	permSubmissionViewAny = "submission.view.any"
 	permTopicModerate     = "topic.moderate"
 	permTicketHandle      = "ticket.handle"
+	// The three revocable everyday capabilities. Everyone holds them by default;
+	// an admin takes one away from one account in the permission console. They are
+	// not staff rights, so granting them to someone does not make them staff.
+	permFeedPost    = "feed.post"
+	permTopicPost   = "topic.post"
+	permContestJoin = "contest.join"
 )
+
+// bannedFrom is the refusal for those three: the account is still active and can
+// still do everything else, so the message says which door closed and where to ask
+// for it back, rather than the generic missing-capability text.
+func (a actor) bannedFrom(key, what string) (string, bool) {
+	if a.can(key) {
+		return "", false
+	}
+	return "你被禁止" + what + "。想恢复请提交一张工单说明情况。", true
+}
 
 func (a actor) can(key string) bool { return a.perms[key] }
 

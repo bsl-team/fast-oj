@@ -768,6 +768,11 @@ func (s *Server) contestForSubmission(r *http.Request, a actor, p store.Problem,
 	if a.User.ID == 0 {
 		return claim, errors.New("提交前先登录并加入这场比赛")
 	}
+	// 被禁止参加比赛的人连赛内提交也不能做：只挡住"加入"的话，已经在名单里的人
+	// 就还能继续交。这条放在管理员分支之前——被禁止的人不该靠自己是主办方绕过去。
+	if msg, banned := a.bannedFrom(permContestJoin, "参加比赛"); banned {
+		return claim, errors.New(msg)
+	}
 	// A manager may test their own contest outside the window; that is how a host
 	// checks the data before the door opens. Everyone else is bound by it.
 	manage := a.canManageContest(c)
