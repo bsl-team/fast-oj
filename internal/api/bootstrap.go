@@ -12,7 +12,7 @@ import (
 // claimHandle is the account the bootstrap token already owns: authenticating with
 // -admin-token resolves to this handle, so the password set here logs the same
 // identity in, not a second one.
-const claimHandle = "admin"
+const claimHandle = store.BootstrapHandle
 
 const (
 	claimWindow   = 15 * time.Minute
@@ -80,6 +80,12 @@ func (s *Server) handleAdminClaim(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.SetPassword(r.Context(), u.ID, password, s.cfg.BCryptCost); err != nil {
 		s.writeStoreError(w, r, err)
 		return
+	}
+	// 拿着管理令牌来接管的人就是这个站的主人，前提是这个位子还没被别人占走。
+	if won, err := s.db.ClaimOwner(r.Context(), u.ID); err != nil {
+		s.log.Error("claim site owner", "err", err)
+	} else if won {
+		s.log.Info("site owner claimed", "user", u.Handle, "via", "token")
 	}
 	sess, err := s.db.CreateSession(r.Context(), u.ID, clientIP(r), r.UserAgent(), store.SessionTTL)
 	if err != nil {

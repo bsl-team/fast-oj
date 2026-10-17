@@ -35,19 +35,27 @@ func (db *DB) ListPermissions(ctx context.Context) ([]Permission, error) {
 
 // EffectivePermissions is the role baseline with that user's individual grants
 // and removals applied on top. It is one query per authenticated request.
+//
+// The super admin is the exception: every capability is on for them no matter what
+// the two tables above say. A removal row cannot be created for them through the
+// console, but the immunity lives here rather than only in the screen that writes
+// those rows, so a hand-edited database cannot strip it either.
 func (db *DB) EffectivePermissions(ctx context.Context, userID int64, role string) (map[string]bool, error) {
 	rows, err := db.SQL.QueryContext(ctx,
 		`SELECT key, 1 AS src, 1 AS granted FROM role_permissions WHERE role=?
 		 UNION ALL
-		 SELECT key, 2 AS src, granted FROM user_permissions WHERE user_id=?`, role, userID)
+		 SELECT key, 2 AS src, granted FROM user_permissions WHERE user_id=?
+		 UNION ALL
+		 SELECT p.key, 3 AS src, 1 AS granted
+		   FROM permissions p JOIN site_owner o ON o.id=1 AND o.user_id=?`, role, userID, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	// Row order from a UNION ALL is not guaranteed, so precedence is resolved by
-	// source number rather than by arrival order: a per-user row (2) always wins
-	// over the tier default (1).
+	// source number rather than by arrival order: the super admin row (3) beats a
+	// per-user override (2), which in turn beats the tier default (1).
 	type stamped struct {
 		granted bool
 		src     int
@@ -100,6 +108,12 @@ func (db *DB) UserGrants(ctx context.Context, userID int64, role string) ([]User
 	if err != nil {
 		return nil, err
 	}
+	// The editor has to show what the site actually does, and for the super admin
+	// that is "everything on", whatever these two tables say.
+	owner, err := db.IsOwner(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make([]UserGrant, 0, len(perms))
 	for _, p := range perms {
@@ -110,6 +124,9 @@ func (db *DB) UserGrants(ctx context.Context, userID int64, role string) ([]User
 			g.Effective = v
 		} else {
 			g.Effective = g.ByRole
+		}
+		if owner {
+			g.Effective = true
 		}
 		out = append(out, g)
 	}
@@ -159,6 +176,9 @@ func (db *DB) userOverrides(ctx context.Context, userID int64) (map[string]bool,
 // rather than silently doing nothing, so a typo cannot look like a successful
 // privilege change.
 func (db *DB) SetUserPermission(ctx context.Context, userID int64, key string, granted bool) error {
+	if err := db.guardOwner(ctx, userID); err != nil {
+		return err
+	}
 	var n int
 	if err := db.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM permissions WHERE key=?`, key).Scan(&n); err != nil {
 		return err
@@ -175,6 +195,9 @@ func (db *DB) SetUserPermission(ctx context.Context, userID int64, key string, g
 
 // ClearUserPermission drops the override, returning the user to their tier default.
 func (db *DB) ClearUserPermission(ctx context.Context, userID int64, key string) error {
+	if err := db.guardOwner(ctx, userID); err != nil {
+		return err
+	}
 	_, err := db.SQL.ExecContext(ctx, `DELETE FROM user_permissions WHERE user_id=? AND key=?`, userID, key)
 	return err
 }

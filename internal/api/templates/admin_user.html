@@ -9,6 +9,10 @@
 {{if .Data.Self}}
 <p class="flash">这是你自己的账号。为避免把自己关在门外，控制台不允许改自己的权限、角色或状态。</p>
 {{end}}
+{{if .Data.Owner}}
+<p class="flash"><b>超级管理员</b>：这个账号什么都不用授予就已经有了全部权限，别人也收不走任何一项。
+  他的权限、角色和状态只有他自己能动，所以这一页没有任何按钮。</p>
+{{end}}
 
 <table>
   <tr><th>权限</th><th>含义</th><th>角色自带</th><th>单独设置</th><th>生效</th><th></th></tr>
@@ -20,7 +24,7 @@
     <td>{{if eq .Override "granted"}}授予{{else if eq .Override "removed"}}收回{{else}}—{{end}}</td>
     <td><span class="badge {{if .Effective}}AC{{else}}WA{{end}}">{{if .Effective}}有{{else}}无{{end}}</span></td>
     <td>
-      {{if not $.Data.Self}}
+      {{if and (not $.Data.Self) (not $.Data.Owner)}}
       <form class="inline" method="post" action="/admin/perms/u/{{$.Data.Target.Handle}}">
         <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
         <input type="hidden" name="key" value="{{.Key}}">
@@ -34,7 +38,7 @@
   {{end}}
 </table>
 
-{{if and (not .Data.Self) .Data.CanUser}}
+{{if and (not .Data.Self) (not .Data.Owner) .Data.CanUser}}
 <h2>角色与状态</h2>
 <form class="row" method="post" action="/admin/users/{{.Data.Target.Handle}}/role">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">

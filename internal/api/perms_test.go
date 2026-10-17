@@ -370,8 +370,10 @@ func TestPermissionStoreRoundTrip(t *testing.T) {
 		}
 	}
 
-	// An unknown key is refused rather than silently doing nothing.
-	if err := h.db.SetUserPermission(ctx, u.ID, "not.a.permission", true); err != store.ErrNotFound {
+	// An unknown key is refused rather than silently doing nothing. The target is a
+	// normal account: the admin row is this site's super admin, and every write
+	// against it is refused before the key is even looked at.
+	if err := h.db.SetUserPermission(ctx, h.user("plain").ID, "not.a.permission", true); err != store.ErrNotFound {
 		t.Fatalf("unknown key = %v", err)
 	}
 
@@ -399,5 +401,89 @@ func TestPermissionStoreRoundTrip(t *testing.T) {
 	}
 	if eff, _ := h.db.EffectivePermissions(ctx, plain.ID, "admin"); !eff[permProblemCreate] {
 		t.Fatal("clear did not restore the tier default")
+	}
+}
+
+// 站点空着的时候，第一个注册的人就是超级管理员：不需要任何人授权，他什么都能干。
+func TestFirstRegistrantSeatsTheSuperAdmin(t *testing.T) {
+	h := newHarness(t)
+	h.clearOwner()
+
+	founder := h.signIn("founder")
+	u := h.user("founder")
+	if id, err := h.db.OwnerID(ctx()); err != nil || id != u.ID {
+		t.Fatalf("第一个注册的人没坐上站主的位子：owner=%d err=%v", id, err)
+	}
+	// 坐这个位子的同时就是管理员，因为别的路径都读 users.role 判管理员。
+	if u.Role != "admin" {
+		t.Errorf("站主角色 = %s, want admin", u.Role)
+	}
+	if code, page := h.getAs(founder, "/admin/perms"); code != http.StatusOK || !strings.Contains(page, "founder") {
+		t.Fatalf("站主进权限控制台 = %d", code)
+	}
+
+	// 第二个来注册的人什么也没多。
+	second := h.signIn("second")
+	if id, _ := h.db.OwnerID(ctx()); id != u.ID {
+		t.Fatal("站主的位子被第二个注册的人抢走了")
+	}
+	if code, _ := h.getAs(second, "/admin/perms"); code != http.StatusForbidden {
+		t.Errorf("第二个注册的人进控制台 = %d, want 403", code)
+	}
+}
+
+// 已经有人在用的站点里，路人注册补不上这个位子；只有拿着管理令牌接管的那次能补。
+// 这条是给"老师先用批量建号建了全班，自己还没注册"那种顺序兜底的。
+func TestStrayRegistrationCannotSeatOwnerOnAPopulatedSite(t *testing.T) {
+	h := newHarness(t)
+	h.signIn("teacher")
+	h.clearOwner()
+
+	h.signIn("student")
+	if id, _ := h.db.OwnerID(ctx()); id != 0 {
+		t.Fatalf("库里已经有人了，注册还是补上了站主：%d", id)
+	}
+	if code, _, _ := h.postNoRedirect("/admin/claim",
+		url.Values{"token": {h.admin}, "password": {testPassword}}, ""); code != http.StatusSeeOther {
+		t.Fatalf("接管 = %d", code)
+	}
+	if id, _ := h.db.OwnerID(ctx()); id != h.user(claimHandle).ID {
+		t.Fatalf("接管之后站主 = %d, want %d", id, h.user(claimHandle).ID)
+	}
+}
+
+// 另一个管理员，哪怕 permission.manage 和 user.manage 都在手上，也动不了站主。
+func TestSuperAdminSurvivesEveryOtherAdmin(t *testing.T) {
+	h := newHarness(t)
+	h.clearOwner()
+	h.signIn("founder")
+
+	deputy := h.author("deputy", permPermissionManage, permUserManage)
+	for _, try := range []struct {
+		path   string
+		values url.Values
+		why    string
+	}{
+		{"/admin/users/founder/role", url.Values{"role": {"user"}}, "降成普通人"},
+		{"/admin/users/founder/status", url.Values{"status": {"banned"}}, "封号"},
+		{"/admin/perms/u/founder", url.Values{"key": {permProblemCreate}, "action": {"revoke"}}, "收回出题权"},
+	} {
+		code, body := h.postAs(deputy, try.path, try.values)
+		if !strings.Contains(body, "超级管理员") {
+			t.Errorf("%s（%s）没有挡住：= %d\n%s", try.path, try.why, code, short(body))
+		}
+	}
+
+	u := h.user("founder")
+	if u.Role != "admin" || u.Status != "active" {
+		t.Fatalf("站主被改动了：%+v", u)
+	}
+	perms, err := h.db.EffectivePermissions(ctx(), u.ID, u.Role)
+	if err != nil || !perms[permProblemCreate] {
+		t.Fatalf("站主少了出题权：%+v %v", perms, err)
+	}
+	// 他的那一行在控制台里读得到，只是没有任何按钮。
+	if _, page := h.getAs(deputy, "/admin/perms/u/founder"); !strings.Contains(page, "超级管理员") {
+		t.Errorf("站主页面没说他动不了：\n%s", short(page))
 	}
 }

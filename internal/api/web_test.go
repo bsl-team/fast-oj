@@ -39,6 +39,16 @@ func (h *harness) signIn(handle string, perms ...string) session {
 	return session{handle: handle, cookie: cookie, csrf: csrf}
 }
 
+// clearOwner empties the super admin seat. The harness pre-seats the token account
+// the way a real deployment does after its first run; a test that wants to watch a
+// site being claimed has to take that back first.
+func (h *harness) clearOwner() {
+	h.t.Helper()
+	if _, err := h.db.SQL.ExecContext(ctx(), `DELETE FROM site_owner`); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // getAs fetches a page with this session's cookie.
 func (h *harness) getAs(s session, path string) (int, string) {
 	h.t.Helper()

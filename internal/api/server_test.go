@@ -62,6 +62,15 @@ func newHarnessCfg(t *testing.T, mutate func(*config.Config)) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 真实部署里第一个当上管理员的人就是站主。测试站点先把他立好，否则每个用例里
+	// 第一个注册的同学都会白拿最高权限，那些"普通人应该被拒"的断言就没意义了。
+	operator, err := db.EnsureUser(ctx(), claimHandle, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimOwner(ctx(), operator.ID); err != nil {
+		t.Fatal(err)
+	}
 	handler := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), db).Handler()
 	hs := httptest.NewServer(handler)
 	t.Cleanup(func() {

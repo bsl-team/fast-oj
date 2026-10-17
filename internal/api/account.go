@@ -253,6 +253,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.db.RegisterLoginFailure(r.Context(), key, registerWindow); err != nil {
 		s.log.Error("register counter", "err", err)
 	}
+	// 站主先到先得：站点还没人认领时，第一个注册的人就是超级管理员。
+	claimed := s.claimSiteOwner(r, u)
 
 	sess, err := s.db.CreateSession(r.Context(), u.ID, clientIP(r), r.UserAgent(), store.SessionTTL)
 	if err != nil {
@@ -261,7 +263,47 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSession(w, sess.ID, store.SessionTTL)
 	s.log.Info("registered", "user", u.Handle, "ip", clientIP(r))
-	http.Redirect(w, r, "/?msg="+url.QueryEscape("欢迎，"+u.Handle+"。邮箱尚未验证，可以先正常使用。"), http.StatusSeeOther)
+	welcome := "邮箱还没验证，可以先正常使用。"
+	if claimed {
+		// 这个人必须知道自己刚刚拿到了什么：站主只有第一个账号能做，之后再也补不上。
+		welcome = "你是这个站的第一个账号，已经把你设为超级管理员：别的管理员改不动你的权限、角色和状态。"
+	}
+	http.Redirect(w, r, "/?msg="+url.QueryEscape("欢迎，"+u.Handle+"。"+welcome), http.StatusSeeOther)
+}
+
+// claimSiteOwner seats the first person to register a site that has no super admin
+// yet, and returns whether this account is now it.
+//
+// Only an unpeopled site may be claimed this way. A school that pre-creates its
+// student accounts — bulk registration, before the teacher ever signs up — would
+// otherwise hand the top of the tree to whichever student clicks 注册 first. Sites
+// that already have people get their owner from the token takeover page instead.
+func (s *Server) claimSiteOwner(r *http.Request, u store.User) bool {
+	owner, err := s.db.OwnerID(r.Context())
+	if err != nil {
+		s.log.Error("owner lookup", "err", err)
+		return false
+	}
+	if owner != 0 {
+		return false
+	}
+	human, err := s.db.HasOtherHumanAccount(r.Context(), u.ID)
+	if err != nil {
+		s.log.Error("owner claim", "err", err)
+		return false
+	}
+	if human {
+		return false
+	}
+	won, err := s.db.ClaimOwner(r.Context(), u.ID)
+	if err != nil {
+		s.log.Error("owner claim", "err", err)
+		return false
+	}
+	if won {
+		s.log.Info("site owner claimed", "user", u.Handle)
+	}
+	return won
 }
 
 func (s *Server) renderRegisterForm(w http.ResponseWriter, r *http.Request, status int, msg, handle, email, display string) {

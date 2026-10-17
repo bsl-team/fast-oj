@@ -51,7 +51,7 @@ var (
 func (s *Server) authenticate(r *http.Request) (actor, error) {
 	if token := bearerToken(r); token != "" {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.AdminToken)) == 1 {
-			u, err := s.db.EnsureUser(r.Context(), "admin", "admin")
+			u, err := s.db.EnsureUser(r.Context(), store.BootstrapHandle, "admin")
 			if err != nil {
 				return actor{}, err
 			}

@@ -513,11 +513,14 @@ type tallyView struct {
 type solvedView struct{ PID, Title, Time, When string }
 
 type userData struct {
-	Handle        string
-	DisplayName   string
-	Bio           template.HTML
-	HasBio        bool
-	Admin         bool
+	Handle      string
+	DisplayName string
+	Bio         template.HTML
+	HasBio      bool
+	Admin       bool
+	// Owner is the super admin: the account that holds every capability and that
+	// no other admin can change.
+	Owner         bool
 	Joined        string
 	Solved        int
 	TotalProblems int
@@ -637,10 +640,16 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	owner, err := s.db.IsOwner(ctx, u.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+
 	s.page(w, r, http.StatusOK, u.Handle, "user", me, msgOf(r), userData{
 		Handle: u.Handle, DisplayName: u.DisplayName,
 		Bio: renderMarkdownHTML(u.Bio), HasBio: strings.TrimSpace(u.Bio) != "",
-		Admin: u.Role == "admin", Joined: agoMS(u.CreatedAt),
+		Admin: u.Role == "admin", Owner: owner, Joined: agoMS(u.CreatedAt),
 		Solved: len(solved), TotalProblems: totalProblems, Submits: submits,
 		Tally: tallyRows, SolvedList: solvedList, Recent: rows,
 		Posts:     postRows(myPosts, a),

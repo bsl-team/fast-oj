@@ -18,6 +18,8 @@ type adminUserRow struct {
 	Email  string
 	Role   string
 	Status string
+	// Owner marks the super admin: the one account the console cannot touch.
+	Owner bool
 }
 
 func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
@@ -30,9 +32,17 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	ownerID, err := s.db.OwnerID(r.Context())
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	rows := make([]adminUserRow, 0, len(users))
 	for _, u := range users {
-		rows = append(rows, adminUserRow{ID: u.ID, Handle: u.Handle, Email: u.Email, Role: u.Role, Status: u.Status})
+		rows = append(rows, adminUserRow{
+			ID: u.ID, Handle: u.Handle, Email: u.Email, Role: u.Role, Status: u.Status,
+			Owner: u.ID == ownerID,
+		})
 	}
 	s.page(w, r, http.StatusOK, "权限管理", "admin_users", a.viewer(), msgOf(r), map[string]any{
 		"Users": rows, "Self": a.User.ID,
@@ -58,12 +68,20 @@ func (s *Server) handleAdminUser(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	owner, err := s.db.IsOwner(r.Context(), u.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, http.StatusOK, "权限 · "+u.Handle, "admin_user", a.viewer(), msgOf(r), map[string]any{
 		"Target":   u,
 		"Grants":   rows,
 		"AllPerms": grants,
 		"Self":     a.User.ID == u.ID,
-		"CanUser":  a.can(permUserManage),
+		// Owner is the second reason this page has no buttons: the console can
+		// show the super admin what he holds, but not change it.
+		"Owner":   owner,
+		"CanUser": a.can(permUserManage),
 	})
 }
 
@@ -96,9 +114,12 @@ func (s *Server) loadGrantView(r *http.Request) (store.User, []store.UserGrant, 
 	return u, grants, rows, nil
 }
 
-// adminTarget loads the user or refuses self-editing. Locking yourself out of
-// the permission console is a far more likely accident than an attack, so the
-// console simply refuses to change the account you are signed in with.
+// adminTarget loads the user and refuses two things: editing yourself, and editing
+// the super admin. Locking yourself out of the permission console is a far more
+// likely accident than an attack, so the console simply refuses to change the
+// account you are signed in with. The site owner is immune to every other admin,
+// which is the one rule that has to hold even when someone else holds
+// permission.manage.
 func (s *Server) adminTarget(w http.ResponseWriter, r *http.Request, a actor) (store.User, bool) {
 	u, err := s.db.GetUserByHandle(r.Context(), r.PathValue("handle"))
 	if err != nil {
@@ -107,6 +128,15 @@ func (s *Server) adminTarget(w http.ResponseWriter, r *http.Request, a actor) (s
 	}
 	if u.ID == a.User.ID {
 		s.respondError(w, r, http.StatusBadRequest, "不能修改自己的权限，请用另一个管理员账号")
+		return store.User{}, false
+	}
+	owner, err := s.db.IsOwner(r.Context(), u.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return store.User{}, false
+	}
+	if owner {
+		s.respondError(w, r, http.StatusForbidden, "超级管理员的权限、角色与状态只有他自己能动")
 		return store.User{}, false
 	}
 	return u, true

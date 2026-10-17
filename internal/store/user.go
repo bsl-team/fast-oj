@@ -5,6 +5,11 @@ import (
 	"fmt"
 )
 
+// BootstrapHandle is the account the operator token maps to. It is not a person:
+// the row appears the first time anything presents that token, so it can never be
+// the one that claims the site.
+const BootstrapHandle = "admin"
+
 // userColumns never selects passhash: a hash must not ride along in a struct
 // that might get marshalled to JSON.
 const userColumns = `id, handle, IFNULL(email, ''), display_name, bio, role, status, dm_policy,
@@ -80,6 +85,9 @@ func (db *DB) SetUserRole(ctx context.Context, userID int64, role string) error 
 	if role != "user" && role != "admin" {
 		return fmt.Errorf("unknown role %q", role)
 	}
+	if err := db.guardOwner(ctx, userID); err != nil {
+		return err
+	}
 	res, err := db.SQL.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, userID)
 	if err != nil {
 		return err
@@ -94,6 +102,9 @@ func (db *DB) SetUserRole(ctx context.Context, userID int64, role string) error 
 func (db *DB) SetUserStatus(ctx context.Context, userID int64, status string) error {
 	if status != "active" && status != "banned" {
 		return fmt.Errorf("unknown status %q", status)
+	}
+	if err := db.guardOwner(ctx, userID); err != nil {
+		return err
 	}
 	res, err := db.SQL.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, userID)
 	if err != nil {
