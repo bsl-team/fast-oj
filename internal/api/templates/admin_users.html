@@ -1,7 +1,8 @@
 {{define "content"}}
 <h1>权限管理</h1>
 <p class="meta">共 {{len .Data.Users}} 个账号。点进去可以逐项授予或收回权限，不必给人整个管理员身份。
-  标着<b>超级管理员</b>的那一行除外：他的权限、角色和状态只有他自己能动。</p>
+  标着<b>超级管理员</b>的那一行除外：他的权限、角色和状态只有他自己能动。
+  新班级开学建号：<a href="/admin/accounts/new">批量建号</a>。</p>
 
 <table>
   <tr><th class="num">ID</th><th>用户名</th><th>邮箱</th><th>角色</th><th>状态</th><th></th></tr>

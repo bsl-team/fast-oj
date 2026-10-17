@@ -91,6 +91,56 @@ func (db *DB) CreateAccount(ctx context.Context, in AccountInput) (User, error) 
 	return db.GetUserByID(ctx, id)
 }
 
+// BulkAccount is one row of the admin batch-signup form, and after the write also
+// its result.
+type BulkAccount struct {
+	Handle   string `json:"handle"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	// Status is "" before the write, then "created" or "dup". It travels back out
+	// to the page so a teacher can see which of the 40 names actually landed.
+	Status string `json:"status"`
+}
+
+// CreateBulkAccounts writes a batch of accounts in one transaction and marks each
+// row with what happened.
+//
+// 撞名的那条不牵连别人：ON CONFLICT DO NOTHING + 看影响行数，所以一个班里有两行写重了，
+// 剩下的三十九个照样建好，页面上点名说哪两条没进。真正读写出错才整批回滚，不会出现
+// "建到一半"的账号名单。
+// 邮箱可以是空的：唯一索引是 partial（WHERE email IS NOT NULL），一批没有邮箱的班级账号
+// 互相不冲突。
+func (db *DB) CreateBulkAccounts(ctx context.Context, rows []BulkAccount, cost int) error {
+	return db.InTx(ctx, func(tx *sql.Tx) error {
+		for i := range rows {
+			hash, err := HashPassword(rows[i].Password, cost)
+			if err != nil {
+				return err
+			}
+			// 没填邮箱要写成 NULL 而不是空串：那两条唯一索引都是 partial
+			// （WHERE ... IS NOT NULL），空串会被算进去，第二个不填邮箱的号就会"撞名"。
+			var email any
+			if e := strings.TrimSpace(rows[i].Email); e != "" {
+				email = e
+			}
+			res, err := tx.ExecContext(ctx,
+				`INSERT INTO users (handle, email, passhash, display_name, role, status, created_at)
+				 VALUES (?, ?, ?, '', 'user', 'active', ?)
+				 ON CONFLICT DO NOTHING`,
+				rows[i].Handle, email, hash, nowMS())
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				rows[i].Status = "dup"
+				continue
+			}
+			rows[i].Status = "created"
+		}
+		return nil
+	})
+}
+
 func (db *DB) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	return scanUser(db.SQL.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM users WHERE email=? COLLATE NOCASE`, strings.TrimSpace(email)))

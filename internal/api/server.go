@@ -132,6 +132,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/perms/u/{handle}", s.handleAdminPermChange)
 	mux.HandleFunc("POST /admin/users/{handle}/role", s.handleAdminRoleChange)
 	mux.HandleFunc("POST /admin/users/{handle}/status", s.handleAdminStatusChange)
+	// 批量建号：一个班 40 个学生，不该用注册表单填 40 遍。
+	mux.HandleFunc("GET /admin/accounts/new", s.handleAccountsNew)
+	mux.HandleFunc("POST /admin/accounts", s.handleAccountsCreate)
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
@@ -228,7 +231,9 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /admin/claim             首次接管：用管理令牌给 admin 账号设网页密码",
 		"  GET  /admin/perms             权限控制台（permission.manage）",
 		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
-		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁",
+		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁（超级管理员除外）",
+		"  GET  /admin/accounts/new      批量建号表单（user.manage）",
+		"  POST /admin/accounts          一次建一批：名单模式或前缀+个数模式，初始密码只在这页出现一次",
 		"  GET  /judges                  判机框列表（judge.view）",
 		"  GET  /healthz                 探活",
 		"",

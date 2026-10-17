@@ -1,0 +1,77 @@
+{{define "content"}}
+<h1>批量建号</h1>
+<p class="meta">一个班四十个学生，不该用注册表单填四十遍。建出来的是普通账号：权限照旧在
+  <a href="/admin/perms">权限控制台</a>里逐项给，这一页不给任何人管理员身份。</p>
+
+{{if .Data.Errors}}
+<div class="flash">
+  {{range .Data.Errors}}<p>{{.}}</p>{{end}}
+</div>
+{{end}}
+
+<form method="post" action="/admin/accounts">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+
+  <label>怎么建</label>
+  <p class="row">
+    <label class="check"><input type="radio" name="mode" value="list"
+      {{if ne .Data.Mode "count"}}checked{{end}}> 名单：一行一个用户名</label>
+    <label class="check"><input type="radio" name="mode" value="count"
+      {{if eq .Data.Mode "count"}}checked{{end}}> 按个数生成：前缀 + 起始号</label>
+  </p>
+
+  <label>名单（每行写成「用户名」或「用户名,邮箱」，最多 200 行）</label>
+  <textarea name="list" rows="8" spellcheck="false" autocomplete="off"
+            placeholder="student01&#10;student02,li@school.cn">{{.Data.List}}</textarea>
+
+  <div class="row">
+    <div>
+      <label>统一初始密码（名单模式用，至少 10 位）</label>
+      <input type="text" name="password" value="{{.Data.Password}}" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+
+  <h2>或者按个数生成</h2>
+  <p class="meta">这种方式给每个号一个随机密码，不用你操心密码策略。</p>
+  <div class="row">
+    <div>
+      <label>前缀</label>
+      <input type="text" name="prefix" value="{{.Data.Prefix}}" maxlength="20"
+             autocomplete="off" spellcheck="false" placeholder="student">
+    </div>
+    <div>
+      <label>起始号</label>
+      <input type="number" name="from" value="{{if .Data.From}}{{.Data.From}}{{else}}1{{end}}" min="0" max="999999">
+    </div>
+    <div>
+      <label>个数</label>
+      <input type="number" name="count" value="{{.Data.Count}}" min="1" max="200">
+    </div>
+  </div>
+
+  <p><input type="submit" value="建号"></p>
+</form>
+
+{{if .Data.Rows}}
+<h2>{{.Data.Summary}}</h2>
+<table>
+  <tr><th class="num">#</th><th>用户名</th><th>邮箱</th><th>初始密码</th><th>结果</th></tr>
+  {{range .Data.Rows}}
+  <tr>
+    <td class="num">{{.Ordinal}}</td>
+    <td><a href="/u/{{.Handle}}">{{.Handle}}</a></td>
+    <td>{{if .Email}}{{.Email}}{{else}}—{{end}}</td>
+    <td><code>{{.Password}}</code></td>
+    <td>{{if eq .Status "created"}}已建好{{else}}撞名，跳过{{end}}</td>
+  </tr>
+  {{end}}
+</table>
+
+<h3>抄下来发下去</h3>
+<textarea rows="10" spellcheck="false" autocomplete="off" readonly>{{.Data.Copyable}}</textarea>
+<p class="meta">密码只有这一个页面能看到：库里存的是哈希，刷新就看不到了。让学生登录后到
+  「设置 → 改密码」换成自己的。</p>
+{{end}}
+
+<p class="meta"><a href="/admin/perms">← 返回账号列表</a></p>
+{{end}}
