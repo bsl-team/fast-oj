@@ -8,10 +8,16 @@
   {{if .Data.IsSelf}} · <a href="/settings">编辑资料与简介</a>{{end}}
 </p>
 
+{{if .Data.Cancelled}}
+<p class="flash">这个账号已注销：用户名、邮箱、密码都抹掉了，下面的记录只是它留下的历史，
+  不再属于任何能登录的人。原作者的署名在所有地方都显示为<b>封禁用户</b>。</p>
+{{end}}
+
 {{if .Data.HasBio}}
 <section class="bio">{{.Data.Bio}}</section>
 {{end}}
 
+{{if not .Data.Cancelled}}
 <p class="meta follow">
   <a href="/u/{{.Data.Handle}}/following">关注 <b>{{.Data.Following}}</b></a> ·
   <a href="/u/{{.Data.Handle}}/followers">粉丝 <b>{{.Data.Followers}}</b></a>
@@ -24,6 +30,7 @@
   </form>
   {{end}}
 </p>
+{{end}}
 
 {{if .Data.Posts}}
 <h2>TA 的动态</h2>

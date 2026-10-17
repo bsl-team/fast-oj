@@ -176,7 +176,7 @@ func (db *DB) userOverrides(ctx context.Context, userID int64) (map[string]bool,
 // rather than silently doing nothing, so a typo cannot look like a successful
 // privilege change.
 func (db *DB) SetUserPermission(ctx context.Context, userID int64, key string, granted bool) error {
-	if err := db.guardOwner(ctx, userID); err != nil {
+	if err := db.guardMutable(ctx, userID); err != nil {
 		return err
 	}
 	var n int
@@ -195,7 +195,7 @@ func (db *DB) SetUserPermission(ctx context.Context, userID int64, key string, g
 
 // ClearUserPermission drops the override, returning the user to their tier default.
 func (db *DB) ClearUserPermission(ctx context.Context, userID int64, key string) error {
-	if err := db.guardOwner(ctx, userID); err != nil {
+	if err := db.guardMutable(ctx, userID); err != nil {
 		return err
 	}
 	_, err := db.SQL.ExecContext(ctx, `DELETE FROM user_permissions WHERE user_id=? AND key=?`, userID, key)

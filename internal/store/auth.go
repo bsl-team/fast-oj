@@ -15,6 +15,9 @@ import (
 var (
 	ErrWeakPassword    = errors.New("password is too short or too long")
 	ErrAccountDisabled = errors.New("account is not active")
+	// ErrAccountCancelled refuses to re-edit an identity that has already been
+	// wiped: its old login name may belong to the next registrant by now.
+	ErrAccountCancelled = errors.New("该账号已注销，记录保留但身份不可恢复")
 )
 
 const (

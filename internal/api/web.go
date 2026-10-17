@@ -80,8 +80,11 @@ func agoMS(ms int64) string {
 
 // subRow is the shared shape for any submission table.
 type subRow struct {
-	ID       int64
-	Handle   string
+	ID     int64
+	Handle string
+	// Name is who the row prints as. For a cancelled account that is not Handle:
+	// the login name has been freed and may already belong to the next registrant.
+	Name     string
 	PID      string
 	Title    string
 	Language string
@@ -100,11 +103,21 @@ func rowOf(d store.SubmissionDetail) subRow {
 		score = fmt.Sprintf("%d/%d", d.Score, d.TotalScore)
 	}
 	return subRow{
-		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
+		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title, Language: d.Language,
 		Class: class, Outcome: outcome,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Ago: agoMS(d.CreatedAt),
 	}
+}
+
+// personName keeps a label printable when a row has no display name. The store's
+// SQL already resolves the cancelled-account case, so this only guards against an
+// empty nickname falling through as an invisible link.
+func personName(name, handle string) string {
+	if strings.TrimSpace(name) == "" {
+		return handle
+	}
+	return name
 }
 
 // --- problem list ---
@@ -371,8 +384,11 @@ type runRow struct {
 }
 
 type submissionData struct {
-	ID        int64
-	Handle    string
+	ID     int64
+	Handle string
+	// Name is who the page credits with this run, which for a cancelled account is
+	// not its handle: that login name may already belong to someone else.
+	Name      string
 	PID       string
 	Title     string
 	Language  string
@@ -442,7 +458,7 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 	}
 
 	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
-		ID: d.ID, Handle: d.Handle, PID: d.PID, Title: d.Title, Language: d.Language,
+		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title, Language: d.Language,
 		Class: class, Outcome: outcome, Headline: headline,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,
@@ -482,6 +498,7 @@ func verdictSentence(v string) string {
 type rankRowView struct {
 	Rank    int
 	Handle  string
+	Name    string
 	Solved  int
 	Submits int
 	LastAC  string
@@ -499,7 +516,7 @@ func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
 		if row.LastAC != 0 {
 			last = agoMS(row.LastAC)
 		}
-		rows = append(rows, rankRowView{Rank: i + 1, Handle: row.Handle, Solved: row.Solved, Submits: row.Submits, LastAC: last})
+		rows = append(rows, rankRowView{Rank: i + 1, Handle: row.Handle, Name: personName(row.Name, row.Handle), Solved: row.Solved, Submits: row.Submits, LastAC: last})
 	}
 	s.page(w, r, http.StatusOK, "排行榜", "rank", s.viewerOf(r), "", map[string]any{"Rows": rows})
 }
@@ -520,7 +537,10 @@ type userData struct {
 	Admin       bool
 	// Owner is the super admin: the account that holds every capability and that
 	// no other admin can change.
-	Owner         bool
+	Owner bool
+	// Cancelled marks a wiped identity whose records outlive it. The profile keeps
+	// the history and drops the social controls, because there is nobody behind them.
+	Cancelled     bool
 	Joined        string
 	Solved        int
 	TotalProblems int
@@ -650,7 +670,10 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		Handle: u.Handle, DisplayName: u.DisplayName,
 		Bio: renderMarkdownHTML(u.Bio), HasBio: strings.TrimSpace(u.Bio) != "",
 		Admin: u.Role == "admin", Owner: owner, Joined: agoMS(u.CreatedAt),
-		Solved: len(solved), TotalProblems: totalProblems, Submits: submits,
+		// Cancelled is the tombstone marker: the profile still shows what this
+		// user_id produced, but nobody can follow, message or log in as it.
+		Cancelled: u.IsCancelled(),
+		Solved:    len(solved), TotalProblems: totalProblems, Submits: submits,
 		Tally: tallyRows, SolvedList: solvedList, Recent: rows,
 		Posts:     postRows(myPosts, a),
 		IsSelf:    a.User.ID == u.ID,

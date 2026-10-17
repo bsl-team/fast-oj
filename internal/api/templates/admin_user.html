@@ -6,6 +6,11 @@
   <a href="/u/{{.Data.Target.Handle}}">看主页</a>
 </p>
 
+{{if .Data.Cancelled}}
+<p class="flash">这个账号已经注销：用户名、邮箱、密码都抹掉了，历史记录仍然保留，
+  作者一律显示为<b>{{.Data.Anonym}}</b>，这些记录不再属于任何可以登录的人。</p>
+{{end}}
+
 {{if .Data.Self}}
 <p class="flash">这是你自己的账号。为避免把自己关在门外，控制台不允许改自己的权限、角色或状态。</p>
 {{end}}
@@ -60,6 +65,26 @@
     </select>
   </div>
   <input type="submit" value="改状态">
+</form>
+{{end}}
+
+{{if and (not .Data.Self) (not .Data.Owner) (not .Data.Cancelled)}}
+<h2>注销这个账号</h2>
+<p class="meta">抹掉<b>身份</b>：用户名、邮箱、密码、昵称、简介全部清空，这个用户名马上可以
+  被下一个人注册。<b>行为记录一条都不删</b>：他的提交、判题结果、动态、帖子、评论都还在，
+  作者那一栏从此显示为<b>{{.Data.Anonym}}</b>。注销之后不能再恢复，也改不回来。</p>
+<p class="meta">这一步不可逆，所以要把用户名原样填进确认框；名下还有题或比赛时会被拦下
+  （注销会让它们没有作者），先把题转走或删掉。</p>
+<form method="post" action="/admin/users/{{.Data.Target.Handle}}/cancel"
+      onsubmit="return confirm('注销 {{.Data.Target.Handle}}？用户名会被释放，记录保留但署名变成{{.Data.Anonym}}。这一步不能撤销。');">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div class="row">
+    <div style="flex:1 1 16rem">
+      <label>确认：把用户名原样填进来</label>
+      <input type="text" name="confirm" value="" autocomplete="off" spellcheck="false" required>
+    </div>
+    <button type="submit" class="danger">注销账号</button>
+  </div>
 </form>
 {{end}}
 

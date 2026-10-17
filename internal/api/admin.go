@@ -80,8 +80,12 @@ func (s *Server) handleAdminUser(w http.ResponseWriter, r *http.Request) {
 		"Self":     a.User.ID == u.ID,
 		// Owner is the second reason this page has no buttons: the console can
 		// show the super admin what he holds, but not change it.
-		"Owner":   owner,
-		"CanUser": a.can(permUserManage),
+		"Owner": owner,
+		// Cancelled hides the whole dangerous zone: a tombstone cannot be
+		// re-edited, and its freed name may already belong to someone else.
+		"Cancelled": u.IsCancelled(),
+		"Anonym":    store.AnonymousName,
+		"CanUser":   a.can(permUserManage),
 	})
 }
 
@@ -140,6 +144,59 @@ func (s *Server) adminTarget(w http.ResponseWriter, r *http.Request, a actor) (s
 		return store.User{}, false
 	}
 	return u, true
+}
+
+// handleAdminCancel is 注销账号: the identity is erased and the login name freed for
+// the next registrant, while every record the account produced stays and is shown as
+// coming from 封禁用户.
+//
+// 这一步不可逆，所以页面上要求填一遍用户名确认，跟删除站点数据那种"我知道我在干什么"
+// 的表单一个形状。
+func (s *Server) handleAdminCancel(w http.ResponseWriter, r *http.Request) {
+	a, ok := s.requirePerm(w, r, permUserManage)
+	if !ok {
+		return
+	}
+	target, ok := s.adminTarget(w, r, a)
+	if !ok {
+		return
+	}
+	back := "/admin/perms/u/" + url.PathEscape(target.Handle)
+	if target.IsCancelled() {
+		http.Redirect(w, r, back+"?msg="+url.QueryEscape("这个账号已经注销过了"), http.StatusSeeOther)
+		return
+	}
+	// 打字确认：注销之后用户名就自由了，下一个注册的人跟这些记录再无关系，
+	// 管理员必须知道自己放弃的是什么。
+	if strings.TrimSpace(r.FormValue("confirm")) != target.Handle {
+		http.Redirect(w, r, back+"?msg="+url.QueryEscape("要注销请把用户名原样填进确认框"), http.StatusSeeOther)
+		return
+	}
+	// 名下还有题或比赛时先拦住：注销会让这些题没人能改，比赛没人能办。
+	problems, contests, err := s.db.OwnedCounts(r.Context(), target.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if problems > 0 || contests > 0 {
+		s.respondError(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"这个账号名下还有 %d 道题、%d 场比赛。注销之后它们就没有作者了：先把题转走或删掉、比赛删掉，再来注销。",
+			problems, contests))
+		return
+	}
+	handle, err := s.db.CancelAccount(r.Context(), target.ID)
+	if err != nil {
+		if err == store.ErrSiteOwner || err == store.ErrAccountCancelled {
+			s.respondError(w, r, http.StatusForbidden, err.Error())
+			return
+		}
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.log.Info("account cancelled", "by", a.User.Handle, "target", target.Handle, "now", handle)
+	http.Redirect(w, r, "/admin/perms?msg="+url.QueryEscape(
+		fmt.Sprintf("%s 已注销：用户名、邮箱、密码全部抹掉，%q 可以重新注册；他留下的记录还在，显示为%s。",
+			target.Handle, target.Handle, store.AnonymousName)), http.StatusSeeOther)
 }
 
 func (s *Server) handleAdminPermChange(w http.ResponseWriter, r *http.Request) {

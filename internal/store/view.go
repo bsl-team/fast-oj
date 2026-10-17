@@ -11,6 +11,10 @@ type SubmissionDetail struct {
 	PID    string `json:"pid"`
 	Title  string `json:"title"`
 	Handle string `json:"handle"`
+	// Name is who the row should *say*, which for a cancelled account is not its
+	// handle: that string may already belong to someone else. Handle still feeds
+	// the profile link, because the tombstone page is where the records live.
+	Name string `json:"name"`
 	// DetailLevel and ProblemOwner come from the problem row: they decide how much
 	// of this submission's judging detail the reader is shown.
 	DetailLevel  string `json:"detail_level"`
@@ -20,11 +24,11 @@ type SubmissionDetail struct {
 	ContestCID string `json:"contest_cid"`
 }
 
-const detailColumns = `s.id, s.user_id, s.problem_id, IFNULL(s.contest_id, 0), s.language, s.status, s.verdict,
+var detailColumns = `s.id, s.user_id, s.problem_id, IFNULL(s.contest_id, 0), s.language, s.status, s.verdict,
 		s.time_ms, s.mem_kb, s.time_min, s.mem_min, s.score, s.total_score, s.failed_case,
 		IFNULL(s.judge_id, 0),
 		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0),
-		p.pid, p.title, u.handle,
+		p.pid, p.title, u.handle, ` + personSQL(`u`) + `,
 		IFNULL(p.detail_level, 'diff'), IFNULL(p.owner_id, 0), IFNULL(ct.cid, '')`
 
 func scanDetail(row scanner) (SubmissionDetail, error) {
@@ -35,7 +39,7 @@ func scanDetail(row scanner) (SubmissionDetail, error) {
 	)
 	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.ContestID, &d.Language, &d.Status, &d.Verdict,
 		&d.TimeMS, &d.MemKB, &timeMin, &memMin, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
-		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle,
+		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle, &d.Name,
 		&d.DetailLevel, &d.ProblemOwner, &d.ContestCID)
 	d.JudgeID = judgeID
 	d.TimeMin, d.MemMin = timeMin != 0, memMin != 0

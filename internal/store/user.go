@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -78,6 +80,103 @@ func (db *DB) ListUsers(ctx context.Context, limit int) ([]User, error) {
 	return out, rows.Err()
 }
 
+// personSQL names a joined user row the way every history view should print it. The
+// table alias is a parameter because the same rule has to hold in submissions, the
+// leaderboard and follow lists, and each of those joins users under a different name.
+func personSQL(alias string) string {
+	return `CASE WHEN ` + alias + `.status='deleted' THEN '` + AnonymousName + `' ELSE ` +
+		`CASE WHEN ` + alias + `.display_name='' THEN ` + alias + `.handle ELSE ` + alias + `.display_name END END`
+}
+
+// AnonymousName is what every surviving record shows once an account is cancelled.
+// The old handle is deliberately not used there: after cancellation that string is
+// free for the next registrant, and printing it would attribute the previous
+// person's submissions and posts to a stranger.
+const AnonymousName = "封禁用户"
+
+// CancelAccount erases an account's identity and frees its login name, keeping every
+// record it produced.
+//
+// 为什么留着这一行：submissions、posts、topics、runs 都靠 user_id 找作者。删行会顺着外键
+// 把判题记录一起带走，而要求恰恰是"记录依旧还在，只是标注成封禁用户"。所以这里抹掉的是
+// **身份**（用户名、邮箱、密码、昵称、简介），留下的是**行为**。
+//
+// 用户名换成 banned-<id>：handle 上有 UNIQUE COLLATE NOCASE，而注册页的 validHandle 只收
+// ASCII，所以这个串既腾出了原名、又是个人主页仍然打得开的地址，还绝不会跟后人撞车。
+// 返回换出来的新 handle，让调用方能把它写进日志与提示里。
+func (db *DB) CancelAccount(ctx context.Context, userID int64) (string, error) {
+	if err := db.guardOwner(ctx, userID); err != nil {
+		return "", err
+	}
+	handle := fmt.Sprintf("banned-%d", userID)
+	var taken int
+	if err := db.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE handle=?`, handle).Scan(&taken); err != nil {
+		return "", err
+	}
+	if taken > 0 {
+		// 有人真注册过 banned-17 这种名字，那就再加一个时间戳。
+		handle = fmt.Sprintf("banned-%d-%d", userID, nowMS())
+	}
+	err := db.InTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE users SET handle=?, email=NULL, passhash='', display_name=?, bio='',
+			                        status='deleted', dm_policy='off', last_login_at=NULL
+			 WHERE id=?`, handle, AnonymousName, userID); err != nil {
+			return err
+		}
+		// 个人权限覆盖属于那个已经不存在的身份；会话全部吊销，正在登录的浏览器立刻掉线。
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_permissions WHERE user_id=?`, userID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, userID)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return handle, nil
+}
+
+// OwnedCounts answers the question a deletion screen has to ask before it lets go:
+// will this leave problems or contests nobody can edit any more?
+func (db *DB) OwnedCounts(ctx context.Context, userID int64) (problems, contests int, err error) {
+	if err := db.SQL.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM problems WHERE owner_id=?`, userID).Scan(&problems); err != nil {
+		return 0, 0, err
+	}
+	if err := db.SQL.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM contests WHERE owner_id=?`, userID).Scan(&contests); err != nil {
+		return 0, 0, err
+	}
+	return problems, contests, nil
+}
+
+// IsCancelled reports whether the account has already been wiped. The row stays for
+// its history and refuses every further identity change, so an admin cannot resurrect
+// a name that someone else may already have taken.
+func (u User) IsCancelled() bool { return u.Status == "deleted" }
+
+// guardMutable is the shared backstop for the screens that change an account. A
+// cancelled one is a tombstone: its name may already belong to the next registrant,
+// so nothing about it may be re-edited — including unbanning it.
+func (db *DB) guardMutable(ctx context.Context, userID int64) error {
+	if err := db.guardOwner(ctx, userID); err != nil {
+		return err
+	}
+	var status string
+	err := db.SQL.QueryRowContext(ctx, `SELECT status FROM users WHERE id=?`, userID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status == "deleted" {
+		return ErrAccountCancelled
+	}
+	return nil
+}
+
 // SetUserRole changes the tier. Sessions stay valid; the effective capability
 // set is recomputed on the next request, which is what makes a demotion stick
 // immediately.
@@ -85,7 +184,7 @@ func (db *DB) SetUserRole(ctx context.Context, userID int64, role string) error 
 	if role != "user" && role != "admin" {
 		return fmt.Errorf("unknown role %q", role)
 	}
-	if err := db.guardOwner(ctx, userID); err != nil {
+	if err := db.guardMutable(ctx, userID); err != nil {
 		return err
 	}
 	res, err := db.SQL.ExecContext(ctx, `UPDATE users SET role=? WHERE id=?`, role, userID)
@@ -103,7 +202,7 @@ func (db *DB) SetUserStatus(ctx context.Context, userID int64, status string) er
 	if status != "active" && status != "banned" {
 		return fmt.Errorf("unknown status %q", status)
 	}
-	if err := db.guardOwner(ctx, userID); err != nil {
+	if err := db.guardMutable(ctx, userID); err != nil {
 		return err
 	}
 	res, err := db.SQL.ExecContext(ctx, `UPDATE users SET status=? WHERE id=?`, status, userID)

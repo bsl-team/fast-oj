@@ -99,8 +99,11 @@ func (db *DB) ProblemCounts(ctx context.Context, problemIDs []int64) (map[int64]
 
 // RankRow is one leaderboard entry.
 type RankRow struct {
-	UserID  int64  `json:"user_id"`
-	Handle  string `json:"handle"`
+	UserID int64  `json:"user_id"`
+	Handle string `json:"handle"`
+	// Name is who the row prints as; for a cancelled account it is the tombstone
+	// label, while Handle still addresses the page that holds their records.
+	Name    string `json:"name"`
 	Solved  int    `json:"solved"`
 	Submits int    `json:"submits"`
 	LastAC  int64  `json:"last_ac"`
@@ -115,13 +118,13 @@ func (db *DB) Leaderboard(ctx context.Context, limit int) ([]RankRow, error) {
 		limit = 1000
 	}
 	rows, err := db.SQL.QueryContext(ctx,
-		`SELECT u.id, u.handle,
+		`SELECT u.id, u.handle, `+personSQL("u")+`,
 		        (SELECT COUNT(DISTINCT s.problem_id) FROM submissions s WHERE s.user_id=u.id AND s.verdict='AC'),
 		        (SELECT COUNT(*) FROM submissions s WHERE s.user_id=u.id),
 		        (SELECT MAX(s.judged_at) FROM submissions s WHERE s.user_id=u.id AND s.verdict='AC')
 		 FROM users u
 		 WHERE u.role <> 'judge'
-		 ORDER BY 3 DESC, 4 ASC, u.id ASC
+		 ORDER BY 4 DESC, 5 ASC, u.id ASC
 		 LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -134,7 +137,7 @@ func (db *DB) Leaderboard(ctx context.Context, limit int) ([]RankRow, error) {
 			r      RankRow
 			lastAC sql.NullInt64
 		)
-		if err := rows.Scan(&r.UserID, &r.Handle, &r.Solved, &r.Submits, &lastAC); err != nil {
+		if err := rows.Scan(&r.UserID, &r.Handle, &r.Name, &r.Solved, &r.Submits, &lastAC); err != nil {
 			return nil, err
 		}
 		r.LastAC = nullTime(lastAC)
