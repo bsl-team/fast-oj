@@ -18,9 +18,10 @@ import (
 // restrict languages; it mirrors judge.DefaultTools().
 var defaultLanguages = []string{"c", "cpp", judge.PythonLanguage}
 
-// pythonMinMemKB 是收 Python 的题至少要给的内存：解释器空跑的常驻就要 ~9MB（实测
-// python3.14），再 import 一点标准库只多不少。低于这条线，判定量的就不是学生的程序。
-const pythonMinMemKB = 64 << 10
+// pythonMinMemKB 是收 Python 的题至少要给的内存。实测 python3.14 空跑常驻 ~9MB、VmPeak
+// ~18.5MB，`ulimit -v 32M` 下解释器照样起得来，所以 32MB 是"判的还是学生的程序"那条线；
+// 再往下（比如 8MB 的题）判定量的就是解释器，不是他的代码。
+const pythonMinMemKB = 32 << 10
 
 func statusLine(status int) string {
 	return strconv.Itoa(status) + " " + http.StatusText(status)
@@ -783,8 +784,8 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 	if lang == judge.PythonLanguage && p.MemLimitKB < pythonMinMemKB {
 		return store.Submission{}, fmt.Sprintf(
 				"这道题的内存上限是 %s，Python 解释器自己就要占约 10MB，交上来只会因为内存超限被拒。"+
-					"要么把题面内存调到 %d KB 以上，要么这道题别收 Python",
-				formatKB(p.MemLimitKB, false), pythonMinMemKB),
+					"要么把题面内存调到 %dMB 以上，要么这道题别收 Python",
+				formatKB(p.MemLimitKB, false), pythonMinMemKB>>10),
 			problemPath, errors.New("python memory")
 	}
 	// 版本选择在写库前就按判机的候选表规范化：这一串以后会被拼进命令行，含糊的、越界的

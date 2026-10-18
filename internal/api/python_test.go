@@ -41,6 +41,10 @@ func TestPythonRefusedWhenMemoryLimitIsTooSmall(t *testing.T) {
 	}{
 		{"P2101", "8", false},
 		{"P2102", "128", true},
+		// 64MB 是中国 OJ 题面最常见的内存上限，必须收 Python：下限在 32MB。
+		{"P2103", "64", true},
+		{"P2104", "32", true},
+		{"P2105", "16", false},
 	} {
 		if code, body := h.createProblem(url.Values{
 			"pid": {c.pid}, "title": {"内存各异的题"}, "time_ms": {"1000"}, "mem_mb": {c.memMB},
