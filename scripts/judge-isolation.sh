@@ -93,7 +93,11 @@ rotate_token() {
   cat > "$dir/no-argv-token.conf" <<'EOF'
 # ExecStart 里不许出现判机令牌：/proc/<pid>/cmdline 是 0444，判机上跑的正是别人的代码。
 # systemd 会先展开 ExecStart 里的 $VAR 再 exec，所以 0600 的 EnvironmentFile 也白设。
-# 清空原 ExecStart 再写一份，令牌由 EnvironmentFile 提供、fast-judge 自己读环境变量。
+# 清空原 ExecStart 再写一份：令牌由 EnvironmentFile 提供，fast-judge 自己读环境变量。
+#
+# [Service] 这一段不是可省的装饰：drop-in 里落在段外的键会被 systemd 直接忽略，
+# 于是"改了没生效"、判机继续以带令牌的命令行启动并拒绝起来（这次就踩过）。
+[Service]
 EOF
   # 从现有 unit 里抄 ExecStart，去掉 -token <值> 那一段。
   local exec
@@ -123,6 +127,10 @@ root_mode() {
 # 判机以 root 跑：非特权 user namespace 被 AppArmor 拦着的机器上，这是牢房开得起来
 # 的那条路。学生程序仍然在降权之后才被 exec（internal/jail 的 drop()），拿到的是
 # nobody/未映射的 uid、没有网络、看不到宿主文件系统。
+#
+# 没有 [Service] 这一行，systemd 会把 User= 当段落外的键忽略掉——改完看似成功，判机
+# 仍以原来的身份跑，比不改更坏。
+[Service]
 User=root
 EOF
   systemctl daemon-reload
