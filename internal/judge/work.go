@@ -121,6 +121,15 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 			rep.Detail = "compiler timed out"
 			return rep
 		}
+		if build.Verdict == IE {
+			// 编译器找不到时 Run 是提前返回的，Exit 仍然是 0：只盯 Exit 会把"这台判机
+			// 没有 g++"当成"编译成功"，然后去跑一个根本没生成的二进制，最后交出一条
+			// detail 全空的 IE，真正的原因死在这一步。判机故障必须自己说清自己。
+			rep.Verdict = IE
+			rep.Detail = clipText(orText(build.Note, "编译步骤失败了，但没有给出原因"), maxDetail)
+			rep.FailedCase = "compile"
+			return rep
+		}
 	}
 
 	runLimits := Limits{TimeMS: task.TimeLimitMS, MemKB: task.MemLimitKB, RunAs: drop}
@@ -164,6 +173,11 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 			firstFailure = len(rep.Runs) - 1
 			rep.FailedCase = tc.Name
 			detail := strings.TrimSpace(string(ex.Stderr))
+			if detail == "" {
+				// 一个跑都没跑起来的失败（可执行文件不在、沙盒没建起来、fork 被拒）不会
+				// 留下任何 stderr，原因只在 Note 里。丢掉它就是又一条查不出来的 IE。
+				detail = strings.TrimSpace(ex.Note)
+			}
 			if v == WA {
 				detail = diffExcerpt(ex.Stdout, tc.Expected)
 			}
@@ -224,6 +238,14 @@ func diffExcerpt(got, want []byte) string {
 		return "line count: got " + strconv.Itoa(len(gl)) + " want " + strconv.Itoa(len(wl))
 	}
 	return "output differs"
+}
+
+// orText keeps a failure from reporting itself as nothing.
+func orText(primary, fallback string) string {
+	if strings.TrimSpace(primary) == "" {
+		return fallback
+	}
+	return primary
 }
 
 func clipText(s string, n int) string {

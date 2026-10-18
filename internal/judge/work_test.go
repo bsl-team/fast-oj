@@ -301,3 +301,48 @@ func TestWorkDirFailureIsInfrastructureError(t *testing.T) {
 		t.Fatalf("verdict = %s %q, want IE from the workdir failure", rep.Verdict, rep.Detail)
 	}
 }
+
+// 判机上没有编译器（systemd 的 PATH 里没有 g++、容器里没装工具链）时，Run 是提前
+// 返回的，Exit 仍然是 0。以前只盯 Exit 的话，这一步会被当成"编译成功"，然后去跑一个
+// 根本没生成的二进制，最后交出一条 detail 全空的 IE——真正的原因谁也没看到。
+func TestJudgeMissingCompilerReportsTheReason(t *testing.T) {
+	missing := "definitely-not-a-real-compiler-xyz"
+	tool := Tool{
+		Language:   "cpp",
+		SourceFile: "main.cpp",
+		Compile:    []string{missing, "-O2", "-o", "{exe}", "{src}"},
+		Run:        []string{"{exe}"},
+	}
+	rep := judgeSource(t, tool, sumSource, sumCases(), 2000, 262144)
+	if rep.Verdict != IE {
+		t.Fatalf("verdict = %s, want IE", rep.Verdict)
+	}
+	if !strings.Contains(rep.Detail, missing) {
+		t.Errorf("IE 必须说清是编译步骤找不到东西，实际 detail = %q", rep.Detail)
+	}
+	if rep.FailedCase != "compile" {
+		t.Errorf("failed = %q, want compile", rep.FailedCase)
+	}
+	if len(rep.Runs) != 0 {
+		t.Errorf("编译都没起来就不该跑用例：%+v", rep.Runs)
+	}
+}
+
+// 跑不起来的用例（可执行文件不在、沙盒没建起来）不留 stderr，原因只在 Note 里。
+func TestJudgeRunFailureWithoutStderrKeepsTheNote(t *testing.T) {
+	tool := Tool{
+		Language:   "cpp",
+		SourceFile: "main.cpp",
+		Run:        []string{"./never-built-program"},
+	}
+	rep := judgeSource(t, tool, sumSource, sumCases(), 2000, 262144)
+	if rep.Verdict != IE {
+		t.Fatalf("verdict = %s, want IE", rep.Verdict)
+	}
+	if strings.TrimSpace(rep.Detail) == "" {
+		t.Fatal("detail 又空了：判机故障必须自己说清自己")
+	}
+	if !strings.Contains(rep.Detail, "never-built-program") {
+		t.Errorf("detail = %q，应当点出跑不起来的是什么", rep.Detail)
+	}
+}
