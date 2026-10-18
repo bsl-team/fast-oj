@@ -45,3 +45,9 @@ func applyJail(cmd *exec.Cmd, lim Limits) error {
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
 	return nil
 }
+
+// unshareRequested 报告这次运行是不是要自己开命名空间。Unshareflags 只有 Linux 有，
+// 所以判据得留在这个文件里，通用路径只能问这个函数。
+func unshareRequested(cmd *exec.Cmd) bool {
+	return cmd.SysProcAttr != nil && cmd.SysProcAttr.Unshareflags != 0
+}

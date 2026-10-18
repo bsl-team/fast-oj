@@ -21,6 +21,17 @@ func jailFailure(stderr []byte) (string, bool) {
 	return "", false
 }
 
+// sandboxProbe 是自测结论的三态。必须有"还没测过"这一档：自测本身就是**通过一次带
+// 牢房的运行**来完成的，如果只有开了/关了两种，启动时默认"关"就会让自测永远不去建
+// 牢房，于是永远"测得过"。
+type sandboxProbe int8
+
+const (
+	probeUnknown     sandboxProbe = iota // 还没自测：该测，所以照计划关牢房
+	probeOK                              // 自测过了，牢房建得起来
+	probeUnavailable                     // 自测过了，这台机器开不了
+)
+
 // sandbox 是判机启动时定下来的一次性配置，不是每条工单一个值：牢房能不能开、
 // 以谁的身份开，取决于这台机器的内核与判机的 uid，跟具体哪道题无关。
 var sandbox struct {
@@ -29,9 +40,9 @@ var sandbox struct {
 	userNS bool
 	uid    uint32
 	gid    uint32
-	// Available 是启动自测的结论，用来写日志和 /judges 上那行说明。
-	available bool
-	note      string
+	// probed 是启动自测的结论；note 用来写日志和 /judges 上那行说明。
+	probed sandboxProbe
+	note   string
 }
 
 // SetSandbox 打开（或关掉）判题沙盒。self 是判机可执行文件路径；userNS 为真表示
@@ -44,19 +55,31 @@ func SetSandbox(self string, mode jail.Mode, userNS bool, uid, gid uint32) {
 // SandboxMode 与 SandboxAvailable 给状态展示用。
 func SandboxMode() jail.Mode { return sandbox.mode }
 
-func SandboxAvailable() bool { return sandbox.available }
+func SandboxAvailable() bool { return sandbox.probed == probeOK }
 
 func SandboxNote() string { return sandbox.note }
 
-// reportSandbox 记下自测结论。开不起来时 -sandbox=auto 只是标注，-sandbox=on 会让
-// 每条判题都报 IE，两者都不该悄悄当成"没事"。
+// reportSandbox 记下自测结论。
+//
+// -sandbox=on 时开不起来根本不启动（setupSandbox 直接报错退出），所以这里记下的
+// "开不了"只属于 auto：那条路从此不再尝试牢房，判机继续干活，并把"未隔离"这句话
+// 留在日志、/judges 和每次判题的 note 里。悄悄少一层防护与悄悄判死每一条，都不是答案。
 func reportSandbox(ok bool, note string) {
-	sandbox.available, sandbox.note = ok, note
+	if ok {
+		sandbox.probed = probeOK
+	} else {
+		sandbox.probed = probeUnavailable
+	}
+	sandbox.note = note
 }
 
 // jailFor 决定这一次运行要不要关进牢房，以及牢房长什么样。
+//
+// 自测已经判定"这台开不了"之后就不再试：-sandbox=auto 的语义是"能开就开"，不是
+// "开不了就让每条提交撞上建不起来的牢房"。后者正是 ECS 上撞到的那件事——判机一边在
+// 日志里写着"沙盒未启用"，一边把每条工单都判成 IE。
 func jailFor(lim Limits) (jail.Spec, bool) {
-	if sandbox.mode == jail.Off || sandbox.self == "" {
+	if sandbox.mode == jail.Off || sandbox.self == "" || sandbox.probed == probeUnavailable {
 		return jail.Spec{}, false
 	}
 	procs := lim.MaxProcs

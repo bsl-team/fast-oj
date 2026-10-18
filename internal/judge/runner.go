@@ -211,7 +211,15 @@ func Run(argv []string, dir string, stdin []byte, lim Limits) Execution {
 		return Execution{Verdict: IE, Note: "sandbox config failed: " + err.Error()}
 	}
 	if err := cmd.Start(); err != nil {
-		return Execution{Verdict: IE, Note: "start failed: " + err.Error()}
+		// Go 把子进程整条 fork→unshare→exec 的失败都报成 "fork/exec <路径>: <errno>"，
+		// 所以这条 "permission denied" 未必是执行被拒，更可能是 unshare 被拒（内核关了
+		// 非特权命名空间、或 unit 的 SystemCallFilter 挡住了 unshare/mount）。不说清这一层，
+		// 运维就会去查文件权限而查不到东西。
+		note := "start failed: " + err.Error()
+		if unshareRequested(cmd) {
+			note = "沙盒未能启动（unshare 命名空间或 exec 被拒）: " + err.Error()
+		}
+		return Execution{Verdict: IE, Note: note}
 	}
 	if err := g.Attach(cmd.Process); err != nil {
 		cmd.Process.Kill()

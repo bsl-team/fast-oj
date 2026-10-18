@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/liangbinchen2013/fast-oj/internal/jail"
 )
 
 // spinSource burns CPU forever, which is what the timeout guard has to stop.
@@ -126,4 +128,34 @@ func containsFold(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// ECS 上撞到的那件事：启动自测判定"这台开不了牢房"之后，判机仍然给每条工单去建牢房，
+// 于是每条提交都变成 IE。auto 的语义是"能开就开"，不是"开不了就每条都判死"。
+// 三态是必需的：自测本身要靠一次带牢房的运行来完成，只有开/关两档的话它永远测得过。
+func TestJailStopsAfterAFailedProbe(t *testing.T) {
+	want := sandbox
+	t.Cleanup(func() { sandbox = want })
+
+	SetSandbox("/proc/self/exe", jail.Auto, true, 1000, 1000)
+	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); !ok {
+		t.Fatal("还没自测就该照计划建牢房，否则自测测不出任何东西")
+	}
+	reportSandbox(true, "沙盒已启用")
+	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); !ok {
+		t.Error("自测通过后应当继续关牢房")
+	}
+	reportSandbox(false, "沙盒未能建立: operation not permitted")
+	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); ok {
+		t.Error("自测说开不了，就不要再让每条工单去撞一次")
+	}
+	if SandboxAvailable() {
+		t.Error("SandboxAvailable 应当跟着自测结论走，/judges 上那行说明靠它")
+	}
+
+	// -sandbox=off 永远不建牢房，与自测结论无关。
+	SetSandbox("", jail.Off, false, 0, 0)
+	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); ok {
+		t.Error("off 模式下不该尝试牢房")
+	}
 }
