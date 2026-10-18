@@ -732,3 +732,31 @@ func TestSubmissionListViewForBrowsers(t *testing.T) {
 		t.Errorf("unknown user filter should 404:\n%s", unknown)
 	}
 }
+
+// 个人主页那一行行提交要带得分：部分分的题只写"未通过"就看不出这题拿了 40 还是 0，
+// 而这正是学生会拿去问人的那个数。列与 /submissions 上的一致。
+func TestUserPageShowsSubmissionScore(t *testing.T) {
+	h := newHarness(t)
+	student := h.signIn("stu2110")
+	h.readyProblem("P2110")
+	if code, body := h.submitCode(student, "P2110", "cpp", "int main(){}"); code != http.StatusOK {
+		t.Fatalf("提交 = %d：\n%s", code, short(body))
+	}
+	_, page := h.getAs(student, "/u/stu2110")
+	if !strings.Contains(page, "得分") {
+		t.Errorf("最近提交没有得分列：\n%s", short(page))
+	}
+	// 那一格填的是库里那条提交的 得分/总分——照库里读出来的数断言，不猜这道题几分。
+	p, err := h.db.FindProblem(ctx(), "P2110")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := h.db.ListSubmissions(ctx(), store.SubmissionFilter{ProblemID: p.ID, Limit: 5})
+	if err != nil || len(list) == 0 {
+		t.Fatalf("提交没写进库：%d 条, %v", len(list), err)
+	}
+	want := fmt.Sprintf("%d/%d", list[0].Score, list[0].TotalScore)
+	if !strings.Contains(page, want) {
+		t.Errorf("最近提交那一格的得分应当写着 %s：\n%s", want, short(page))
+	}
+}

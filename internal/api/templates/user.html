@@ -63,7 +63,7 @@
 {{if .Data.Recent}}
 <h2>最近提交</h2>
 <table>
-  <tr><th>#</th><th>题目</th><th>语言</th><th>结果</th><th class="num">用时</th><th class="num">内存</th><th>时间</th></tr>
+  <tr><th>#</th><th>题目</th><th>语言</th><th>结果</th><th class="num">用时</th><th class="num">内存</th><th class="num">得分</th><th>时间</th></tr>
   {{range .Data.Recent}}
   <tr>
     <td><a href="/submissions/{{.ID}}">{{.ID}}</a></td>
@@ -72,6 +72,7 @@
     <td><span class="badge {{.Class}}">{{.Outcome}}</span></td>
     <td class="num">{{.Time}}</td>
     <td class="num">{{.Mem}}</td>
+    <td class="num">{{.Score}}</td>
     <td>{{.Ago}}</td>
   </tr>
   {{end}}
