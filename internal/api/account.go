@@ -219,6 +219,8 @@ func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.page(w, r, http.StatusOK, "注册", "register", nil, msgOf(r), map[string]any{
 		"Handle": "", "Email": "", "DisplayName": "",
+		// 先告诉人要收邮件，比注册完才发现交不了题省事。
+		"RequireVerify": s.requiresEmailVerify(r),
 	})
 }
 
@@ -285,6 +287,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	u, err := s.db.CreateAccount(r.Context(), store.AccountInput{
 		Handle: handle, Email: email, Password: password, DisplayName: display, Cost: s.cfg.BCryptCost,
+		RequireEmailVerification: s.requiresEmailVerify(r),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
@@ -319,12 +322,34 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	s.setSession(w, sess.ID, store.SessionTTL)
 	s.traffic.noteRegister(clientIP(r))
 	s.log.Info("registered", "user", u.Handle, "ip", clientIP(r))
-	welcome := "邮箱还没验证，可以先正常使用。"
+	// 注册成功要说的是什么，取决于这个账号现在缺什么。两件事可能同时成立，所以是叠加的
+	// 一句话，而不是 if/else 的二选一。
+	var notes []string
 	if claimed {
 		// 这个人必须知道自己刚刚拿到了什么：站主只有第一个账号能做，之后再也补不上。
-		welcome = "你是这个站的第一个账号，已经把你设为超级管理员：别的管理员改不动你的权限、角色和状态。"
+		// 站主也要验证邮箱才能交题，但他照样进得去 /admin/site——闸门只管交代码和参赛，
+		// 所以"第一个号被自己的开关锁死"这种情况不存在：他随时能把开关关掉。
+		notes = append(notes, "你是这个站的第一个账号，已经把你设为超级管理员：别的管理员改不动你的权限、角色和状态。")
 	}
-	http.Redirect(w, r, "/?msg="+url.QueryEscape("欢迎，"+u.Handle+"。"+welcome), http.StatusSeeOther)
+	if !u.EmailVerified {
+		note, err := s.sendVerificationNotice(r, u)
+		if err != nil {
+			s.log.Warn("verification mail failed", "user", u.Handle, "err", err)
+		}
+		notes = append(notes, note)
+	}
+	http.Redirect(w, r, "/?msg="+url.QueryEscape("欢迎，"+u.Handle+"。"+strings.Join(notes, "")), http.StatusSeeOther)
+}
+
+// sendVerificationNotice mails a fresh link and returns the sentence the registrant reads
+// either way. 收件地址不写进这句话：它会跟着跳转出现在地址栏里。
+func (s *Server) sendVerificationNotice(r *http.Request, u store.User) (string, error) {
+	msg, err := s.sendVerification(r, u)
+	if err != nil {
+		return "邮箱还没验证，还不能提交代码或参加比赛。验证邮件这会儿没发出去：" +
+			strings.TrimPrefix(msg, "验证邮件没发出去：") + " 稍后在「设置」页可以重发。", err
+	}
+	return "验证邮件已经发到你的邮箱：点信里的链接之后就能提交代码和参加比赛了。", nil
 }
 
 // claimSiteOwner seats the first person to register a site that has no super admin
@@ -365,6 +390,8 @@ func (s *Server) claimSiteOwner(r *http.Request, u store.User) bool {
 func (s *Server) renderRegisterForm(w http.ResponseWriter, r *http.Request, status int, msg, handle, email, display string) {
 	s.page(w, r, status, "注册", "register", nil, msg, map[string]any{
 		"Handle": handle, "Email": email, "DisplayName": display,
+		// 被打回去重填的时候，这一句不能跟着消失：那一页还是同一页。
+		"RequireVerify": s.requiresEmailVerify(r),
 	})
 }
 
@@ -388,13 +415,17 @@ type settingsData struct {
 	Joined      string
 	// DMPolicy is who may send this person a private message.
 	DMPolicy string
+	// EmailVerified is the account page's answer to "why can't I submit": the flag
+	// itself, not the site switch, because a row this feature never touched reads as
+	// verified and that person must not be offered a link to click.
+	EmailVerified bool
 }
 
 func (s *Server) buildSettings(a actor) settingsData {
 	return settingsData{
 		Email: a.User.Email, DisplayName: a.User.DisplayName, Bio: a.User.Bio,
 		HasPassword: a.User.HasPassword, Joined: agoMS(a.User.CreatedAt),
-		DMPolicy: a.User.DMPolicy,
+		DMPolicy: a.User.DMPolicy, EmailVerified: a.User.EmailVerified,
 	}
 }
 

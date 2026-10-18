@@ -859,6 +859,12 @@ func (s *Server) handleContestJoin(w http.ResponseWriter, r *http.Request) {
 		s.backToContest(w, r, c, msg)
 		return
 	}
+	// 邮箱没验证的人也不能占一个参赛名额（M25f）。赛内提交另外在 createSubmission 里拦，
+	// 所以这里挡住的是"进名单"这一步。
+	if why := s.verifyNotice(r, a); why != "" {
+		s.backToContest(w, r, c, why)
+		return
+	}
 	if _, err := s.db.JoinContest(r.Context(), c.ID, a.User.ID, r.FormValue("code"), ""); err != nil {
 		s.backToContest(w, r, c, err.Error())
 		return

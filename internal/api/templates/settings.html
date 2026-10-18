@@ -2,6 +2,17 @@
 <h1>设置</h1>
 <p class="meta">{{.Me.Name}}（{{.Me.Handle}}） · 邮箱 {{.Data.Email}} · 注册于 {{.Data.Joined}}</p>
 
+{{if not .Data.EmailVerified}}
+<h2>邮箱还没验证</h2>
+<p class="flash">验证之前这个账号能登录、能看题目、动态、帖子和比赛，但还不能提交代码，也不能参加比赛。</p>
+<form method="post" action="/settings/email/resend">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <p><input type="submit" value="重新发送验证邮件"></p>
+</form>
+<p class="meta">收信后点邮件里那条链接就能解开。再点一次「重新发送」会作废上一条链接——
+  旧链接之后再点就无效了。邮件没发出去的话，原因会显示在这句话上面，那是站长发信的配置问题，不是你的账号问题。</p>
+{{end}}
+
 <h2>个人资料</h2>
 <form method="post" action="/settings/profile">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">

@@ -160,6 +160,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings/profile", s.handleProfileSave)
 	mux.HandleFunc("POST /settings/password", s.handlePasswordSave)
+	// 重新发送验证邮件：只能给自己账号上那个已经存着的地址发，表单里没有收件地址栏。
+	mux.HandleFunc("POST /settings/email/resend", s.handleResendEmail)
+
+	// 邮件里的验证链接落在这里。GET 是因为它出自一封邮件，人手点不开一个 POST。
+	mux.HandleFunc("GET /verify", s.handleVerifyEmail)
 
 	// First-run bootstrap: the operator token cannot be presented by a browser, so
 	// this pair turns it into a real web login for the admin account.
@@ -272,6 +277,9 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /messages/{handle}       发一条私信（受收信策略限制）",
 		"  GET  /login /register         登录 / 注册",
 		"  GET  /settings                个人资料、密码、私信策略",
+		"  GET  /settings                个人资料、密码、私信策略、邮箱验证状态",
+		"  POST /settings/email/resend   重新发送验证邮件（只发给自己账号上的地址，旧链接作废）",
+		"  GET  /verify?token=…          邮件里的验证链接：点一次生效，用过或过期就说清楚",
 		"  POST /checkin                 每日打卡（漏卡 n 天扣 3^n 连续天数）",
 		"  GET  /admin/site              站点设置（site.settings）",
 		"  POST /admin/site              保存站点设置：功能开关 + 发信（SMTP）配置",

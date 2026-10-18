@@ -38,6 +38,9 @@
 <h2>提交代码</h2>
 {{if .Data.Contest.WhyNot}}
 <p class="flash">{{.Data.Contest.WhyNot}}</p>
+{{else if .Data.VerifyNotice}}
+<p class="flash">{{.Data.VerifyNotice}}</p>
+<p class="meta"><a href="/settings">设置</a> 那一页有「重新发送验证邮件」。</p>
 {{else if .Me}}
 <form method="post" action="/problems/{{.Data.PID}}/submit">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">

@@ -5,7 +5,11 @@
   <label>用户名（登录名，之后可用作个人主页地址）</label>
   <input type="text" name="handle" value="{{.Data.Handle}}" autocomplete="username" required>
 
+  {{if .Data.RequireVerify}}
+  <label>邮箱（本站要求验证：注册后会寄一封带链接的信，点过之后才能提交代码和参加比赛）</label>
+  {{else}}
   <label>邮箱（暂不验证，仅用于识别与以后找回密码）</label>
+  {{end}}
   <input type="email" name="email" value="{{.Data.Email}}" autocomplete="email" required>
 
   <label>昵称（可选，显示在题目记录与排行榜上）</label>

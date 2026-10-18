@@ -1,0 +1,11 @@
+{{define "content"}}
+<h1>邮箱验证</h1>
+<p class="flash">{{.Flash}}</p>
+<p class="meta">这一步只把"这个邮箱确实归你"记在账号上。验证之前站点你照样能读：题库、题面、动态、帖子、比赛页面都打得开，
+  只是不收代码、也不让加入比赛。</p>
+{{if .Data.SignedIn}}
+<p class="meta"><a href="/settings">设置</a> 那一页能看到验证状态，也能重新发送验证邮件。</p>
+{{else}}
+<p class="meta"><a href="/login">登录</a> 之后在 <a href="/settings">设置</a> 页可以重新发送验证邮件。</p>
+{{end}}
+{{end}}

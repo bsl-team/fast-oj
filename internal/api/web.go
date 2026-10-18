@@ -220,9 +220,13 @@ type problemData struct {
 	// TopicsLink is where the 求助贴 for this problem live.
 	TopicsLink string
 	Contest    problemContest
-	Statement  template.HTML
-	Samples    []samplePair
-	Recent     []subRow
+	// VerifyNotice is why this reader's 邮箱 still does not let them submit, or "" when
+	// nothing is missing. The form is replaced by this sentence rather than left there to
+	// fail, which is how 被禁止发动态 that box already behaves.
+	VerifyNotice string
+	Statement    template.HTML
+	Samples      []samplePair
+	Recent       []subRow
 }
 
 // contestOfProblem turns the ?contest= of a contest problem link into a checked
@@ -349,9 +353,11 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		CanCases:   a.canSeeTestcases(p),
 		TopicsLink: "/problems/" + url.PathEscape(p.PID) + "/topics",
 		Contest:    contest,
-		Statement:  renderMarkdownHTML(p.Statement),
-		Samples:    samples,
-		Recent:     rows,
+		// 输入框在没有资格的那一种情况下不出现，理由写在它该在的位置上。
+		VerifyNotice: s.verifyNotice(r, a),
+		Statement:    renderMarkdownHTML(p.Statement),
+		Samples:      samples,
+		Recent:       rows,
 	})
 }
 
@@ -739,6 +745,12 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 		// Keep the contest context the reader was working in, so the reason lands
 		// where they can act on it.
 		problemPath += "?contest=" + strconv.FormatInt(inside.ContestID, 10)
+	}
+	// 邮箱没验证就不收代码（M25f）。这一条在这里，而不是在各个表单里，是因为所有交代码
+	// 的路——题面页、比赛页、赛内页——都汇到这一个函数，写在页面上就能被 curl 绕过去。
+	// 读的部分一点没动：题目、动态、帖子、比赛页面全都照看，被拦的只有这次写。
+	if why := s.verifyNotice(r, a); why != "" {
+		return store.Submission{}, why, problemPath, errors.New("email not verified")
 	}
 	if !p.Visible && !a.canEditProblem(p) && !a.can(permProblemPublish) && !inside.Member {
 		return store.Submission{}, "找不到这道题", rejectPath(key, inside.ContestID), store.ErrNotFound
