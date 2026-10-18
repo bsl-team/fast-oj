@@ -165,6 +165,11 @@ func csrfOK(r *http.Request, a actor) bool {
 // 所以几十 MB 的用例包不必整个压在内存里。
 const multipartMemory = 4 << 20
 
+// formHeadroom 是普通表单在源码上限之外留的余量：urlencoded 的换行会变成 %0A（一个字节
+// 变三个），字段名与 csrf 也要地方。真正的封顶靠的是这个数存在本身——没有它，一条 POST
+// 就能拿任意大的请求体去换一次 ParseForm 与一行日志。
+const formHeadroom = 1 << 20
+
 // guardCSRF is the single choke point for state-changing browser requests. It
 // parses the form first so both the field and the header are visible, and fails
 // closed for any cookie-authenticated write without a matching token.
@@ -192,7 +197,17 @@ func (s *Server) guardCSRF(next http.Handler) http.Handler {
 				return
 			}
 		case isForm(r):
+			// 表单也封顶。Go 自己会在 10MB 处报错，但那是"解析到那么多才停"；
+			// 未封顶的请求体配上未截断的日志字段，一条 POST 就能把日志与响应撑大。
+			// 上限取源码上限加一点余量：提交表单里最大的字段就是源码，其余表单远小于它。
+			r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxSource+formHeadroom)
 			if err := r.ParseForm(); err != nil {
+				var over *http.MaxBytesError
+				if errors.As(err, &over) {
+					s.respondError(w, r, http.StatusRequestEntityTooLarge,
+						fmt.Sprintf("表单太大，上限 %d KB", (s.cfg.MaxSource+formHeadroom)>>10))
+					return
+				}
 				s.respondError(w, r, http.StatusBadRequest, "表单解析失败: "+err.Error())
 				return
 			}

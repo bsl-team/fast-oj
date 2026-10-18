@@ -240,3 +240,33 @@ func TestSafeNextOnlyAcceptsSitePaths(t *testing.T) {
 		}
 	}
 }
+
+// 表单请求体要封顶。没有这一条，任何人（包括没登录的）都能拿一条 POST 换一次
+// ParseForm 与一行原样进日志的超长字段——登录接口的 identifier 就是这么被写进日志的。
+func TestFormBodyIsCapped(t *testing.T) {
+	h := newHarness(t)
+	// 上限是 源码上限 + formHeadroom（测试库里是 1MB + 1MB），所以要报得比它大才叫超限。
+	huge := strings.Repeat("a", 3<<20)
+	code, body := h.postForm2("/login", url.Values{"identifier": {"admin"}, "password": {huge}}, "", "")
+	if code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超大表单 = %d，要 413：%s", code, short(body))
+	}
+	// 正常大小照旧走得通（这里要的是"拒得下一样东西"而不是"把门关上"）。
+	if code, _ := h.postForm2("/login", url.Values{"identifier": {"admin"}, "password": {"wrong"}}, "", ""); code == http.StatusRequestEntityTooLarge {
+		t.Fatal("正常登录被同一个上限挡住了")
+	}
+}
+
+// 长登录名会被截断后写进日志与回填进页面：这里能断言的是后者——响应里不能出现
+// 那条超长输入的原样。
+func TestLoginDoesNotEchoHugeIdentifier(t *testing.T) {
+	h := newHarness(t)
+	long := strings.Repeat("z", 5000)
+	code, body := h.postForm2("/login", url.Values{"identifier": {long}, "password": {"x"}}, "", "")
+	if code != http.StatusUnauthorized {
+		t.Fatalf("错误口令 = %d，要 401", code)
+	}
+	if strings.Contains(body, strings.Repeat("z", 400)) {
+		t.Error("登录页把超长的登录名原样印回了响应里")
+	}
+}

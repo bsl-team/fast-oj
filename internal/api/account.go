@@ -174,7 +174,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if _, ferr := s.db.RegisterLoginFailure(r.Context(), key, loginWindow); ferr != nil {
 			s.log.Error("throttle", "err", ferr)
 		}
-		s.log.Warn("login failed", "identifier", identifier, "ip", clientIP(r))
+		// 登录名是攻击者可控的字符串：截断了再进日志，否则一条 POST 就能往日志里塞十 MB。
+		s.log.Warn("login failed", "identifier", clip(identifier, 80), "ip", clientIP(r))
 		// One message for unknown account and wrong password: no enumeration.
 		s.loginFailed(w, r, "账号或密码不正确", http.StatusUnauthorized)
 		return
@@ -200,8 +201,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // survives and the status code stays meaningful.
 func (s *Server) loginFailed(w http.ResponseWriter, r *http.Request, msg string, status int) {
 	s.page(w, r, status, "登录", "login", nil, msg, map[string]any{
-		"Next":       r.FormValue("next"),
-		"Identifier": r.FormValue("identifier"),
+		"Next": r.FormValue("next"),
+		// 回填的登录名一样要截断：html/template 挡住的是注入，挡不住"把十 MB 的输入
+		// 原样印回响应里"这种放大。
+		"Identifier": clip(r.FormValue("identifier"), 200),
 	})
 }
 
