@@ -498,7 +498,7 @@ func TestWebSubmitEndToEndThroughTheForm(t *testing.T) {
 // finishSubmission plays the judge side: claim, then record a verdict.
 func (h *harness) finishSubmission(id int64, res store.Result, runs []store.Run) {
 	h.t.Helper()
-	if _, err := h.db.UpsertJudge(ctx(), "box-web", []string{"cpp"}, nil, ""); err != nil {
+	if _, err := h.db.UpsertJudge(ctx(), "box-web", []string{"cpp"}, nil, "", nil); err != nil {
 		h.t.Fatal(err)
 	}
 	if ok, err := h.db.SetStatus(ctx(), id, "queued", "compiling", 1); err != nil || !ok {

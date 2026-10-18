@@ -71,11 +71,11 @@ type Submission struct {
 	// Toolchain 是判机回报的"我这次实际用的口径"。空 = 这台判机没回报（老二进制），
 	// 页面要写「未回报」而不是替它说一句。
 	Toolchain string `json:"toolchain,omitempty"`
-	Source  string `json:"source,omitempty"`
-	Status  string `json:"status"`
-	Verdict string `json:"verdict"`
-	TimeMS  int    `json:"time_ms"`
-	MemKB   int    `json:"mem_kb"`
+	Source    string `json:"source,omitempty"`
+	Status    string `json:"status"`
+	Verdict   string `json:"verdict"`
+	TimeMS    int    `json:"time_ms"`
+	MemKB     int    `json:"mem_kb"`
 	// TimeMin/MemMin: the headline numbers came from a run that was cut off, so
 	// they are lower bounds and the views prefix them with ">".
 	TimeMin    bool   `json:"time_min,omitempty"`
@@ -115,8 +115,12 @@ type Judge struct {
 	// Capabilities 是这台判机自报的"我这版代码真会做什么"：options / checker / interactor。
 	// 老判机不送这一列，于是它是空的，服务器就不会把需要新能力的工单派给它。
 	Capabilities []string `json:"capabilities,omitempty"`
-	Note         string   `json:"note"`
-	LastSeenAt   int64    `json:"last_seen_at"`
+	// Jailed 是这台判机心跳里报上来的"此刻会不会把一次运行关进牢房"。JailedKnown 分清
+	// 了"没说"与"说了没有"：老二进制不会报这一项，那种情况不能显示成"确认没有隔离"。
+	Jailed      bool   `json:"jailed"`
+	JailedKnown bool   `json:"jailed_known"`
+	Note        string `json:"note"`
+	LastSeenAt  int64  `json:"last_seen_at"`
 }
 
 // Has 报告自报能力里有没有这一项。词表在 internal/protocol（那是两端之间的一句话），

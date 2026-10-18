@@ -13,7 +13,7 @@ func queueFixture(t *testing.T) (*DB, User, Problem, Judge) {
 	ctx := context.Background()
 	u := mustUser(t, db, "alice")
 	p := mustProblem(t, db, "P1", "Queue problem")
-	j, err := db.UpsertJudge(ctx, "box-1", []string{"cpp"}, nil, "")
+	j, err := db.UpsertJudge(ctx, "box-1", []string{"cpp"}, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func submitSomething(t *testing.T, db *DB, u User, p Problem, source string) Sub
 func TestClaimNextIsFifoAndStampsOwner(t *testing.T) {
 	ctx := context.Background()
 	db, u, p, j := queueFixture(t)
-	j2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "")
+	j2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestConcurrentClaimsNeverDuplicate(t *testing.T) {
 	}
 	boxes := make([]int64, 4)
 	for i := range boxes {
-		j, err := db.UpsertJudge(ctx, string(rune('a'+i))+":box", nil, nil, "")
+		j, err := db.UpsertJudge(ctx, string(rune('a'+i))+":box", nil, nil, "", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func TestConcurrentClaimsNeverDuplicate(t *testing.T) {
 func TestReportStatusOnlyByOwnerAndLegalStep(t *testing.T) {
 	ctx := context.Background()
 	db, u, p, j := queueFixture(t)
-	j2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "")
+	j2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestClaimNextCarriesVersionOptions(t *testing.T) {
 	if options[plain.ID] != "" {
 		t.Errorf("列表里 #%d 没选版本却带上了 %q", plain.ID, options[plain.ID])
 	}
-	box2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "")
+	box2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestClaimNextSkipsWorkTheBoxCannotHonour(t *testing.T) {
 	first := submitSomething(t, db, u, spj, "int main(){}")
 	second := submitSomething(t, db, u, plain1, "int main(){}")
 
-	old, err := db.UpsertJudge(ctx, "box-old", []string{"cpp"}, nil, "")
+	old, err := db.UpsertJudge(ctx, "box-old", []string{"cpp"}, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestClaimNextSkipsWorkTheBoxCannotHonour(t *testing.T) {
 	}
 
 	newBox, err := db.UpsertJudge(ctx, "box-new", []string{"cpp"},
-		[]string{"options", "checker", "interactor"}, "")
+		[]string{"options", "checker", "interactor"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestClaimNextSkipsOptionsForBoxThatIgnoresThem(t *testing.T) {
 	}
 	plain := submitSomething(t, db, u, p, "int main(){}")
 
-	box, err := db.UpsertJudge(ctx, "box-nocap", []string{"cpp"}, nil, "")
+	box, err := db.UpsertJudge(ctx, "box-nocap", []string{"cpp"}, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestClaimNextDoesNotGateOnLanguage(t *testing.T) {
 	}
 	// 一台只自报会判 cpp 的机器。
 	box, err := db.UpsertJudge(ctx, "box-cpp", []string{"cpp"},
-		[]string{"options", "checker", "interactor"}, "")
+		[]string{"options", "checker", "interactor"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,5 +389,52 @@ func TestClaimNextDoesNotGateOnLanguage(t *testing.T) {
 	}
 	if task.SubmissionID != want.ID || task.Language != "python" {
 		t.Fatalf("领到 %+v，要那条 python 提交（由判机自己回实话说没有工具链）", task)
+	}
+}
+
+// 判机的隔离状态要能区分"没说"与"说了没有"：升级后还没心跳的老二进制报不了这一项，
+// 把它显示成"确认没有隔离"就是替一台没开口的机器编一句话。
+func TestUpsertJudgeKeepsJailedUnknownApartFromNo(t *testing.T) {
+	ctx := context.Background()
+	db, _, _, _ := queueFixture(t)
+	tr, fl := true, false
+
+	old, err := db.UpsertJudge(ctx, "box-silent", []string{"cpp"}, nil, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.Jailed || old.JailedKnown {
+		t.Fatalf("没报过隔离状态却读出了结论：%+v", old)
+	}
+	yes, err := db.UpsertJudge(ctx, "box-jailed", []string{"cpp"}, nil, "", &tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !yes.Jailed || !yes.JailedKnown {
+		t.Fatalf("有牢房没记下来：%+v", yes)
+	}
+	// 同一台机器从"有"翻到"没有"必须盖掉旧值——沙盒开不起来是当下的事实，不是历史。
+	no, err := db.UpsertJudge(ctx, "box-jailed", []string{"cpp"}, nil, "开不起来", &fl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if no.Jailed || !no.JailedKnown {
+		t.Fatalf("翻过去了没盖掉旧值：%+v", no)
+	}
+	list, err := db.ListJudges(ctx)
+	if err != nil || len(list) != 3 { // 加上 queueFixture 里那台 box-1
+		t.Fatalf("ListJudges = %d 条, %v", len(list), err)
+	}
+	for _, j := range list {
+		switch j.Name {
+		case "box-silent":
+			if j.JailedKnown {
+				t.Errorf("未报的机器被当成了报过的：%+v", j)
+			}
+		case "box-jailed":
+			if j.Jailed || !j.JailedKnown {
+				t.Errorf("报了开不起来的机器显示成了有牢房：%+v", j)
+			}
+		}
 	}
 }

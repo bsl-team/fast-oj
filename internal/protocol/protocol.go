@@ -34,7 +34,12 @@ type Greeting struct {
 	// 然后正常回报成功，于是页面上「C++14 · O2 关」「本题由 SPJ 判定」就成了谎。
 	// 不送这一列（老二进制）就是空名单，需要新能力的工单不会派给它，而是排队等。
 	Capabilities []string `json:"capabilities,omitempty"`
-	Note         string   `json:"note,omitempty"`
+	// Jailed 是这台判机此刻的真实状态：一次运行会不会真被关进牢房。它是指针，因为
+	// "没说"（老二进制）与"说了没有"（沙盒开不起来）是两件事，页面要分开写。
+	// 它是"此刻"而不是"这一版会"，所以心跳每次重报——沙盒开不起来时这个值会翻过去，
+	// 而那是操作员要第一时间看到的一句话（过去它只活在启动日志的那一行里）。
+	Jailed *bool  `json:"jailed,omitempty"`
+	Note   string `json:"note,omitempty"`
 }
 
 // Case describes one test case a box must fetch and run.
@@ -102,14 +107,14 @@ type RunRow struct {
 // Result is the final report for a submission. The server recomputes the score
 // from Runs, so Verdict alone is not trusted.
 type Result struct {
-	Name       string `json:"name"`
-	Verdict    string `json:"verdict"`
-	TimeMS     int    `json:"time_ms"`
-	MemKB      int    `json:"mem_kb"`
-	TimeMin    bool   `json:"time_min,omitempty"`
-	MemMin     bool   `json:"mem_min,omitempty"`
-	FailedCase string `json:"failed_case,omitempty"`
-	Detail     string `json:"detail,omitempty"`
+	Name       string   `json:"name"`
+	Verdict    string   `json:"verdict"`
+	TimeMS     int      `json:"time_ms"`
+	MemKB      int      `json:"mem_kb"`
+	TimeMin    bool     `json:"time_min,omitempty"`
+	MemMin     bool     `json:"mem_min,omitempty"`
+	FailedCase string   `json:"failed_case,omitempty"`
+	Detail     string   `json:"detail,omitempty"`
 	Runs       []RunRow `json:"runs,omitempty"`
 	// Toolchain 是这台判机回报的"我这次实际用的口径"（"C++14 · O2 关"、"python3.14"）。
 	// 页面显示的是这一列而不是提交时选的那份：选了 c++14 却被一台旧判机按 c++17 判了，

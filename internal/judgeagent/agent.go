@@ -119,10 +119,14 @@ func (a *Agent) DisableLanguage(name, why string) {
 }
 
 func (a *Agent) greeting() protocol.Greeting {
+	// 隔离状态是"此刻"而不是"这一版会"：沙盒开不起来时这个值会翻过去，操作员在 /judges
+	// 上当场看得到，而不是要去翻启动日志的那一行。
+	jailed := judge.Jailed()
 	return protocol.Greeting{
 		Name: a.cfg.Name, Languages: a.cfg.Languages,
 		// 自报的是这一版代码真会做的事：需要新能力的工单只会派给报了它的机器。
 		Capabilities: protocol.Capabilities,
+		Jailed:       &jailed,
 		Note:         a.cfg.Note,
 	}
 }

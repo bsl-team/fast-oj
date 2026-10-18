@@ -29,6 +29,44 @@ func claimBody(name string, caps []string) []byte {
 	return raw
 }
 
+// 隔离状态是判机每次心跳重报的"此刻"事实。没有一台机器有牢房时 /judges 必须当面警告：
+// 那时提交是在判机自己的身份下、在宿主文件系统上跑的，而这件事过去只写在启动日志里。
+func TestJudgesPageWarnsWhenNobodyHasAJail(t *testing.T) {
+	h := newHarness(t)
+	jailed := true
+
+	if code, body := h.json(http.MethodPost, "/judge/claim", h.judge,
+		claimBody("box-nojail", protocol.Capabilities)); code != http.StatusNotFound {
+		t.Fatalf("空队列领单 = %d：\n%s", code, short(body))
+	}
+	_, page := h.get("/judges", h.admin)
+	if !strings.Contains(page, "没有一台会把提交关进牢房") {
+		t.Errorf("没有一台有牢房却没警告：\n%s", short(page))
+	}
+	if !strings.Contains(page, "未报（老判机）") {
+		t.Errorf("没报隔离状态的机器应当写成未报：\n%s", short(page))
+	}
+
+	// 一台报了"有牢房"的机器进来，警告就该消失——红字留在页面上反而会让下次真出事时被当成噪音。
+	raw, err := json.Marshal(protocol.Greeting{
+		Name: "box-jailed", Languages: []string{"cpp"}, Capabilities: protocol.Capabilities,
+		Jailed: &jailed, Note: "沙盒已启用",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, body := h.json(http.MethodPost, "/judge/claim", h.judge, raw); code != http.StatusNotFound {
+		t.Fatalf("领单 = %d：\n%s", code, short(body))
+	}
+	_, page = h.get("/judges", h.admin)
+	if strings.Contains(page, "没有一台会把提交关进牢房") {
+		t.Errorf("有一台有牢房却还在警告：\n%s", short(page))
+	}
+	if !strings.Contains(page, "有牢房") {
+		t.Errorf("那台有牢房的机器没标出来：\n%s", short(page))
+	}
+}
+
 func (h *harness) claimTask(t *testing.T, name string) protocol.Task {
 	t.Helper()
 	code, body := h.claim(name)

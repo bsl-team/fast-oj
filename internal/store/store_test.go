@@ -243,7 +243,7 @@ func TestSubmissionFlow(t *testing.T) {
 	db := openTestDB(t)
 	u := mustUser(t, db, "carol")
 	p := mustProblem(t, db, "P1", "Flow")
-	j, err := db.UpsertJudge(ctx, "box-1", []string{"cpp", "python3"}, nil, "local")
+	j, err := db.UpsertJudge(ctx, "box-1", []string{"cpp", "python3"}, nil, "local", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,11 +335,11 @@ func TestJudgeRegistry(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
 
-	j, err := db.UpsertJudge(ctx, "Box-1", []string{"cpp"}, nil, "first")
+	j, err := db.UpsertJudge(ctx, "Box-1", []string{"cpp"}, nil, "first", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	j2, err := db.UpsertJudge(ctx, "box-1", []string{"cpp", "go"}, []string{"options"}, "second")
+	j2, err := db.UpsertJudge(ctx, "box-1", []string{"cpp", "go"}, []string{"options"}, "second", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

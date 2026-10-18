@@ -46,7 +46,7 @@ func (s *Server) registerJudge(r *http.Request, g protocol.Greeting) (store.Judg
 			return store.Judge{}, fmt.Errorf("bad capability tag %q", c)
 		}
 	}
-	return s.db.UpsertJudge(r.Context(), g.Name, g.Languages, g.Capabilities, g.Note)
+	return s.db.UpsertJudge(r.Context(), g.Name, g.Languages, g.Capabilities, g.Note, g.Jailed)
 }
 
 func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +476,7 @@ type judgeRow struct {
 	ID        int64
 	Name      string
 	Languages string
+	Jail      string
 	Caps      string
 	Seen      string
 	Note      string
@@ -491,14 +492,42 @@ func (s *Server) handleJudgeList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := make([]judgeRow, 0, len(judges))
+	jailed := 0
 	for _, j := range judges {
+		if j.Jailed {
+			jailed++
+		}
 		rows = append(rows, judgeRow{
 			ID: j.ID, Name: j.Name, Languages: joinOr(j.Languages, "不限"),
+			Jail: jailCell(j),
 			// 自报能力为空 = 这台判机是没这功能时注册的：需要版本选项 / SPJ / 交互题的
 			// 工单不会派给它，会排队等一台判得了的机器。操作员要能一眼看出是哪台掉队了。
 			Caps: joinOr(j.Capabilities, "未自报（老判机：不派 SPJ/交互题/选过版本的工单）"),
 			Seen: ago(j.LastSeenAt), Note: j.Note,
 		})
 	}
-	s.page(w, r, http.StatusOK, "判机", "judges", s.viewerOf(r), msgOf(r), map[string]any{"Rows": rows})
+	// 没有任何一台机器有牢房时当面警告：这时候提交是在判机的身份下、在宿主文件系统上跑的，
+	// 而这件事过去只写在启动日志的一行里。
+	warning := ""
+	if len(rows) > 0 && jailed == 0 {
+		warning = "现在在线的判机没有一台会把提交关进牢房：学生的代码是在判机自己的身份下、" +
+			"在宿主文件系统上跑的。要么把判机换成 root 起（牢房开得起，提交降到 nobody），" +
+			"要么给判机那台机器配好非特权 user namespace（Ubuntu 上就是 " +
+			"kernel.apparmor_restrict_unprivileged_userns 那一条），要么放进容器判。" +
+			"这不是判题失败：判定照常出，只是没有隔离。"
+	}
+	s.page(w, r, http.StatusOK, "判机", "judges", s.viewerOf(r), msgOf(r),
+		map[string]any{"Rows": rows, "Warning": warning})
+}
+
+// jailCell 是一行判机的隔离状态。三种说法必须分开：有牢房、报了开不起来、还没报过。
+func jailCell(j store.Judge) string {
+	switch {
+	case j.Jailed:
+		return "有牢房"
+	case j.JailedKnown:
+		return "没有（开不起来）"
+	default:
+		return "未报（老判机）"
+	}
 }

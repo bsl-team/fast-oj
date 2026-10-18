@@ -2,21 +2,27 @@
 <h1>判机</h1>
 <p class="meta">判机只出站连服务器，网页上没有它们的入口；下面是在线注册过的机器。</p>
 
+{{if .Data.Warning}}<p class="flash bad">{{.Data.Warning}}</p>{{end}}
+
 <table>
-  <tr><th class="num">id</th><th>名称</th><th>能判的语言</th><th>自报能力</th><th>最近心跳</th><th>备注</th></tr>
+  <tr><th class="num">id</th><th>名称</th><th>能判的语言</th><th>隔离</th><th>自报能力</th><th>最近心跳</th><th>备注</th></tr>
   {{range .Data.Rows}}
   <tr>
     <td class="num">{{.ID}}</td>
     <td>{{.Name}}</td>
     <td>{{.Languages}}</td>
+    <td>{{.Jail}}</td>
     <td>{{.Caps}}</td>
     <td>{{.Seen}}</td>
     <td>{{.Note}}</td>
   </tr>
   {{else}}
-  <tr><td colspan="6">还没有判机连上来，提交会一直排队。</td></tr>
+  <tr><td colspan="7">还没有判机连上来，提交会一直排队。</td></tr>
   {{end}}
 </table>
+<p class="meta">「隔离」是判机每次心跳重报的<b>此刻</b>状态：有牢房 / 开不起来 / 还没报过。
+  它过去只写在启动日志的一行里，没人盯日志就等于没人知道——而没有牢房时，提交是在判机自己的
+  身份下、在宿主文件系统上跑的。</p>
 <p class="meta">「自报能力」是判机自己说它会做什么：版本选项（options）、SPJ 判题器（checker）、
   交互器（interactor）。没自报的机器就是功能上线之前注册的那一类——需要这些的工单<b>不会派给它</b>，
   会在队列里等一台判得了的机器，因为让它判就是拿逐字节比较去交一份「本题由 SPJ 判定」的结果。
