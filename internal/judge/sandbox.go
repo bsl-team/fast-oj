@@ -93,6 +93,25 @@ func jailFor(lim Limits) (jail.Spec, bool) {
 	}, true
 }
 
+// probeFailure 把一次自测运行翻译成"这台机器开不了牢房"的那句话。
+//
+// IE 就是失败，即使退出码是 0：unshare 被内核拒掉时 exec 根本没有发生，Go 报的是
+// fork/exec 那一步的 errno，而进程压根没存在过——按退出码判成败会骗人。ECS 上就是
+// 判机一边在日志里写"沙盒已启用"，一边把每条提交都判成 IE。
+func probeFailure(ex Execution) (string, bool) {
+	switch {
+	case ex.Verdict == IE:
+		note := ex.Note
+		if !strings.HasPrefix(note, "沙盒未能") {
+			note = "沙盒未能建立: " + note
+		}
+		return note, true
+	case ex.Exit != 0:
+		return fmt.Sprintf("沙盒自测失败：退出码 %d %s", ex.Exit, strings.TrimSpace(string(ex.Stderr))), true
+	}
+	return "", false
+}
+
 // ProbeSandbox 在启动时真真切切地建一次牢房跑一个 /bin/true，把结论记下来。
 // 等第一条判题失败再说"这台开不了沙盒"是不诚实的：操作者应该在日志里第一眼看到它。
 func ProbeSandbox(dir string) (string, error) {
@@ -104,17 +123,11 @@ func ProbeSandbox(dir string) (string, error) {
 		return "", err
 	}
 	ex := Run([]string{"/bin/true"}, dir, nil, Limits{TimeMS: 5000, MemKB: 64 << 10})
-	note := ""
-	switch {
-	case strings.HasPrefix(ex.Note, "沙盒未能建立"):
-		reportSandbox(false, ex.Note)
-		return ex.Note, errors.New(ex.Note)
-	case ex.Exit != 0:
-		note = fmt.Sprintf("沙盒自测失败：退出码 %d %s", ex.Exit, strings.TrimSpace(string(ex.Stderr)))
+	if note, failed := probeFailure(ex); failed {
 		reportSandbox(false, note)
 		return note, errors.New(note)
 	}
-	note = fmt.Sprintf("沙盒已启用（%s，提交以 uid %d 运行）", sandboxKind(), sandbox.uid)
+	note := fmt.Sprintf("沙盒已启用（%s，提交以 uid %d 运行）", sandboxKind(), sandbox.uid)
 	reportSandbox(true, note)
 	return note, nil
 }

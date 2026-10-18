@@ -3,6 +3,7 @@ package judge
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -157,5 +158,84 @@ func TestJailStopsAfterAFailedProbe(t *testing.T) {
 	SetSandbox("", jail.Off, false, 0, 0)
 	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); ok {
 		t.Error("off 模式下不该尝试牢房")
+	}
+}
+
+// ECS 上真撞到的那件事：unshare 被内核拒掉时 exec 根本没发生，退出码是 0，判定却是
+// IE。自测只盯着退出码就会把"开不了牢房"记成"沙盒已启用"，判机于是带着这句假话继续
+// 把每一条提交判成 IE。IE 必须算失败，与退出码无关。
+func TestProbeFailureCountsIEEvenWithExitZero(t *testing.T) {
+	cases := []struct {
+		name    string
+		ex      Execution
+		want    bool
+		whyWant string
+	}{
+		{
+			name: "unshare 被拒",
+			ex: Execution{Verdict: IE, Exit: 0,
+				Note: "沙盒未能启动（unshare 命名空间或 exec 被拒）: fork/exec /proc/self/exe: permission denied"},
+			want:    true,
+			whyWant: "exec 没发生，退出码 0 不代表牢房建起来了",
+		},
+		{
+			name:    "jailer 自己声明失败",
+			ex:      Execution{Verdict: IE, Exit: 0, Note: "沙盒未能建立: operation not permitted"},
+			want:    true,
+			whyWant: "牢房建不起来",
+		},
+		{
+			name:    "没有前缀的 IE 也要认",
+			ex:      Execution{Verdict: IE, Exit: 0, Note: "attach failed: no such process"},
+			want:    true,
+			whyWant: "任何一次 IE 都不是沙盒可用",
+		},
+		{
+			name:    "非零退出码",
+			ex:      Execution{Verdict: RE, Exit: 1, Stderr: []byte("boom")},
+			want:    true,
+			whyWant: "牢房里的 /bin/true 都不肯退 0，说明边界把它挡住了",
+		},
+		{name: "干净跑通", ex: Execution{Verdict: AC, Exit: 0}, want: false},
+	}
+	for _, c := range cases {
+		note, failed := probeFailure(c.ex)
+		if failed != c.want {
+			t.Errorf("%s：probeFailure 判成 %v，要 %v（%s）", c.name, failed, c.want, c.whyWant)
+		}
+		if c.want && note == "" {
+			t.Errorf("%s：失败了却没有可写进日志的话", c.name)
+		}
+	}
+	// 那句自带"沙盒未能"的话原样留着，别在日志里叠两层前缀。
+	if got, _ := probeFailure(Execution{Verdict: IE, Note: "沙盒未能建立: x"}); got != "沙盒未能建立: x" {
+		t.Errorf("前缀叠加成了 %q", got)
+	}
+	if got, _ := probeFailure(Execution{Verdict: IE, Note: "attach failed: y"}); got != "沙盒未能建立: attach failed: y" {
+		t.Errorf("补前缀补错了：%q", got)
+	}
+}
+
+// 真跑一次自测：牢房的 exec 对象不存在，就必须报错并让后续工单不再尝试牢房。
+func TestProbeSandboxFailsOnABrokenJailer(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("命名空间牢房只有 Linux 有")
+	}
+	want := sandbox
+	t.Cleanup(func() { sandbox = want })
+
+	SetSandbox("/definitely/not/an/executable", jail.Auto, true, 65534, 65534)
+	note, err := ProbeSandbox(filepath.Join(t.TempDir(), "probe"))
+	if err == nil {
+		t.Fatalf("自测把开不了的牢房记成了成功：%q", note)
+	}
+	if !strings.Contains(note, "沙盒未能") {
+		t.Errorf("日志里这句话应当直说牢房没建起来，got %q", note)
+	}
+	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); ok {
+		t.Error("自测失败后 auto 不该再给每条工单建牢房")
+	}
+	if SandboxAvailable() {
+		t.Error("/judges 上那行说明不该显示沙盒可用")
 	}
 }
