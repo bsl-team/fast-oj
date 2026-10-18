@@ -155,9 +155,37 @@ func (s *Server) handleSiteAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	site := s.siteFresh(r.Context())
-	s.page(w, r, http.StatusOK, "站点设置", "admin_site", a.viewer(), msgOf(r), map[string]any{
-		"Site": site, "Links": linkLines(site.Links),
+	s.renderSite(w, r, a, http.StatusOK, site, linkLines(site.Links), msgOf(r), smtpTestInput{})
+}
+
+// sitePageData is this screen's whole payload, from all three of its exits: the first
+// open, a rejected save, and the result of a test send. One struct so the SMTP password
+// has exactly one route to the template — and that route only ever reaches a mask.
+type sitePageData struct {
+	Site     store.SiteConfig
+	Links    string
+	TLSModes []struct{ Value, Label string }
+	// TestTo/TestBody are only the operator's own typing on the 发送测试邮件 form: they
+	// come back so a failure does not make them re-enter the address.
+	TestTo   string
+	TestBody string
+}
+
+func (s *Server) renderSite(w http.ResponseWriter, r *http.Request, a actor, status int, site store.SiteConfig, rawLinks, msg string, test smtpTestInput) {
+	s.page(w, r, status, "站点设置", "admin_site", a.viewer(), msg, sitePageData{
+		Site: site, Links: rawLinks, TLSModes: tlsModeList(),
+		TestTo: test.To, TestBody: test.Body,
 	})
+}
+
+// tlsModeList is the encryption picker, ordered so the default reads first.
+func tlsModeList() []struct{ Value, Label string } {
+	order := []string{"starttls", "ssl", "none"}
+	out := make([]struct{ Value, Label string }, 0, len(order))
+	for _, v := range order {
+		out = append(out, struct{ Value, Label string }{v, tlsModes[v]})
+	}
+	return out
 }
 
 // siteFresh bypasses the cache so the editor never shows a stale value.
@@ -234,6 +262,10 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The saved row is read first because one of these fields is a secret the form
+	// deliberately does not show: an empty password box means "keep what is stored",
+	// not "delete it".
+	saved := s.siteFresh(r.Context())
 	rawLinks := r.FormValue("links")
 	in := store.SiteConfig{
 		Title:   strings.TrimSpace(r.FormValue("title")),
@@ -246,13 +278,13 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 		AllowTopics:   r.FormValue("allow_topics") == "1",
 		AllowContests: r.FormValue("allow_contests") == "1",
 		AllowDM:       r.FormValue("allow_dm") == "1",
+		// 验证开关是"勾选才生效"的那一个，写法一样：没勾就没有这个字段。
+		RequireEmailVerify: r.FormValue("require_email_verification") == "1",
 	}
 	// A rejected save keeps what was typed: having to re-enter a whole home page
 	// because one link line was malformed is not a fair trade.
 	fail := func(msg string) {
-		s.page(w, r, http.StatusBadRequest, "站点设置", "admin_site", a.viewer(), msg, map[string]any{
-			"Site": in, "Links": rawLinks,
-		})
+		s.renderSite(w, r, a, http.StatusBadRequest, in, rawLinks, msg, smtpTestInput{})
 	}
 	// Counted in runes because that is what the form's maxlength counts: 60 bytes
 	// would refuse a 20-character Chinese site name.
@@ -262,6 +294,18 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Title == "" || tooLong(in.Title, 60) {
 		fail("站点标题要 1..60 个字符")
+		return
+	}
+	cfg, bad := smtpFromForm(r, saved.SMTP)
+	if bad != "" {
+		fail(bad)
+		return
+	}
+	in.SMTP = cfg
+	// 开关要发邮件才有意义。这里拦一下，是因为"勾了但没配服务器"的结果是新注册的人
+	// 收不到信、又被闸门拦住——那正是这个页面存在的理由要避免的局面。
+	if in.RequireEmailVerify && !cfg.Configured() {
+		fail("要验证邮箱得先填 SMTP 服务器地址和发件地址，否则注册信发不出去。")
 		return
 	}
 	links, err := parseLinkLines(rawLinks)
@@ -277,6 +321,8 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	}
 	// Drop the cache so the change is visible on the very next request.
 	s.cache.invalidate()
+	// 日志里只留"谁存了设置"，绝不留 SMTP 的任何一项：地址和用户名拼在一条 URL 里
+	// 就已经是一半凭据了。
 	s.log.Info("site settings saved", "by", a.User.Handle)
 	http.Redirect(w, r, "/admin/site?msg="+url.QueryEscape("已保存"), http.StatusSeeOther)
 }

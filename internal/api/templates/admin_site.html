@@ -44,8 +44,57 @@
       <input type="checkbox" name="allow_dm" value="1" {{if .Data.Site.AllowDM}}checked{{end}}>
       允许发私信
     </label>
+    <p class="meta">下面这一项跟上面五个相反：它是"多一道门"，所以默认关着。
+      勾上之后新注册的人要先进邮箱点一次链接，才能提交代码和参加比赛；
+      勾之前就已经存在的账号一律算验证过了，不会被这道门拦住。</p>
+    <label class="check">
+      <input type="checkbox" name="require_email_verification" value="1" {{if .Data.Site.RequireEmailVerify}}checked{{end}}>
+      注册需要验证邮箱（要先把下面的发信配置填好）
+    </label>
   </div>
 
-  <p><input type="submit" value="保存"></p>
+  <h2>发信配置（SMTP）</h2>
+  <p class="meta">验证邮件和下面那封测试邮件都从这里发。<b>密码不会显示在页面上</b>：
+    框里留空就是继续用已经存着的那一条，输入新值才会换掉。</p>
+  <div class="row">
+    <div>
+      <label>服务器地址</label>
+      <input type="text" name="smtp_host" value="{{.Data.Site.SMTP.Host}}" maxlength="200"
+        placeholder="smtp.example.com" spellcheck="false" autocomplete="off">
+    </div>
+    <div>
+      <label>端口</label>
+      <input type="number" name="smtp_port" value="{{.Data.Site.SMTP.Port}}" min="1" max="65535" placeholder="587">
+    </div>
+    <div>
+      <label>加密方式</label>
+      <select name="smtp_tls">
+        {{range .Data.TLSModes}}
+        <option value="{{.Value}}" {{if eq .Value $.Data.Site.SMTP.TLSMode}}selected{{end}}>{{.Label}}</option>
+        {{end}}
+      </select>
+    </div>
+  </div>
+  <label>用户名（多数服务就是你的发件地址）</label>
+  <input type="text" name="smtp_username" value="{{.Data.Site.SMTP.Username}}" maxlength="200" spellcheck="false" autocomplete="off">
+  <label>密码</label>
+  <input type="password" name="smtp_password" value="" autocomplete="new-password"
+    placeholder="{{if .Data.Site.SMTP.Password}}••••••（已保存，输入新值以替换）{{else}}还没填{{end}}">
+  <label>发件地址</label>
+  <input type="text" name="smtp_from" value="{{.Data.Site.SMTP.From}}" maxlength="200"
+    placeholder="noreply@example.com" spellcheck="false" autocomplete="off">
+
+  <h2>发送测试邮件</h2>
+  <p class="meta">这一条是拿<b>上面刚填的</b>值去连服务器，不用先保存。
+    失败时服务器回的原话会显示在这一页下面，照着那句话改就行，不用去翻启动参数。</p>
+  <label>收件邮箱（寄给你自己最准）</label>
+  <input type="text" name="to" value="{{.Data.TestTo}}" maxlength="120" spellcheck="false" autocomplete="off">
+  <label>附言（可选，会写在测试邮件里）</label>
+  <input type="text" name="body" value="{{.Data.TestBody}}" maxlength="4000">
+
+  <p>
+    <input type="submit" value="保存">
+    <input type="submit" formaction="/admin/site/test-email" value="发送测试邮件">
+  </p>
 </form>
 {{end}}

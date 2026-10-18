@@ -136,6 +136,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /admin/site", s.handleSiteAdmin)
 	mux.HandleFunc("POST /admin/site", s.handleSiteSave)
+	// 测试发信：POST 才动网络，配置与收件地址都不进 URL。
+	mux.HandleFunc("POST /admin/site/test-email", s.handleSiteTestEmail)
 
 	mux.HandleFunc("GET /messages", s.handleInbox)
 	mux.HandleFunc("GET /messages/{handle}", s.handleThread)
@@ -272,6 +274,8 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /settings                个人资料、密码、私信策略",
 		"  POST /checkin                 每日打卡（漏卡 n 天扣 3^n 连续天数）",
 		"  GET  /admin/site              站点设置（site.settings）",
+		"  POST /admin/site              保存站点设置：功能开关 + 发信（SMTP）配置",
+		"  POST /admin/site/test-email   按表单里刚填的值发一封测试邮件，失败原因原样显示在这一页",
 		"  GET  /admin/claim             首次接管：用管理令牌给 admin 账号设网页密码",
 		"  GET  /admin/perms             权限控制台（permission.manage）",
 		"  GET  /admin/stats             站点统计：人数、提交、人均、判定分布、GET/POST 请求量（stats.view）",
