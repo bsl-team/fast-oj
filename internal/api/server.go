@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /problems/{key}/cases/upload", s.handleCaseUpload)
 	mux.HandleFunc("POST /problems/{key}/cases/batch", s.handleCasesBatch)
 	mux.HandleFunc("POST /problems/{key}/cases/wipe", s.handleCaseWipe)
+	mux.HandleFunc("POST /problems/{key}/judge_program", s.handleJudgeProgram)
 	mux.HandleFunc("GET /problems/{key}/cases/{id}/edit", s.handleCaseEditPage)
 	mux.HandleFunc("POST /problems/{key}/cases/{id}/edit", s.handleCaseSave)
 	mux.HandleFunc("POST /problems/{key}/cases/{id}/delete", s.handleCaseDelete)
@@ -229,6 +230,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /problems/{key}/cases/{id}/edit|delete  改用例 / 删用例",
 		"  POST /problems/{key}/cases/batch   批量改分值与捆绑（一次保存整张表）",
 		"  POST /problems/{key}/cases/wipe    清空用例",
+		"  POST /problems/{key}/judge_program 保存这道题的 SPJ 判题器（judge_program.edit）",
 		"  GET  /problems/{key}/cases/{name}/{in|out}  用例正文（样例公开）",
 		"  GET  /problems/{key}/topics  这道题的求助贴；从这里发帖会自动带上题号",
 		"  POST /problems/{key}/submit   提交代码",

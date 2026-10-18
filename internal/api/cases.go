@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,30 @@ type casesData struct {
 	Groups     []groupRow
 	Judged     int
 	Total      int
+	// Checker 是用例页下面那块"判题器"的数据。
+	Checker programEditor
+}
+
+// programEditor 是判题器表单的数据。
+type programEditor struct {
+	Kind      string
+	Language  string
+	Source    string
+	Languages []string
+	// CanEdit 为假时页面只读，并说明为什么：让出题人看到"这儿本来是能填的，是你没这项
+	// 权力"，比把整块藏起来让他以为这题不支持 SPJ 好。
+	CanEdit bool
+}
+
+// programLanguages 是判机能编的判题器语言。候选直接来自判机的工具表，与提交页那套同源：
+// 判题器只能用**判机真有的**工具链编，写一个学生提交都不一定能用的语言更没有意义。
+func programLanguages() []string {
+	out := make([]string, 0, len(versionTools))
+	for name := range versionTools {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // groupRow summarises one bundle: how many cases it holds and what the group is
@@ -142,9 +167,68 @@ func (s *Server) renderCases(w http.ResponseWriter, r *http.Request, a actor, p 
 	if strings.HasPrefix(msg, "批量修改没有保存") {
 		code = http.StatusBadRequest
 	}
+	// 判题器跟着用例页走：它判的就是这批文件，出题人改用例时顺手就该看见现在用的是谁。
+	checker, err := s.db.GetJudgeProgram(r.Context(), p.ID, store.ProgramChecker)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, code, "用例 "+p.PID, "problem_cases", a.viewer(), msg, casesData{
 		PID: p.PID, Title: p.Title, Rows: rows, Groups: groups, Judged: judged, Total: total,
+		Checker: programEditor{
+			Kind: store.ProgramChecker, Language: checker.Language, Source: checker.Source,
+			Languages: programLanguages(), CanEdit: a.can(permJudgeProgram),
+		},
 	})
+}
+
+// handleJudgeProgram 保存题目自带的判题器。
+//
+// 这里**不**当场编译验证：判题器是判机用自己的工具链编的，Web 进程所在机器上有没有 g++
+// 与判定无关，替判机说"这份能编"才是假保证。所以编不过的判题器要等到学生提交才暴露——
+// 那条工单会被判成判机故障并写明是这个判题器的问题，学生的代码不背这个锅，但表单下方的
+// 提示要把这件事说在前面，让出题人自己先检查。
+func (s *Server) handleJudgeProgram(w http.ResponseWriter, r *http.Request) {
+	a, p, ok := s.requireJudgeProgram(w, r, r.PathValue("key"))
+	if !ok {
+		return
+	}
+	kind := strings.TrimSpace(r.FormValue("kind"))
+	if !store.ValidProgramKind(kind) {
+		s.backToCases(w, r, p, "不认识的判机程序种类："+kind)
+		return
+	}
+	lang := strings.ToLower(strings.TrimSpace(r.FormValue("language")))
+	if lang == "" {
+		lang = "cpp"
+	}
+	if _, ok := versionTool(lang); !ok {
+		s.backToCases(w, r, p, "判题器只能用判机认识的语言写："+strings.Join(programLanguages(), "/"))
+		return
+	}
+	src := r.FormValue("source")
+	if len(src) > store.MaxProgramSource {
+		s.backToCases(w, r, p, "判题器源码太长，上限 "+strconv.Itoa(store.MaxProgramSource)+" 字节")
+		return
+	}
+	if strings.ContainsRune(src, 0) {
+		s.backToCases(w, r, p, "源码里不能有空字节")
+		return
+	}
+	if err := s.db.PutJudgeProgram(r.Context(), store.JudgeProgram{
+		ProblemID: p.ID, Kind: kind, Language: lang, Source: src,
+	}); err != nil {
+		s.backToCases(w, r, p, "没保存上："+err.Error())
+		return
+	}
+	switch strings.TrimSpace(src) {
+	case "":
+		s.log.Info("judge program removed", "pid", p.PID, "kind", kind, "by", a.User.Handle)
+		s.backToCases(w, r, p, "已撤掉判题器：这道题回到「标准输出与答案宽松比」。")
+	default:
+		s.log.Info("judge program saved", "pid", p.PID, "kind", kind, "bytes", len(src), "by", a.User.Handle)
+		s.backToCases(w, r, p, "判题器已存好，下一次判题起生效（判机现场编译）。")
+	}
 }
 
 // caseForm is one case as the editor posts it.
