@@ -427,7 +427,7 @@ func runInteractive(interactor, userArgv []string, dir string, tc Case, lim Limi
 		}
 		// 中间那份是对话结束后才写的转写，先把名字占好，交互器按同一套约定拿三个参数。
 		p := filepath.Join(dir, "itx"+strconv.Itoa(i)+".dat")
-		if err := os.WriteFile(p, body, 0o644); err != nil {
+		if err := writeRunFile(p, body); err != nil {
 			return Duo{
 				User:       Execution{Verdict: IE, TimeMS: -1, MemKB: -1, Note: "交互题的文件写不出来: " + err.Error()},
 				Interactor: Execution{Verdict: IE, TimeMS: -1, MemKB: -1},
@@ -438,7 +438,7 @@ func runInteractive(interactor, userArgv []string, dir string, tc Case, lim Limi
 	d := RunDuo(userArgv, append(append([]string{}, interactor...), paths...), dir,
 		lim, Limits{MemKB: auxLimits.MemKB, MaxProcs: auxLimits.MaxProcs})
 	// 转写落在交互器的第二个参数上：出争议时"学生到底答了什么"只有这一份证据。
-	if err := os.WriteFile(paths[1], d.User.Stdout, 0o644); err != nil {
+	if err := writeRunFile(paths[1], d.User.Stdout); err != nil {
 		d.User.Note = orText(d.User.Note, "对话记录写不进工作目录: "+err.Error())
 	}
 	return d

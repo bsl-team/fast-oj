@@ -87,7 +87,7 @@ func PythonProbe(dir string) (string, error) {
 	// 一次正常的：打印一行再加一次算术，同时确认 stdio 与 -I 的组合在这台机器上真能用。
 	benign := `print("ok", sum(range(10)))`
 	src := filepath.Join(dir, tool.SourceFile)
-	if err := os.WriteFile(src, []byte(benign), 0o644); err != nil {
+	if err := writeRunFile(src, []byte(benign)); err != nil {
 		return "", err
 	}
 	ex := Run(tool.RunArgs(dir), dir, nil, lim)
@@ -99,7 +99,7 @@ func PythonProbe(dir string) (string, error) {
 	// 一次想跑的：起子进程。护栏必须把它挡成一条 RuntimeError，而那句 echo 一个字都不能出现。
 	hostile := `import os
 print("CANARY-" + os.popen("echo LEAKED").read())`
-	if err := os.WriteFile(src, []byte(hostile), 0o644); err != nil {
+	if err := writeRunFile(src, []byte(hostile)); err != nil {
 		return "", err
 	}
 	blocked := Run(tool.RunArgs(dir), dir, nil, lim)
@@ -131,7 +131,7 @@ var PythonVersion = sync.OnceValue(interpreterVersion)
 // writeSupport 把工具自带的文件落进这次运行的工作目录。
 func writeSupport(tool Tool, dir string) error {
 	for _, f := range tool.Support {
-		if err := os.WriteFile(filepath.Join(dir, f.Name), f.Body, 0o644); err != nil {
+		if err := writeRunFile(filepath.Join(dir, f.Name), f.Body); err != nil {
 			return fmt.Errorf("写 %s: %w", f.Name, err)
 		}
 	}

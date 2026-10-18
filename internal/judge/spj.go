@@ -64,7 +64,7 @@ func BuildAux(tools map[string]Tool, prog AuxProgram, root, name string) ([]stri
 		return nil, err
 	}
 	source := filepath.Join(dir, tool.SourceFile)
-	if err := os.WriteFile(source, []byte(prog.Source), 0o644); err != nil {
+	if err := writeRunFile(source, []byte(prog.Source)); err != nil {
 		return nil, err
 	}
 	if !tool.Compiles() {
@@ -103,7 +103,7 @@ func checkWithSPJ(argv []string, dir string, tc Case, got []byte) (Verdict, stri
 	paths := make([]string, 0, 3)
 	for i, body := range [][]byte{tc.Input, got, tc.Expected} {
 		p := filepath.Join(dir, "spj"+strconv.Itoa(i)+".dat")
-		if err := os.WriteFile(p, body, 0o644); err != nil {
+		if err := writeRunFile(p, body); err != nil {
 			return IE, "判题器要的文件写不出来: " + err.Error()
 		}
 		paths = append(paths, p)

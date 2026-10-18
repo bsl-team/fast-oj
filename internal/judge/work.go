@@ -113,7 +113,7 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 	}
 
 	source := filepath.Join(dir, tool.SourceFile)
-	if err := os.WriteFile(source, []byte(task.Source), 0o644); err != nil {
+	if err := writeRunFile(source, []byte(task.Source)); err != nil {
 		rep.Detail = "write source: " + err.Error()
 		return rep
 	}
