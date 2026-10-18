@@ -73,10 +73,14 @@ func Enter(spec Spec) error {
 	if err := os.Chdir("/"); err != nil {
 		return err
 	}
-	if err := applyLimits(spec); err != nil {
+	// 先降权，再上限额。RLIMIT_NPROC 是按 **real uid 现有的任务数**算的：在还是 root 的
+	// 时候设成 64，判的是"root 在这台机器上已经有多少进程"，于是宿主上 root 一多，牢房
+	// 就会间歇建不起来（unshare/clone 报 EAGAIN，判机只能给一条判机故障）。挪到降权之后，
+	// 64 这个数字才真是它想要的意思：这个学生的程序能开多少进程。
+	if err := drop(spec); err != nil {
 		return err
 	}
-	if err := drop(spec); err != nil {
+	if err := applyLimits(spec); err != nil {
 		return err
 	}
 	bin, err := exec.LookPath(inJail(spec.Argv[0], root))
