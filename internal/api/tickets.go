@@ -489,7 +489,7 @@ func (s *Server) handleTicketStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("ticket moved", "ticket", tk.ID, "to", status, "by", a.User.Handle)
 	// 工单线程里已经有一行 event（那次改动本身），审计给的是横切视图："这个处理人
-	// 动过哪些单"。备注是自由文本，进 detail 前按审计的上线截断。
+	// 动过哪些单"。备注是自由文本，入库前按审计的字数上限截断。
 	moved := "状态改为「" + store.TicketStatusLabel(updated.Status) + "」"
 	if note != "" {
 		moved += "；备注：" + note
