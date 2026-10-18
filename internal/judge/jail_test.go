@@ -112,7 +112,11 @@ int main(){
 	t.Logf("探针输出：%s", out)
 }
 
-// 网络那一半：socket 建得出来（内核允许），但连不到任何非回环地址。
+// 网络与"看着别人干活"这两条路都得断。
+//
+// CLONE_NEWNET 已经让牢房里没有第二张网卡（连不上才是原来的测法）；seccomp 那一层把
+// socket() 本身变成 EPERM，并把 ptrace 挡在同一道门外——后者不是"能不能出门"的问题，
+// 而是"能不能看见判机上正在跑谁的哪道题"的问题。
 func TestJailHasNoNetwork(t *testing.T) {
 	jailOn(t)
 	dir := t.TempDir()
@@ -121,19 +125,31 @@ func TestJailHasNoNetwork(t *testing.T) {
 #include <cstring>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/ptrace.h>
 int main(){
   int s = socket(AF_INET, SOCK_STREAM, 0);
-  if (s < 0) { printf("socket-failed"); return 0; }
-  sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons(53);
-  inet_pton(AF_INET, "8.8.8.8", &a.sin_addr);
-  int r = connect(s, (sockaddr*)&a, sizeof(a));
-  printf("connect=%d errno=%d", r, r ? errno : 0);
+  printf("socket=%d errno=%d", s, s < 0 ? errno : 0);
+  if (s >= 0) {
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons(53);
+    inet_pton(AF_INET, "8.8.8.8", &a.sin_addr);
+    int r = connect(s, (sockaddr*)&a, sizeof(a));
+    printf(" connect=%d errno=%d", r, r ? errno : 0);
+  }
+  errno = 0;
+  long p = ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
+  printf(" ptrace=%ld errno=%d", p, p < 0 ? errno : 0);
   return 0;
 }`)
 	if strings.Contains(out, "connect=0") {
 		t.Fatalf("牢房里还能连公网：%s", out)
 	}
-	t.Logf("网络探针：%s", out)
+	if !strings.Contains(out, "socket=-1 errno=1") {
+		t.Errorf("seccomp 没把 socket() 挡成 EPERM：%s", out)
+	}
+	if !strings.Contains(out, "ptrace=-1 errno=1") {
+		t.Errorf("seccomp 没把 ptrace 挡成 EPERM：%s", out)
+	}
+	t.Logf("网络/ptrace 探针：%s", out)
 }
 
 // 超内存必须还是 MLE，不能被 RLIMIT_AS 抢先打成 RE：判题口径不能因为开沙盒而变。

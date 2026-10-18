@@ -910,6 +910,42 @@ exec 之间插东西，所以 `setrlimit`、`mount`、`chroot` 这些必须由�
 `SYS_PTRACE`（读降权子进程的 `/proc/<pid>/statm`，内存熔断靠它）。Docker **默认 seccomp
 profile 不需要放开**，实测照跑。
 
+### 系统调用过滤（seccomp 黑名单）
+
+牢房建好、降完权、上限额之后，exec 学生程序之前最后一件事是装一层 seccomp-bpf
+（`internal/jail/seccomp_linux.go`）：**黑名单**，命中就返回 `EPERM`。挡掉的是
+
+- `socket` / `connect` / `bind` / `listen` / `send*` / `recv*` / `shutdown` / `socketpair` /
+  `accept*` —— 断网本来靠 `CLONE_NEWNET`（命名空间里没有第二张网卡），这一层挡的是内核攻击面；
+- `ptrace`、`process_vm_readv/writev` —— 「看着判机正在跑谁的哪道题」这条路；
+- `mount` / `umount2` / `pivot_root` / `chroot` / `setns` / `unshare` —— 在牢房里再动挂载表或换一个牢房；
+- `reboot` / `kexec_load` / `swapon` / `swapoff` / `bpf` / `userfaultfd`。
+
+配上 `PR_SET_NO_NEW_PRIVS`（内核要求它与非特权时装过滤器结伴），并用
+`SECCOMP_FILTER_FLAG_TSYNC` 一次装到**所有线程**——Go 与 Python 都是多线程的，`prctl`
+那条路只管当前线程，"看着装了其实没装"是最坏的一种失败。
+
+三个决定都是有依据的，改的时候别绕过去：
+
+- **为什么返回 `EPERM` 而不是 `KILL`**：`SECCOMP_RET_KILL_THREAD` 只杀一个线程，其余的
+  永远等（实测 Go/Python 都表现为挂住不返回，判机只能靠墙上时钟收，那条判定不可用）；
+  `KILL_PROCESS` 又把"学生调了一个被挡的调用"变成一条没有原因的信号死。EPERM 让调用失败、
+  程序自己报错，学生看到的是一句能读懂的 `PermissionError`。
+- **为什么不是白名单**：实测白名单要 150 条以上才装得下 g++ 与 CPython（换发行版就变），
+  装漏一个就是把"这台判机判不了题"变成常态；而要能编译就必须放行 `execve`/`clone3`/`wait4`，
+  于是它连"不许起进程"这件本该由它解决的问题都没解决。
+- **为什么装在 `LookPath` 之后**：牢房自己还要用 `unshare`/`mount`/`chroot` 这些被挡的调用，
+  早装一步就死在建牢房半路上（装不上时按"牢房没建起来"出去，判机报判机故障，不让学生背）。
+
+`internal/jail/seccomp_linux_test.go` 里有一条测试专门盯着 cBPF 的跳转方向：跳转写反**不会
+报错**——内核照样收下过滤器，程序照跑，只是什么都没挡。实测就是这样让 `socket()` 与
+`ptrace()` 在"装了 seccomp 的牢房"里双双成功。所以那条测试不测"装上了没有"，而是顺着指令流
+走一遍，检查"号命中"这条路真的走到 `RET ERRNO`；`TestJailHasNoNetwork` 再在真牢房里断言
+`socket=-1 errno=1`、`ptrace=-1 errno=1`。
+
+`/proc` 现在以 `hidepid=2` 挂进牢房：只换新的 `/proc` 挡不住读
+`/proc/<别人的 pid>/cmdline`、`environ`，而那些里能看到判机在执行谁的哪道题。
+
 ### 判机容器化（`Dockerfile.judge` + `docker-compose.judge.yml`）
 
 把提交代码关进容器，是现在最省事的一层真隔离：Docker Desktop 的容器跑在轻量 VM 里，
@@ -1100,7 +1136,7 @@ powershell -File build.ps1 -Test
 |------|------|
 | 语言 | C / C++ / Python（见 [Python 提交](#python-提交护栏装在解释器里边界还是牢房)）。Python 的时限原样算、内存下限 64MB、只在牢房开着的判机上收；`pypy` 之类的加速解释器没有，Java/Go 等仍未做 |
 | 判题方式 | SPJ 判题器与交互题已做（见[判题方式](#判题方式普通比较--spj-判题器--交互题)），并由判机自报能力把关派单：没自报 `checker`/`interactor`/`options` 的机器领不到对应工单。仍**没有**：一条"这些题现在没人能判"的显式提示——队列里的提交只会显示「等待判题」，要去看 `/judges` 才知道是哪台机器掉队；判题器只能用判机有的工具链（`c`/`cpp`/`python`）；多条用例同时失败时只留**第一条**的评语；交互器读不到选手的转写文件（那是对话结束后才写的，对话本身走 stdin/stdout） |
-| 判机隔离 | Linux 上每次运行都有命名空间牢房（无网络、看不到宿主目录、内核 rlimit 兜 CPU/内存/进程数），root 与非 root 两种部署都能开；容器再套一层。仍**没有**：seccomp-bpf 系统调用白名单（牢房里仍能 `execve`/`ptrace`，只是无网、无宿主文件、无权限）、pid 命名空间（Go 的 `unshare` 语义拿不到，见[判题沙盒](#判题沙盒-internaljail一次运行一个牢房)）、Windows 上的任何文件/网络隔离（平台没有这套机制，`-sandbox=on` 会直接拒绝启动） |
+| 判机隔离 | Linux 上每次运行都有命名空间牢房（无网络、看不到宿主目录、内核 rlimit 兜 CPU/内存/进程数）+ 一层 seccomp **黑名单**（`socket` 全家、`ptrace`/`process_vm_*`、`mount`/`unshare`/`setns`/`bpf`/`kexec` 等一律 EPERM，见[系统调用过滤](#系统调用过滤seccomp-黑名单)），root 与非 root 两种部署都能开；容器再套一层。仍**没有**：系统调用**白名单**（实测装不下 g++ 与 CPython，且要能编译就必须放行 `execve`/`clone3`/`wait4`，所以牢房里仍能起子进程）、pid 命名空间（需要 jailer 多 fork 一层，代价是退出码要自己传回来、内存轮询读的是 jailer 的 RSS，见[判题沙盒](#判题沙盒-internaljail一次运行一个牢房)）、Windows 上的任何文件/网络隔离（平台没有这套机制，`-sandbox=on` 会直接拒绝启动） |
 | 账号 | 注册可关；**邮箱验证已做**（`/admin/site` 的第六个开关 + 图形化 SMTP 配置 + 发送测试邮件），未验证的账号能读能登录，但不能提交代码与参加比赛，验证链接一次有效、可在设置页重发。仍**没有**：「忘记密码」重置链接（忘了密码还是要管理员改库）、改邮箱入口（改了就得由管理员重发验证，因为旧邮箱收到的那条链接会被拒绝）、把验证做成"没验证连登录都不行"的更严模式 |
 | 工单 | 已做（五类、四状态、私密、流水、处理人角标）。仍**没有**：新工单的邮件/推送提醒、按人分派与 SLA、附件上传（正文能写 Markdown，贴图得靠外链） |
 | 比赛 | 已做（限时、加入码私有、队伍、OI/IOI/ACM 三种赛制独立榜、封榜）。OI 比赛中不出榜。仍**没有**：虚拟排名（参赛者不插进别人的榜）、比赛中改时限或换数据后对历史提交的重算、队长踢人/转让队长的完整 UI、比赛内单独的时限配置（用题目自己的时限）；时间全站按服务器时区，没有用户时区 |

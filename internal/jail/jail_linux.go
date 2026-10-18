@@ -85,11 +85,17 @@ func Enter(spec Spec) error {
 	}
 	bin, err := exec.LookPath(inJail(spec.Argv[0], root))
 	if err != nil {
-		return fmt.Errorf("牢房里找不到 %s: %w（用 -jail-bind 把它所在的目录放进来）", spec.Argv[0], err)
+		return fmt.Errorf("牢房里找不到 %s: %w（它所在的目录不在 bind 进来的那几个里：/usr /lib /lib64 /bin /sbin）",
+			spec.Argv[0], err)
 	}
 	argv := make([]string, 0, len(spec.Argv))
 	for _, a := range spec.Argv {
 		argv = append(argv, inJail(a, root))
+	}
+	// seccomp 必须压在 exec 前面最后一件事：牢房自己还要用 unshare/mount/chroot 这些
+	// 被挡的调用，早装一步就死在建牢房半路上。
+	if err := applySeccomp(); err != nil {
+		return fmt.Errorf("系统调用过滤装不上: %w", err)
 	}
 	return syscall.Exec(bin, argv, jailEnv(spec.Env, root))
 }
@@ -191,8 +197,17 @@ func fillJail(root string, spec Spec) error {
 	if err := os.MkdirAll(procDir, 0o755); err != nil {
 		return err
 	}
-	if err := syscall.Mount("proc", procDir, "proc", syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, ""); err != nil {
-		return fmt.Errorf("mount /proc: %w", err)
+	// hidepid=2：连自己的 pid 之外的一律看不见。光换 /proc 只挡住"数别人的题"，
+	// 而 /proc/<别人的 pid>/cmdline、environ、stat 那些还摆在那里——判机上同时跑着
+	// 别人的源码路径与判机自己的命令行，那些不该是一个提交能读的东西。
+	if err := syscall.Mount("proc", procDir, "proc",
+		syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, "hidepid=2,inode64"); err != nil {
+		// inode64 在个别老内核上不被 proc 接受，而 hidepid 才是这次要的那条：
+		// 退一步只报 hidepid=2，不要因为一个装饰性选项把整间牢房关掉。
+		if err2 := syscall.Mount("proc", procDir, "proc",
+			syscall.MS_NOSUID|syscall.MS_NOEXEC|syscall.MS_NODEV, "hidepid=2"); err2 != nil {
+			return fmt.Errorf("mount /proc: %w", err)
+		}
 	}
 	tmpDir := filepath.Join(root, "tmp")
 	if err := os.MkdirAll(tmpDir, 0o777); err != nil {
