@@ -56,6 +56,29 @@ func (s *Server) audit(r *http.Request, a actor, action, target, detail string) 
 	}
 }
 
+// auditJudge records what a judge box *did* on the privileged surface: which work order
+// it took, and what verdict it wrote back.
+//
+// 这两条要入库的理由是判机令牌的特殊性：拿着它的人能领走任意一份提交的源码与题目的
+// 隐藏数据，也能写回判定。事后要回答的两个问题就是"那段时间谁领走了什么"和"那条判定
+// 是谁写的"——而它们今天只在 stderr 里，进程一重启就没有了。
+//
+// 代价说清楚：每条提交都会写两行，这张表会长得比只记特权动作时快。行很小（百来字节），
+// 一所学校一天的量在千行以下，但真要长期跑还是得配轮转（README 的限制表里写着）。
+func (s *Server) auditJudge(box, action, target, detail string) {
+	e := store.AuditEvent{
+		Action: action,
+		Actor:  "判机 " + box,
+		Target: target,
+		Detail: detail,
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), auditTimeout)
+	defer cancel()
+	if err := s.db.Audit(ctx, e); err != nil {
+		s.log.Error("audit write failed", "action", action, "target", target, "actor", e.Actor, "err", err)
+	}
+}
+
 // auditDenied records a refused judge-protocol call.
 //
 // 判机令牌能领工单、能写判定结果，所以"有人拿不对的凭据来敲门"是这一站最要紧的一条线索，
@@ -149,6 +172,8 @@ var auditLabels = map[string]string{
 	"ticket.status":          "工单改状态",
 	"ticket.delete":          "删除工单",
 	"judge.denied":           "判机鉴权被拒",
+	"judge.claim":            "判机领走工单",
+	"judge.result":           "判机回报判定",
 }
 
 // auditActions is the filter list, ordered the way an operator reads the page: the
@@ -160,6 +185,7 @@ var auditActions = []string{
 	"case.delete", "cases.wipe", "problem.delete",
 	"contest.delete", "contest.problem.remove",
 	"ticket.status", "ticket.delete", "judge.denied",
+	"judge.claim", "judge.result",
 }
 
 func auditLabel(action string) string {

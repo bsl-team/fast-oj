@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/liangbinchen2013/fast-oj/internal/protocol"
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
@@ -306,5 +308,46 @@ func TestAuditPageGateAndPaging(t *testing.T) {
 	// /about 的路由清单要有这一项：漏了它，下一个忘了这个页面存在的人无从找回来。
 	if _, about := h.htmlGet("/about", ""); !strings.Contains(about, "/admin/audit") {
 		t.Error("/about 的接口表里没有审计页")
+	}
+}
+
+// 判机协议上"谁领走了什么"与"谁写了这条判定"要入库：拿着判机令牌的人能领走任意一份
+// 源码与题目的隐藏数据，也能写回判定，而这两件事今天只在 stderr 里，进程一重启就没有了。
+func TestAuditJudgeClaimAndResult(t *testing.T) {
+	h := newHarness(t)
+	student := h.signIn("auditee2")
+	h.readyProblem("P2250")
+	if code, body := h.submitCode(student, "P2250", "cpp", "int main(){}"); code != http.StatusOK {
+		t.Fatalf("提交 = %d：\n%s", code, short(body))
+	}
+	task := h.claimTask(t, "box-audit")
+
+	claims := h.auditRows("judge.claim")
+	if len(claims) != 1 {
+		t.Fatalf("领单记录 = %d 条，要 1 条", len(claims))
+	}
+	if !strings.Contains(claims[0].Detail, "P2250") || !strings.Contains(claims[0].Detail, "用例 3 条") {
+		t.Errorf("领单记录没写清带走了什么：%q", claims[0].Detail)
+	}
+	if claims[0].Actor != "判机 box-audit" {
+		t.Errorf("领单记录的 actor = %q，要写明是哪台判机", claims[0].Actor)
+	}
+
+	raw, _ := json.Marshal(protocol.Result{
+		Name: "box-audit", Verdict: "AC", TimeMS: 12, MemKB: 1024, Toolchain: "C++17 · O2 开",
+		Runs: []protocol.RunRow{{Ordinal: task.Cases[0].Ordinal, CaseName: task.Cases[0].Name,
+			Verdict: "AC", TimeMS: 12, MemKB: 1024}},
+	})
+	sid := strconv.FormatInt(task.SubmissionID, 10)
+	if code, body := h.postJSON("/judge/submissions/"+sid+"/result", h.judge, string(raw)); code != http.StatusOK {
+		t.Fatalf("回报判定 = %d：\n%s", code, short(body))
+	}
+	results := h.auditRows("judge.result")
+	if len(results) != 1 {
+		t.Fatalf("判定记录 = %d 条，要 1 条", len(results))
+	}
+	// 判机自报的工具链要留在那一行里：争议时要能看出这条判定是"用哪条命令行判的"。
+	if !strings.Contains(results[0].Detail, "C++17 · O2 开") {
+		t.Errorf("判定记录没带上判机自报的口径：%q", results[0].Detail)
 	}
 }

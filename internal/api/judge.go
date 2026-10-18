@@ -108,7 +108,27 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.log.Info("claimed", "sid", task.SubmissionID, "judge", j.Name, "pid", task.PID)
+	// 领单就是"这台机器拿走了谁的源码和哪些隐藏数据"：令牌泄露后要回答的第一问就是它。
+	// 判题器/交互器的源码也在这条工单里一起出去，所以把它写进 detail。
+	taken := fmt.Sprintf("%s 第 %d 条（%s%s）", task.PID, task.SubmissionID, task.Language,
+		programsCarried(work))
+	s.auditJudge(j.Name, "judge.claim", strconv.Itoa(int(task.SubmissionID)), taken)
 	writeJSON(w, http.StatusOK, work)
+}
+
+// programsCarried 说清这份工单除了源码还带走了什么题目侧的数据。
+func programsCarried(t protocol.Task) string {
+	extra := ""
+	if t.Checker != nil {
+		extra += "，含判题器"
+	}
+	if t.Interactor != nil {
+		extra += "，含交互器"
+	}
+	if n := len(t.Cases); n > 0 {
+		extra += fmt.Sprintf("，用例 %d 条", n)
+	}
+	return extra
 }
 
 // handleJudgeCaseFile streams case data to a judge box. Unlike the public case
@@ -316,6 +336,10 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("judged", "sid", id, "judge", j.Name, "verdict", string(verdict),
 		"score", fmt.Sprintf("%d/%d", score, total), "time_ms", req.TimeMS)
+	// 判定是谁写的这条也要留痕：分数与判定都是这台机器报来的，服务器只按逐用例行重算。
+	s.auditJudge(j.Name, "judge.result", strconv.Itoa(int(id)), fmt.Sprintf(
+		"%s %d/%d（判机自报 %s，用时 %dms，内存 %dKB）", verdict, score, total,
+		orDash(req.Toolchain), req.TimeMS, req.MemKB))
 	writeJSON(w, http.StatusOK, map[string]any{"sid": id, "verdict": string(verdict),
 		"score": score, "total_score": total, "failed_case": failed, "cases": len(runs)})
 }
