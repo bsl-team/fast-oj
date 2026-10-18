@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// Case is one test case with its data already fetched.
+// Case is one test case with its data already fetched. 判定与回报都按 Ordinal 走，
+// 这里没有数据库 id：判机拿到那份 id 也没有能用的地方，它只会多一个枚举别题的把手。
 type Case struct {
-	ID       int64
 	Name     string
 	Ordinal  int
 	IsSample bool

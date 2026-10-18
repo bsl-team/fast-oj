@@ -10,8 +10,9 @@ type Greeting struct {
 }
 
 // Case describes one test case a box must fetch and run.
+// Case 是一条用例在**这份工单里**的样子。没有数据库 id：判机取正文是按
+// 「这条提交的第 N 条用例」取的，把主键发给它只是给了它一个可以用来枚举别的题目的把手。
 type Case struct {
-	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	Ordinal  int    `json:"ordinal"`
 	IsSample bool   `json:"is_sample"`

@@ -79,23 +79,33 @@ func TestJudgeClaimWorkOrder(t *testing.T) {
 		t.Fatalf("judged row = %+v", task.Cases[1])
 	}
 
-	// The box can pull every case body, including judged ones.
+	// 判机能取到这份工单的每一条正文，包括判题用例。地址是「这条提交的第 N 条」，
+	// 不是「用例 id 为 X」——后者让一个拿到令牌的人顺着 id 把全站答案抄走。
 	for _, tc := range task.Cases {
-		if code, body := h.get("/judge/cases/"+itoa(int(tc.ID))+"/in", h.judge); code != http.StatusOK {
-			t.Fatalf("case %d in = %d %q", tc.ID, code, body)
+		base := "/judge/submissions/" + itoa(int(task.SubmissionID)) + "/cases/" + itoa(tc.Ordinal)
+		if code, body := h.get(base+"/in?judge=box-1", h.judge); code != http.StatusOK {
+			t.Fatalf("case #%d in = %d %q", tc.Ordinal, code, body)
 		}
-		if code, body := h.get("/judge/cases/"+itoa(int(tc.ID))+"/out", h.judge); code != http.StatusOK {
-			t.Fatalf("case %d out = %d %q", tc.ID, code, body)
+		if code, body := h.get(base+"/out?judge=box-1", h.judge); code != http.StatusOK {
+			t.Fatalf("case #%d out = %d %q", tc.Ordinal, code, body)
 		}
 	}
-	if code, _ := h.get("/judge/cases/1/in", ""); code != http.StatusUnauthorized {
+	if code, _ := h.get("/judge/submissions/1/cases/1/in", ""); code != http.StatusUnauthorized {
 		t.Fatalf("anonymous case fetch = %d", code)
 	}
-	if code, _ := h.get("/judge/cases/999/in", h.judge); code != http.StatusNotFound {
-		t.Fatalf("unknown case = %d", code)
+	// 没报机名的取件请求直接拒：判机身份是这一道门的另一半。
+	if code, body := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/1/in", h.judge); code != http.StatusBadRequest {
+		t.Fatalf("case fetch without judge name = %d %q", code, body)
 	}
-	if code, body := h.get("/judge/cases/1/other", h.judge); code != http.StatusBadRequest {
+	if code, _ := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/999/in?judge=box-1", h.judge); code != http.StatusNotFound {
+		t.Fatalf("unknown ordinal = %d", code)
+	}
+	if code, body := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/1/other?judge=box-1", h.judge); code != http.StatusBadRequest {
 		t.Fatalf("bad which = %d %q", code, body)
+	}
+	// 别的判机想读同一条提交的用例：它没派到这份工单，就读不到。
+	if code, body := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/1/in?judge=box-9", h.judge); code != http.StatusForbidden {
+		t.Fatalf("a box that never claimed it = %d %q，要 403", code, body)
 	}
 
 	// The box shows up in the registry.

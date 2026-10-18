@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -181,8 +182,12 @@ func (a *Agent) Claim(ctx context.Context) (*protocol.Task, error) {
 	return &task, nil
 }
 
-func (a *Agent) caseFile(ctx context.Context, caseID int64, which string) ([]byte, error) {
-	path := "/judge/cases/" + strconv.FormatInt(caseID, 10) + "/" + which
+// caseFile 取这份工单里第 ordinal 条用例的正文。地址是「这条提交的第 N 条」而不是
+// 「用例 id 为 X」：服务器会核对这条提交确实派给了本机，判机因此读不到别的题目的数据。
+func (a *Agent) caseFile(ctx context.Context, submissionID int64, ordinal int, which string) ([]byte, error) {
+	path := "/judge/submissions/" + strconv.FormatInt(submissionID, 10) +
+		"/cases/" + strconv.Itoa(ordinal) + "/" + which +
+		"?judge=" + url.QueryEscape(a.cfg.Name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.Server+path, nil)
 	if err != nil {
 		return nil, err
@@ -199,7 +204,7 @@ func (a *Agent) caseFile(ctx context.Context, caseID int64, which string) ([]byt
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("case %d %s: %s", caseID, which, firstLine(body))
+		return nil, fmt.Errorf("sid %d case #%d %s: %s", submissionID, ordinal, which, firstLine(body))
 	}
 	return body, nil
 }
@@ -319,16 +324,16 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 
 	cases := make([]judge.Case, 0, len(task.Cases))
 	for _, c := range task.Cases {
-		input, err := a.caseFile(ctx, c.ID, "in")
+		input, err := a.caseFile(ctx, task.SubmissionID, c.Ordinal, "in")
 		if err != nil {
 			return true, a.reportInfra(ctx, task.SubmissionID, "fetch input: "+err.Error())
 		}
-		expected, err := a.caseFile(ctx, c.ID, "out")
+		expected, err := a.caseFile(ctx, task.SubmissionID, c.Ordinal, "out")
 		if err != nil {
 			return true, a.reportInfra(ctx, task.SubmissionID, "fetch answer: "+err.Error())
 		}
 		cases = append(cases, judge.Case{
-			ID: c.ID, Name: c.Name, Ordinal: c.Ordinal, IsSample: c.IsSample,
+			Name: c.Name, Ordinal: c.Ordinal, IsSample: c.IsSample,
 			Score: c.Score, Input: input, Expected: expected,
 		})
 	}

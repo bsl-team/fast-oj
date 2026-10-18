@@ -120,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /contests/{key}/problems/{problemKey}/move", s.handleContestProblemMove)
 
 	mux.HandleFunc("POST /judge/claim", s.handleJudgeClaim)
-	mux.HandleFunc("GET /judge/cases/{id}/{which}", s.handleJudgeCaseFile)
+	mux.HandleFunc("GET /judge/submissions/{id}/cases/{ordinal}/{which}", s.handleJudgeCaseFile)
 	mux.HandleFunc("POST /judge/submissions/{id}/status", s.handleJudgeStatus)
 	mux.HandleFunc("POST /judge/submissions/{id}/result", s.handleJudgeResult)
 	mux.HandleFunc("GET /judges", s.handleJudgeList)
@@ -288,7 +288,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"",
 		"  判机内部协议（只有判机令牌能用，网页上没有入口）：",
 		"  POST /judge/claim             心跳 + 领取工单",
-		"  GET  /judge/cases/{id}/{which} 取用例正文",
+		"  GET  /judge/submissions/{id}/cases/{ordinal}/{in|out}?judge=NAME  取这条工单的用例正文",
 		"  POST /judge/submissions/{id}/status|result  逐用例回报 / 终局结果",
 	}
 

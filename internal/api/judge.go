@@ -94,7 +94,7 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, tc := range cases {
 		work.Cases = append(work.Cases, protocol.Case{
-			ID: tc.ID, Name: tc.Name, Ordinal: tc.Ordinal, IsSample: tc.IsSample, Score: tc.Score,
+			Name: tc.Name, Ordinal: tc.Ordinal, IsSample: tc.IsSample, Score: tc.Score,
 		})
 	}
 
@@ -104,30 +104,65 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 
 // handleJudgeCaseFile streams case data to a judge box. Unlike the public case
 // route this also serves judged (non-sample) cases.
+//
+// 地址是「某条工单的第 N 条用例」，不是「库里 id 为 X 的用例」：判机令牌一旦被人拿到
+// （它泄在 ps 里过），按 id 取就意味着他能顺着 1、2、3……把**全部题目的隐藏输入与答案**
+// 抄走，而答案泄露是没法回收的。按工单取之后他能读到的只有他被派到的那几份文件。
 func (s *Server) handleJudgeCaseFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.requireJudge(r); err != nil {
 		s.writeAuthError(w, r, err)
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		s.respondError(w, r, http.StatusBadRequest, "case id must be a positive number")
+	sid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || sid <= 0 {
+		s.respondError(w, r, http.StatusBadRequest, "submission id must be a positive number")
 		return
 	}
-	tc, err := s.db.GetTestcaseByID(r.Context(), id)
+	ordinal, err := strconv.Atoi(r.PathValue("ordinal"))
+	if err != nil || ordinal <= 0 {
+		s.respondError(w, r, http.StatusBadRequest, "case ordinal must be a positive number")
+		return
+	}
+	which := r.PathValue("which")
+	switch which {
+	case "in", "out":
+	default:
+		s.respondError(w, r, http.StatusBadRequest, "which must be in or out")
+		return
+	}
+	sub, err := s.db.GetSubmission(r.Context(), sid)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	which := r.PathValue("which")
-	rel := tc.OutputRel
-	switch which {
-	case "in":
-		rel = tc.InputRel
-	case "out":
-	default:
-		s.respondError(w, r, http.StatusBadRequest, "which must be in or out")
+	name := strings.TrimSpace(r.URL.Query().Get("judge"))
+	if name == "" {
+		s.respondError(w, r, http.StatusBadRequest, "judge box name is required (?judge=)")
 		return
+	}
+	if _, ok := s.resolveJudgeOwner(w, r, name, sub); !ok {
+		return
+	}
+	cases, err := s.db.ListTestcases(r.Context(), sub.ProblemID, false)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	var tc store.Testcase
+	found := false
+	for _, c := range cases {
+		if c.Ordinal == ordinal {
+			tc, found = c, true
+			break
+		}
+	}
+	if !found {
+		s.respondError(w, r, http.StatusNotFound, "this submission has no such case")
+		return
+	}
+	rel := tc.OutputRel
+	if which == "in" {
+		rel = tc.InputRel
 	}
 	body, err := s.cases.Read(rel)
 	if err != nil {

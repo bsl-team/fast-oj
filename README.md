@@ -153,7 +153,7 @@ curl -s localhost:8080/healthz          # ok
 | `GET` `/POST` | `/register` | 公开（可关） | 自助注册，邮箱暂不验证 |
 | `GET` `/POST` | `/settings` `/settings/*` | 登录用户 | 资料、密码、私信策略 |
 | `POST` | `/judge/claim` | 判机令牌 | 心跳 + 领取一条（空队列返回 404 `queue empty`） |
-| `GET` | `/judge/cases/{id}/{in\|out}` | 判机令牌 | 取用例正文（含判题用例） |
+| `GET` | `/judge/submissions/{id}/cases/{ordinal}/{in\|out}?judge=NAME` | 判机令牌 + 本机确实领到了这条工单 | 取这条工单的用例正文（含判题用例）。按「第 N 条」取而不是按用例 id 取：拿到令牌的人因此读不到自己没被派到的题的数据 |
 | `POST` | `/judge/submissions/{id}/status` | 判机令牌 | 进度 + 逐用例回报（`compiling` → `running`） |
 | `POST` | `/judge/submissions/{id}/result` | 判机令牌 | 终局判定与逐用例结果 |
 | `GET` | `/judges` | `judge.view` | 判机框清单 |
@@ -704,10 +704,15 @@ Web 侧不当场试编：编不编得过由判机那台机器的工具链说了�
 
 ```
 POST /judge/claim                       → 心跳注册 + 领取（404 = 队列空）
-GET  /judge/cases/{id}/{in|out}         → 逐个取用例
+GET  /judge/submissions/{id}/cases/{ordinal}/{in|out}?judge=NAME → 取这条工单的用例
 POST /judge/submissions/{id}/status     → compiling → running
 POST /judge/submissions/{id}/result     → 判定 + 逐用例行
 ```
+
+用例正文按「这条提交的第 N 条」取，不按用例的数据库 id 取，而且服务器会核对这条提交确实
+派给了报上来的那台判机。老写法（`/judge/cases/{id}`）等于给判机一个可以顺着 1、2、3 枚举
+**全站隐藏输入与答案**的把手——判机令牌一旦泄露（它曾在 `ps` 里），那种泄露没法回收。
+现在拿到令牌的机器只能读到自己被派到的那几份文件。
 
 服务器侧的规则：
 
