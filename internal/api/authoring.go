@@ -396,6 +396,9 @@ func (s *Server) handleProblemDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	// 跟清空用例一样，记在删文件之前：题这时候已经没了，文件系统后面出不出错都改不了
+	// "谁删了这道题"。
+	s.audit(r, a, "problem.delete", p.PID, "已删除题目：「"+p.Title+"」")
 	// The row is gone first; if the files could not be removed the author has to
 	// be told, because an orphaned directory is invisible in the UI.
 	if err := s.cases.RemoveProblem(p.ID); err != nil {

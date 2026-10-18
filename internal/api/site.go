@@ -324,5 +324,6 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	// 日志里只留"谁存了设置"，绝不留 SMTP 的任何一项：地址和用户名拼在一条 URL 里
 	// 就已经是一半凭据了。
 	s.log.Info("site settings saved", "by", a.User.Handle)
+	s.audit(r, a, "site.save", in.Title, siteSwitches(in))
 	http.Redirect(w, r, "/admin/site?msg="+url.QueryEscape("已保存"), http.StatusSeeOther)
 }

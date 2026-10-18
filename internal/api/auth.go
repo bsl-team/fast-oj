@@ -132,17 +132,34 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
+// writeAuthError answers a refused credential. The judge protocol refusals also go
+// into the audit trail: a holder of a wrong token poking at /judge/claim is the one
+// thing an operator has to be able to ask about afterwards, and until now the only
+// trace was the generic request log (method, path, status), which names nobody and
+// says nothing about why.
 func (s *Server) writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
+	// The reason doubles as what the visitor reads and what the trail records — they
+	// are the same sentence on purpose. No credential value travels into either: the
+	// detail is one of these four fixed strings, and the actor column only ever says
+	// what shape the presented credential had.
+	var (
+		reason string
+		status int
+	)
 	switch {
 	case errors.Is(err, errForbidden):
-		s.respondError(w, r, http.StatusForbidden, "没有这个权限")
+		reason, status = "没有这个权限", http.StatusForbidden
 	case errors.Is(err, errJudgeOnly):
-		s.respondError(w, r, http.StatusForbidden, "需要判机令牌")
+		reason, status = "需要判机令牌", http.StatusForbidden
 	case errors.Is(err, errCSRF):
-		s.respondError(w, r, http.StatusForbidden, "表单已过期，请刷新页面重试")
+		reason, status = "表单已过期，请刷新页面重试", http.StatusForbidden
 	default:
-		s.respondError(w, r, http.StatusUnauthorized, "请先登录或提供有效的令牌")
+		reason, status = "请先登录或提供有效的令牌", http.StatusUnauthorized
 	}
+	if isJudgeRoute(r) {
+		s.auditDenied(r, reason)
+	}
+	s.respondError(w, r, status, reason)
 }
 
 // csrfOK compares the submitted token against the session's, in constant time.
@@ -257,5 +274,6 @@ func (a actor) viewer() *viewer {
 		HandleTickets: a.can(permTicketHandle),
 		Stats:         a.can(permStatsView),
 		IPs:           a.can(permIPManage),
+		Audit:         a.can(permIPManage),
 	}
 }

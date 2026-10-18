@@ -585,6 +585,7 @@ func (s *Server) handleContestDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	s.audit(r, a, "contest.delete", c.CID, "已删除比赛：「"+c.Title+"」（名单与挂题一起没，历史提交保留）")
 	s.log.Info("contest deleted", "cid", c.CID, "id", c.ID, "by", a.User.Handle)
 	http.Redirect(w, r, "/contests?msg="+url.QueryEscape("已删除 "+c.CID+"：名单与挂题记录一并清掉了，历史提交还在"), http.StatusSeeOther)
 }
@@ -660,6 +661,7 @@ func (s *Server) handleContestProblemRemove(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.log.Info("contest problem removed", "cid", c.CID, "pid", p.PID, "by", a.User.Handle)
+	s.audit(r, a, "contest.problem.remove", c.CID, "移下 "+p.PID+"（历史提交照算，榜上多一列「已移除」）")
 	// History is untouched: submissions keep their contest_id and still pay, into a
 	// column the board marks 已移除.
 	s.backToContestEdit(w, r, c, "已移下 "+p.PID+"（历史提交照算，榜上会多一列「已移除」）")

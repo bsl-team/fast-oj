@@ -1,0 +1,48 @@
+{{define "content"}}
+<h1>安全审计</h1>
+
+<p class="meta">这里记的是<b>谁对别人动了手</b>：授予与撤销能力、改角色、封号与注销、封与解 IP、
+保存站点设置、给题目存取判题器、删用例与清空用例、删题、删比赛、把题目移下比赛、工单改状态与删除，
+再加上判机那一路上被拒的敲门。这些行<b>只追加</b>：没有改它或删它的入口，进程重启、stderr 日志滚掉
+之后，这些话仍然在这里。</p>
+<p class="meta">「操作者」写的是<b>当时那个名字</b>。账号可以注销、注销后用户名还能被下一个人注册走，
+这一行不会因此变成另一个人的名字；链接跳的是现在拿着这个名字的人，看清对象请以名字为准。</p>
+<p class="meta">详情与对象里可能有自由文本（封禁原因、工单备注），入库前已经按固定上限截断：
+一张只追加的表如果一行能塞几 MB，审计本身就变成了写满站点的手段。</p>
+
+<form class="row" method="get" action="/admin/audit">
+  <div><label>动作</label>
+    <select name="action">
+      <option value="">全部动作</option>
+      {{range .Data.Actions}}
+      <option value="{{.Key}}" {{if eq .Key $.Data.Action}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+  </div>
+  <input type="submit" value="筛选">
+</form>
+
+<table>
+  <tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>详情</th><th>来源 IP</th></tr>
+  {{range .Data.Rows}}
+  <tr>
+    <td class="meta">{{.When}}</td>
+    <td>{{if .Link}}<a href="{{.Link}}">{{.Actor}}</a>{{else}}{{.Actor}}{{end}}</td>
+    <td>
+      {{if eq .Key "judge.denied"}}<span class="badge bad">{{.Action}}</span>{{else}}{{.Action}}{{end}}
+      <div class="meta">{{.Key}}</div>
+    </td>
+    <td>{{if .Target}}<code>{{.Target}}</code>{{else}}<span class="meta">—</span>{{end}}</td>
+    <td>{{if .Detail}}{{.Detail}}{{else}}<span class="meta">—</span>{{end}}</td>
+    <td class="meta">{{if .IP}}{{.IP}}{{else}}<span class="meta">—</span>{{end}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6">还没有记录：这段时间没人动过别人的权限、账号、题目与站点设置。</td></tr>
+  {{end}}
+</table>
+
+<p class="meta">
+  共 {{.Data.Total}} 条，本页 {{.Data.Shown}} 条
+  {{if .Data.Next}}· <a href="/admin/audit?action={{.Data.Action}}&limit={{.Data.Limit}}&after={{.Data.Next}}">更早 →</a>{{end}}
+</p>
+{{end}}

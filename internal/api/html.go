@@ -78,6 +78,11 @@ type viewer struct {
 	// hides itself when every client address looks like the loopback (a same-host
 	// proxy), because banning by address is meaningless there.
 	IPs bool
+	// Audit is the 审计 entry: the durable trail of privileged actions. It rides on
+	// ip.manage (the capability that already means "may see the security state"),
+	// but unlike IPs it is never hidden by the loopback gate — a trail is worth most
+	// exactly when every address looks local.
+	Audit bool
 	// Stats is the 统计 entry: only someone holding stats.view sees the link.
 	Stats bool
 	CSRF  string
