@@ -259,5 +259,6 @@ func (a actor) viewer() *viewer {
 		HandleTickets: a.can(permTicketHandle),
 		Stats:         a.can(permStatsView),
 		IPs:           a.can(permIPManage),
+		Audit:         a.can(permIPManage),
 	}
 }

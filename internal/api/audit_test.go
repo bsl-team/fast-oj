@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,6 +13,10 @@ import (
 
 // 审计：特权动作要留下一行活得比进程久的记录。这些用例断言的是"确实入库了、入库的是
 // 谁做的、对谁做的"，不是页面上那句话。
+
+// auditRowMark 是审计页里"一行表格记录"的标记：筛选下拉里也写着同样的动作键，
+// 数行得认这段渲染结果。
+const auditRowMark = `<div class="meta">perm.grant</div>`
 
 // auditRows 读某个动作的全部审计行。
 func (h *harness) auditRows(action string) []store.AuditRow {
@@ -224,5 +229,82 @@ func TestAuditFailureDoesNotBlockAction(t *testing.T) {
 	perms, err := h.db.EffectivePermissions(context.Background(), u.ID, u.Role)
 	if err != nil || !perms[permStatsView] {
 		t.Fatalf("授予本身没落库：%v %+v", err, perms)
+	}
+}
+
+// 查看页：门是 ip.manage（能看安全态势的那一项），分页沿用「更早」那套游标。
+func TestAuditPageGateAndPaging(t *testing.T) {
+	h := newHarness(t)
+	plain := h.author("plainreader")
+	if code, _ := h.getAs(plain, "/admin/audit"); code != http.StatusForbidden {
+		t.Errorf("普通人进审计页 = %d, want 403", code)
+	}
+	if _, home := h.getAs(plain, "/"); strings.Contains(home, "/admin/audit") {
+		t.Error("导航栏给普通人露出了审计入口")
+	}
+	// 只有统计权的人看得见运营数字，不该因此看到谁被谁封了号。
+	only := h.author("stats_only", permStatsView)
+	if code, _ := h.getAs(only, "/admin/audit"); code != http.StatusForbidden {
+		t.Errorf("只持 stats.view 的人进审计页 = %d, want 403", code)
+	}
+	watcher := h.author("watcher", permIPManage)
+	// 封禁入口会被"来源全是环回"收起，审计入口不该：越是在那种部署里越要查得动。
+	if _, home := h.getAs(watcher, "/"); !strings.Contains(home, "/admin/audit") {
+		t.Error("持 ip.manage 的人导航栏里没有审计入口")
+	}
+
+	// 两次授予，好让分页有东西可分。
+	for _, key := range []string{permStatsView, permJudgeView} {
+		if code, _ := h.postBearer("/admin/perms/u/plainreader",
+			url.Values{"key": {key}, "action": {"grant"}}, h.admin); code != http.StatusOK {
+			t.Fatalf("授予 %s = %d", key, code)
+		}
+	}
+	_, page := h.getAs(watcher, "/admin/audit")
+	for _, want := range []string{"安全审计", "授予能力", "plainreader", store.BootstrapHandle} {
+		if !strings.Contains(page, want) {
+			t.Errorf("审计页缺 %q：\n%s", want, short(page))
+		}
+	}
+	// 每行的动作键渲染在 <div class="meta">键</div> 里；筛选下拉也写着同样的键，
+	// 所以数行要认这段标记，不能直接数字符串。
+	if n := strings.Count(page, auditRowMark); n != 2 {
+		t.Errorf("perm.grant 行数 = %d, want 2（标记 %q）", n, auditRowMark)
+	}
+	if strings.Contains(page, "problem.delete</div>") {
+		t.Error("没删过题，页面上却出现了删除题目的行")
+	}
+
+	_, one := h.getAs(watcher, "/admin/audit?limit=1")
+	if n := strings.Count(one, auditRowMark); n != 1 {
+		t.Errorf("limit=1 应当只有一行，实际 %d：\n%s", n, short(one))
+	}
+	if !strings.Contains(one, "更早 →") {
+		t.Errorf("还有更早的记录时没有「更早」链接：\n%s", short(one))
+	}
+	// 游标是更靠后的那一行（新的在前，所以 after=最新 id 拿到的是较早的一条）。
+	rows, err := h.db.ListAudit(context.Background(), store.AuditFilter{Action: "perm.grant", Limit: 5})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("审计行数 = %d %v", len(rows), err)
+	}
+	_, older := h.getAs(watcher, "/admin/audit?action=perm.grant&limit=1&after="+
+		strconv.FormatInt(rows[0].ID, 10))
+	if !strings.Contains(older, permStatsView) || strings.Contains(older, permJudgeView) {
+		t.Errorf("第二页拿到的不是较早那条：\n%s", short(older))
+	}
+
+	// 按动作筛：没发生过的动作是空表，不是报错。
+	_, none := h.getAs(watcher, "/admin/audit?action=problem.delete")
+	if !strings.Contains(none, "还没有记录") || strings.Contains(none, auditRowMark) {
+		t.Errorf("筛选不存在的动作：\n%s", short(none))
+	}
+	// 不认识的动作键退回"全部"，而不是给一个空页让人以为没记录。
+	_, junk := h.getAs(watcher, "/admin/audit?action=no.such")
+	if n := strings.Count(junk, auditRowMark); n != 2 {
+		t.Errorf("不认识的动作键应当当全部处理，行数 = %d：\n%s", n, short(junk))
+	}
+	// /about 的路由清单要有这一项：漏了它，下一个忘了这个页面存在的人无从找回来。
+	if _, about := h.htmlGet("/about", ""); !strings.Contains(about, "/admin/audit") {
+		t.Error("/about 的接口表里没有审计页")
 	}
 }

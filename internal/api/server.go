@@ -178,6 +178,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/ips", s.handleIPs)
 	mux.HandleFunc("POST /admin/ips/ban", s.handleIPBanAdd)
 	mux.HandleFunc("POST /admin/ips/unban/{ip}", s.handleIPBanRemove)
+	// 审计流水：只读，按 ip.manage 放行（能看安全态势的人）。
+	mux.HandleFunc("GET /admin/audit", s.handleAudit)
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
@@ -278,6 +280,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /admin/ips               IP 封禁名单与按地址流量 Top20（ip.manage）",
 		"  POST /admin/ips/ban         封一个 IP 或 CIDR 网段（整站拦死）",
 		"  POST /admin/ips/unban/{ip}  解封",
+		"  GET  /admin/audit            安全审计流水（ip.manage）：谁在什么时候动了谁的权限、账号、题目与站点设置；只读、只追加",
 		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
 		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁（超级管理员除外）",
 		"  POST /admin/users/{handle}/cancel  注销账号：抹掉身份、释放用户名，记录留着署名成封禁用户",
