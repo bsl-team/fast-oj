@@ -852,7 +852,7 @@ POST /judge/submissions/{id}/result     → 判定 + 逐用例行
 
 ## 判机隔离（边界必须说清）
 
-当前支持语言：**C / C++**（`g++ -x c++ -std=c++17 -O2 -w -static`）。命令一律是 argv 数组，绝不拼 shell 字符串。
+当前支持语言：**C / C++ / Python**（C/C++ 走 `g++ -x c++ -std=c++17 -O2 -w -static`，Python 见[Python 提交](#python-提交护栏装在解释器里边界还是牢房)）。命令一律是 argv 数组，绝不拼 shell 字符串。
 
 Windows 本地判机（`runner_windows.go` + `runner.go`）：
 
@@ -945,6 +945,39 @@ profile 不需要放开**，实测照跑。
 
 `/proc` 现在以 `hidepid=2` 挂进牢房：只换新的 `/proc` 挡不住读
 `/proc/<别人的 pid>/cmdline`、`environ`，而那些里能看到判机在执行谁的哪道题。
+
+### 落地检查：牢房到底开起来了没有（`scripts/judge-isolation.sh`）
+
+「代码里有沙盒」与「这台机器上真的在开沙盒」是两件事。Ubuntu 24.04 起
+`kernel.apparmor_restrict_unprivileged_userns=1`，非 root 的判机 `unshare(CLONE_NEWUSER)`
+会被内核直接拒掉——判机于是照常判题，只是**没有隔离**：提交在判机自己的身份下、在宿主
+文件系统上跑。这件事只在启动日志里占一行，没人盯日志就等于没人知道。
+
+```bash
+sudo bash scripts/judge-isolation.sh --check      # 只看，不动任何东西
+```
+
+它真跑一次 `unshare -Urm true`（按判机那个身份），报四件事：运行身份、user namespace
+开不开得了、判机令牌有没有写在命令行上、`EnvironmentFile` 的权限。`/judges` 网页上现在
+也直接写着每台机器的「隔离」状态，没有一台有牢房时页面顶部红字警告。
+
+三条修好的路，每条走完都**当场重新实测**一次，不接受"配好了"的推断：
+
+- `--root`：把判机改成 root 跑。这是非特权 userns 被拦的机器上牢房开得起来的那条路——
+  学生程序仍然在降权之后才被 exec（`internal/jail` 的 `drop()`），拿到的是 nobody/未映射
+  的 uid、无网络、看不到宿主文件系统。
+- `--apparmor`：保持非 root，给判机那个可执行文件装一份允许 userns 的 profile。这条路
+  对内核与 AppArmor 版本敏感，所以脚本自己会验：装完实测不通就报出来并给撤掉的命令，
+  不留半套配置。
+- `--rotate-token`：换判机令牌，并用一个 systemd drop-in 把 `-token` 从 `ExecStart` 里
+  彻底去掉。**令牌写在命令行上等于发给整台机器**（`/proc/<pid>/cmdline` 是 0444），
+  而 systemd 会先展开 `ExecStart` 里的 `$VAR` 再 exec，所以 0600 的 `EnvironmentFile`
+  也白设。判机二进制的 `-token` 默认值本来就是那个环境变量；新版判机在 Linux 上
+  **拒绝**以命令行令牌启动。
+
+⚠️ 部署顺序：新版判机看到 `-token` 在命令行上就不启动。所以上新二进制时要么先把
+`ExecStart` 里的 `-token` 去掉（`--rotate-token` 就是干这个的），要么判机会直接停掉。
+两个服务的令牌来自同一个 `EnvironmentFile`，换令牌要**一起重启**，不然队列会卡在 401。
 
 ### 判机容器化（`Dockerfile.judge` + `docker-compose.judge.yml`）
 
@@ -1080,7 +1113,7 @@ powershell -File build.ps1 -Test
 - 模块代理：国内直连 `proxy.golang.org` 会超时，已按 `go env -w GOPROXY=https://goproxy.cn,direct` 配置
 - 依赖只有三个：`modernc.org/sqlite`（纯 Go，无 CGO）、`gomarkdown/markdown`、`golang.org/x/sys`
 - 交叉编译：`build.ps1` 默认 `GOARCH=amd64`；`-Arch 386` 出 32 位判机框版本
-- 三个脚本各管一台机器：`run.sh`（Ubuntu/Debian 一键：查依赖 + 编译 + 服务器带判机）、`build.ps1`（Windows 编译）、`scripts/judge.docker.sh`（判机装进容器）
+- 三个脚本各管一台机器：`run.sh`（Ubuntu/Debian 一键：查依赖 + 编译 + 服务器带判机）、`build.ps1`（Windows 编译）、`scripts/judge.docker.sh`（判机装进容器），另有 `scripts/judge-isolation.sh`（判机那台机器的隔离与令牌体检/修复，见[落地检查](#落地检查牢房到底开起来了没有scriptsjudge-isolationsh)）
 - 包结构：`internal/api`（HTTP + 页面）、`internal/store`（SQLite + 迁移 + 队列）、`internal/judge`（状态机 + 执行层）、`internal/judgeagent`（判机端）、`internal/protocol`（两端共享的线上类型）、`internal/casefs`（用例落盘）、`internal/config`
 
 ---
