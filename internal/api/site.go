@@ -278,5 +278,6 @@ func (s *Server) handleSiteSave(w http.ResponseWriter, r *http.Request) {
 	// Drop the cache so the change is visible on the very next request.
 	s.cache.invalidate()
 	s.log.Info("site settings saved", "by", a.User.Handle)
+	s.audit(r, a, "site.save", in.Title, siteSwitches(in))
 	http.Redirect(w, r, "/admin/site?msg="+url.QueryEscape("已保存"), http.StatusSeeOther)
 }

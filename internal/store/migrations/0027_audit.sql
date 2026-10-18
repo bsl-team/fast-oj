@@ -24,7 +24,8 @@ CREATE TABLE audit (
     at       INTEGER NOT NULL,
     -- 动手的人的账号 id；没有账号的凭据（判机令牌、管理员令牌、匿名）为 0。
     actor_id INTEGER NOT NULL DEFAULT 0,
-    -- 动手时那个人的用户名文本，理由见上面的注释块。
+    -- 动手时那个人的用户名文本，理由见上面的注释块。没有账号的凭据（判机令牌）记的是
+    -- 凭据的形态而不是值——令牌值进不了这张会被页面读出来的表。
     actor    TEXT    NOT NULL,
     -- 动作键，例如 perm.grant / ip.ban / problem.delete：代码里的常量，不是给人读的文本。
     action   TEXT    NOT NULL,

@@ -261,6 +261,7 @@ func (s *Server) handleIPBanAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	s.bans.invalidate()
 	s.log.Info("ip banned", "by", a.User.Handle, "rule", ban.IP, "note", ban.Note)
+	s.audit(r, a, "ip.ban", ban.IP, "整站拦死；原因："+ban.Note)
 	s.redirectMsg(w, r, back, "已封禁 "+ban.IP+"：这个地址之后的所有请求都会被 403。")
 }
 
@@ -284,6 +285,7 @@ func (s *Server) handleIPBanRemove(w http.ResponseWriter, r *http.Request) {
 	if removed {
 		msg = "已解封 " + r.PathValue("ip") + "。"
 		s.log.Info("ip unbanned", "by", a.User.Handle, "rule", r.PathValue("ip"))
+		s.audit(r, a, "ip.unban", r.PathValue("ip"), "封禁已撤销，这个地址的请求重新放行")
 	}
 	s.redirectMsg(w, r, back, msg)
 }

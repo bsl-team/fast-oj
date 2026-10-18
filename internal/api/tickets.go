@@ -488,6 +488,13 @@ func (s *Server) handleTicketStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("ticket moved", "ticket", tk.ID, "to", status, "by", a.User.Handle)
+	// 工单线程里已经有一行 event（那次改动本身），审计给的是横切视图："这个处理人
+	// 动过哪些单"。备注是自由文本，进 detail 前按审计的上线截断。
+	moved := "状态改为「" + store.TicketStatusLabel(updated.Status) + "」"
+	if note != "" {
+		moved += "；备注：" + note
+	}
+	s.audit(r, a, "ticket.status", strconv.FormatInt(tk.ID, 10), moved)
 	s.backToTicket(w, r, back, "已改为「"+store.TicketStatusLabel(updated.Status)+"」")
 }
 
@@ -504,6 +511,9 @@ func (s *Server) handleTicketDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	// 删掉之后工单与它的线程都不在了，这一行是"这张单存在过、标题是什么、谁删的"唯一
+	// 还剩下来的东西，所以标题要写进来。
+	s.audit(r, a, "ticket.delete", strconv.FormatInt(tk.ID, 10), "已删除工单：「"+tk.Title+"」")
 	s.log.Info("ticket deleted", "id", tk.ID, "by", a.User.Handle)
 	http.Redirect(w, r, "/tickets?msg="+url.QueryEscape("已删除工单"), http.StatusSeeOther)
 }

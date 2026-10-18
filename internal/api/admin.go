@@ -194,6 +194,7 @@ func (s *Server) handleAdminCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("account cancelled", "by", a.User.Handle, "target", target.Handle, "now", handle)
+	s.audit(r, a, "account.cancel", target.Handle, "身份已抹掉，用户名释放；留下的记录署名成"+handle)
 	http.Redirect(w, r, "/admin/perms?msg="+url.QueryEscape(
 		fmt.Sprintf("%s 已注销：用户名、邮箱、密码全部抹掉，%q 可以重新注册；他留下的记录还在，显示为%s。",
 			target.Handle, target.Handle, store.AnonymousName)), http.StatusSeeOther)
@@ -232,6 +233,9 @@ func (s *Server) handleAdminPermChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("permission changed", "by", a.User.Handle, "target", target.Handle, "key", key, "action", action)
+	// action 只能是 grant / revoke / clear（上面那个 switch 已经把住了），所以拼出来的
+	// 动作键是这三条之一，不是表单里随便填的文本。
+	s.audit(r, a, "perm."+action, target.Handle, key)
 	http.Redirect(w, r, back+"?msg="+url.QueryEscape(fmt.Sprintf("%s → %s", target.Handle, key)), http.StatusSeeOther)
 }
 
@@ -250,6 +254,7 @@ func (s *Server) handleAdminRoleChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("role changed", "by", a.User.Handle, "target", target.Handle, "role", role)
+	s.audit(r, a, "role.change", target.Handle, "角色改为 "+role+"（原 "+target.Role+"）")
 	http.Redirect(w, r, "/admin/perms/u/"+url.PathEscape(target.Handle)+"?msg="+url.QueryEscape("角色已设为 "+role), http.StatusSeeOther)
 }
 
@@ -268,5 +273,7 @@ func (s *Server) handleAdminStatusChange(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.log.Info("status changed", "by", a.User.Handle, "target", target.Handle, "status", status)
+	s.audit(r, a, "user.status", target.Handle,
+		fmt.Sprintf("状态改为 %s（原 %s）；封禁会踢掉这个账号的所有登录会话", userStatusLabel(status), userStatusLabel(target.Status)))
 	http.Redirect(w, r, "/admin/perms/u/"+url.PathEscape(target.Handle)+"?msg="+url.QueryEscape("状态已设为 "+status), http.StatusSeeOther)
 }

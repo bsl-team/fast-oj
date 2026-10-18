@@ -224,9 +224,14 @@ func (s *Server) handleJudgeProgram(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimSpace(src) {
 	case "":
 		s.log.Info("judge program removed", "pid", p.PID, "kind", kind, "by", a.User.Handle)
+		// 撤掉判题器等于把这道题的判定方式换回「与答案宽松比」：这改变的是所有后来的
+		// 提交怎么被判对，所以它跟"存了一份判题器"同样是审计材料。
+		s.audit(r, a, "judge_program.remove", p.PID, kind+" 已撤掉，判定回到标准输出与答案宽松比")
 		s.backToCases(w, r, p, "已撤掉判题器：这道题回到「标准输出与答案宽松比」。")
 	default:
 		s.log.Info("judge program saved", "pid", p.PID, "kind", kind, "bytes", len(src), "by", a.User.Handle)
+		s.audit(r, a, "judge_program.save", p.PID,
+			fmt.Sprintf("%s（%s）已保存，%d 字节，下一次判题起生效", kind, lang, len(src)))
 		s.backToCases(w, r, p, "判题器已存好，下一次判题起生效（判机现场编译）。")
 	}
 }
@@ -435,6 +440,7 @@ func (s *Server) handleCaseDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.log.Info("case deleted", "pid", p.PID, "name", tc.Name, "by", a.User.Handle)
+	s.audit(r, a, "case.delete", p.PID, "用例 "+tc.Name+" 已删除（记录与文件一起）")
 	s.casesDone(w, r, p, "已删除用例 "+tc.Name)
 }
 
@@ -451,6 +457,9 @@ func (s *Server) handleCaseWipe(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	// 记在删文件之前：数据行这时候已经没了，接着哪怕文件系统出错，这一条也得留下——
+	// "谁把这道题的用例清空了"正是要问的那个问题。
+	s.audit(r, a, "cases.wipe", p.PID, fmt.Sprintf("清空用例 %d 条（记录与文件）", n))
 	if err := s.cases.RemoveProblem(p.ID); err != nil {
 		s.log.Error("case files after wipe", "pid", p.PID, "err", err)
 		s.casesDone(w, r, p, fmt.Sprintf("清掉了 %d 条记录，但用例文件没删掉：%s", n, err))
