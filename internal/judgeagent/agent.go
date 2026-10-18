@@ -119,7 +119,12 @@ func (a *Agent) DisableLanguage(name, why string) {
 }
 
 func (a *Agent) greeting() protocol.Greeting {
-	return protocol.Greeting{Name: a.cfg.Name, Languages: a.cfg.Languages, Note: a.cfg.Note}
+	return protocol.Greeting{
+		Name: a.cfg.Name, Languages: a.cfg.Languages,
+		// 自报的是这一版代码真会做的事：需要新能力的工单只会派给报了它的机器。
+		Capabilities: protocol.Capabilities,
+		Note:         a.cfg.Note,
+	}
 }
 
 // request sends an authenticated call and returns the status plus raw body.
@@ -245,6 +250,7 @@ func (a *Agent) PostResult(ctx context.Context, submissionID int64, rep judge.Re
 		MemMin:     rep.MemMin,
 		FailedCase: rep.FailedCase,
 		Detail:     rep.Detail,
+		Toolchain:  rep.Toolchain,
 	}
 	for _, row := range rep.Runs {
 		result.Runs = append(result.Runs, protocol.RunRow{

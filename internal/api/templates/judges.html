@@ -3,17 +3,22 @@
 <p class="meta">判机只出站连服务器，网页上没有它们的入口；下面是在线注册过的机器。</p>
 
 <table>
-  <tr><th class="num">id</th><th>名称</th><th>能判的语言</th><th>最近心跳</th><th>备注</th></tr>
+  <tr><th class="num">id</th><th>名称</th><th>能判的语言</th><th>自报能力</th><th>最近心跳</th><th>备注</th></tr>
   {{range .Data.Rows}}
   <tr>
     <td class="num">{{.ID}}</td>
     <td>{{.Name}}</td>
     <td>{{.Languages}}</td>
+    <td>{{.Caps}}</td>
     <td>{{.Seen}}</td>
     <td>{{.Note}}</td>
   </tr>
   {{else}}
-  <tr><td colspan="5">还没有判机连上来，提交会一直排队。</td></tr>
+  <tr><td colspan="6">还没有判机连上来，提交会一直排队。</td></tr>
   {{end}}
 </table>
+<p class="meta">「自报能力」是判机自己说它会做什么：版本选项（options）、SPJ 判题器（checker）、
+  交互器（interactor）。没自报的机器就是功能上线之前注册的那一类——需要这些的工单<b>不会派给它</b>，
+  会在队列里等一台判得了的机器，因为让它判就是拿逐字节比较去交一份「本题由 SPJ 判定」的结果。
+  一台判机重启一次就会把能力重新报上来。</p>
 {{end}}

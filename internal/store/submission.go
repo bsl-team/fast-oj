@@ -8,14 +8,14 @@ import (
 
 const submissionColumns = `id, user_id, problem_id, IFNULL(contest_id, 0), language, options, status, verdict,
 		time_ms, mem_kb, time_min, mem_min, score, total_score, failed_case, IFNULL(judge_id, 0),
-		created_at, IFNULL(started_at, 0), IFNULL(judged_at, 0)`
+		toolchain, created_at, IFNULL(started_at, 0), IFNULL(judged_at, 0)`
 
 func scanSubmission(row scanner) (Submission, error) {
 	var s Submission
 	var timeMin, memMin int
 	err := row.Scan(&s.ID, &s.UserID, &s.ProblemID, &s.ContestID, &s.Language, &s.Options, &s.Status, &s.Verdict,
 		&s.TimeMS, &s.MemKB, &timeMin, &memMin, &s.Score, &s.TotalScore, &s.FailedCase, &s.JudgeID,
-		&s.CreatedAt, &s.StartedAt, &s.JudgedAt)
+		&s.Toolchain, &s.CreatedAt, &s.StartedAt, &s.JudgedAt)
 	s.TimeMin, s.MemMin = timeMin != 0, memMin != 0
 	return s, notFound(err)
 }
@@ -117,6 +117,9 @@ type Result struct {
 	TotalScore int
 	FailedCase string
 	Detail     string
+	// Toolchain 是判机回报的"我这次实际用的口径"。空串表示这台判机没回报（老二进制），
+	// 页面上要写「未回报」而不是把提交时选的那份当成判机说的话。
+	Toolchain string
 }
 
 // RecordResult stores the verdict and per-case runs in one transaction, so a
@@ -125,10 +128,10 @@ func (db *DB) RecordResult(ctx context.Context, id int64, r Result, runs []Run) 
 	return db.InTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE submissions SET status='done', verdict=?, time_ms=?, mem_kb=?, time_min=?, mem_min=?,
-			           score=?, total_score=?, failed_case=?, detail=?, judged_at=?
+			           score=?, total_score=?, failed_case=?, detail=?, toolchain=?, judged_at=?
 			 WHERE id=?`,
 			r.Verdict, r.TimeMS, r.MemKB, boolInt(r.TimeMin), boolInt(r.MemMin),
-			r.Score, r.TotalScore, r.FailedCase, r.Detail, nowMS(), id)
+			r.Score, r.TotalScore, r.FailedCase, r.Detail, r.Toolchain, nowMS(), id)
 		if err != nil {
 			return err
 		}

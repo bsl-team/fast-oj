@@ -21,21 +21,65 @@ type ClaimedTask struct {
 	MemLimitKB  int
 }
 
-// ClaimNext hands out the oldest queued submission to this judge, or
-// sql.ErrNoRows when the queue is empty.
+// Caps 是一台判机这次领单时能做的事。它是判机**自报**的（见 Judge.Has），服务器照它派单。
+//
+// 语言不在这份里，这是有意的区别：判机不认识某门语言时，它自己会如实回一条判机故障
+// （"这台判机没有 X 工具链"），那是一个看得见也查得到的失败。这里挡的三样不一样——
+// 一台旧判机会**照判**，只是用错了口径，交回来的是一条看起来完全正常的假 AC / 假判定。
+type Caps struct {
+	Options    bool // 认 submissions.options，会按选的那条命令行编
+	Checker    bool // 会现编并跑题目自带的判题器
+	Interactor bool // 会跑交互器
+}
+
+// CapsAll 是"这台机器什么都会"。测试用它；生产里的 Caps 一律来自判机自报，
+// 没有一个服务器可以自己假设它会。
+var CapsAll = Caps{Options: true, Checker: true, Interactor: true}
+
+// Claims 报告这份工单这台机器判得了吗。判不了就不是"降级判"而是"别派给我"：
+// 一台旧判机不认识 options / checker / interactor，派过去它会照自己那套编、按逐字节比较判，
+// 然后正常回报成功——页面上那句「C++14 · O2 关」「本题由 SPJ 判定」就成了当着的谎。
+func (c Caps) Claims(t ClaimedTask, hasChecker, hasInteractor bool) bool {
+	if t.Options != "" && !c.Options {
+		return false
+	}
+	if hasChecker && !c.Checker {
+		return false
+	}
+	if hasInteractor && !c.Interactor {
+		return false
+	}
+	return true
+}
+
+// ClaimNext hands out the oldest queued submission **this box can actually judge**,
+// or sql.ErrNoRows when there is none.
 //
 // The claim is one statement: the inner SELECT picks the row, the outer UPDATE
 // stamps it, and the status guard inside the subquery means two boxes racing
 // for the same row cannot both get a write. RETURNING gives the winner back
 // without a second round trip.
-func (db *DB) ClaimNext(ctx context.Context, judgeID int64) (ClaimedTask, error) {
+//
+// 派单条件写在 SQL 里而不是"取回来再看"：取回来再退回会把那条提交的状态从 queued 变成
+// compiling，而判机回报失败时它就已经不是"没派出去"了。
+func (db *DB) ClaimNext(ctx context.Context, judgeID int64, caps Caps) (ClaimedTask, error) {
 	var t ClaimedTask
 	var status string
 	err := db.SQL.QueryRowContext(ctx,
 		`UPDATE submissions
 		 SET status='compiling', judge_id=?, started_at=?
-		 WHERE id = (SELECT id FROM submissions WHERE status='queued' ORDER BY id LIMIT 1)
-		 RETURNING id, problem_id, status`, judgeID, nowMS()).
+		 WHERE id = (SELECT s.id FROM submissions s
+		   WHERE s.status='queued'
+		     AND (s.options='' OR ?)
+		     AND (NOT EXISTS (SELECT 1 FROM judge_programs jp
+		                          WHERE jp.problem_id=s.problem_id AND jp.kind='checker'
+		                    AND TRIM(jp.source)<>'') OR ?)
+		     AND (NOT EXISTS (SELECT 1 FROM judge_programs jp
+		                          WHERE jp.problem_id=s.problem_id AND jp.kind='interactor'
+		                    AND TRIM(jp.source)<>'') OR ?)
+		   ORDER BY s.id LIMIT 1)
+		 RETURNING id, problem_id, status`,
+		judgeID, nowMS(), boolInt(caps.Options), boolInt(caps.Checker), boolInt(caps.Interactor)).
 		Scan(&t.SubmissionID, &t.ProblemID, &status)
 	if err != nil {
 		return t, notFound(err)

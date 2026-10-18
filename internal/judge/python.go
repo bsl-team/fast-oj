@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 //go:embed pyguard.py
@@ -113,7 +114,7 @@ print("CANARY-" + os.popen("echo LEAKED").read())`
 	return note, nil
 }
 
-// interpreterVersion 只为那句自测的话：操作员要能在 /judges 上看到他这台机器到底用的是
+// interpreterVersion 只为那句话：操作员要能在 /judges 与提交详情上看到这台机器到底用的
 // 哪个解释器，判出来的东西跟版本有关。
 func interpreterVersion() string {
 	out, err := exec.Command(pythonInterpreter(), "-c", "import sys;print('%d.%d'%sys.version_info[:2])").Output()
@@ -122,6 +123,10 @@ func interpreterVersion() string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// PythonVersion 是缓存下来的解释器版本：判机每份 Python 工单都要回报"实际用的口径"，
+// 而为此每条提交去 fork 一次解释器不值得。
+var PythonVersion = sync.OnceValue(interpreterVersion)
 
 // writeSupport 把工具自带的文件落进这次运行的工作目录。
 func writeSupport(tool Tool, dir string) error {

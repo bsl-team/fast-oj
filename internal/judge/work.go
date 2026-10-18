@@ -60,6 +60,10 @@ type Report struct {
 	Runs       []RunRow
 	Score      int
 	TotalScore int
+	// Toolchain 是这台判机自报"这次实际用的口径"（"C++14 · O2 关"、"python 3.14"）。
+	// 由判机回报而不是服务器按提交时的选择写：选了 c++14 却被一台旧判机按 c++17 编了，
+	// 差别只有动手编的那台机器知道。
+	Toolchain string
 }
 
 // CompileLimits are deliberately loose: a slow link step is not the submitter's
@@ -98,7 +102,7 @@ type Progress func(row RunRow)
 // the network: the caller has already fetched the case data. drop is the uid a
 // submission is run as, when the judge has one to give it; onProgress may be nil.
 func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) Report {
-	rep := Report{Verdict: IE, TimeMS: -1, MemKB: -1}
+	rep := Report{Verdict: IE, TimeMS: -1, MemKB: -1, Toolchain: tool.ToolchainLabel()}
 	if len(task.Cases) == 0 {
 		rep.Detail = "problem " + task.PID + " has no test cases"
 		return rep

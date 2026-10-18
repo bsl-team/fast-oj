@@ -41,7 +41,12 @@ func (s *Server) registerJudge(r *http.Request, g protocol.Greeting) (store.Judg
 			return store.Judge{}, fmt.Errorf("bad language tag %q", l)
 		}
 	}
-	return s.db.UpsertJudge(r.Context(), g.Name, g.Languages, g.Note)
+	for _, c := range g.Capabilities {
+		if !protocol.KnownCapability(c) {
+			return store.Judge{}, fmt.Errorf("bad capability tag %q", c)
+		}
+	}
+	return s.db.UpsertJudge(r.Context(), g.Name, g.Languages, g.Capabilities, g.Note)
 }
 
 func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +64,11 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := s.db.ClaimNext(r.Context(), j.ID)
+	task, err := s.db.ClaimNext(r.Context(), j.ID, store.Caps{
+		Options:    j.Has(protocol.CapOptions),
+		Checker:    j.Has(protocol.CapChecker),
+		Interactor: j.Has(protocol.CapInteractor),
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"queue": "empty", "judge": j.Name})
 		return
@@ -300,6 +309,7 @@ func (s *Server) handleJudgeResult(w http.ResponseWriter, r *http.Request) {
 		Verdict: string(verdict), TimeMS: req.TimeMS, MemKB: req.MemKB,
 		TimeMin: req.TimeMin, MemMin: req.MemMin, Score: score,
 		TotalScore: total, FailedCase: failed, Detail: req.Detail,
+		Toolchain: strings.TrimSpace(req.Toolchain),
 	}, runs); err != nil {
 		s.writeStoreError(w, r, err)
 		return
@@ -466,6 +476,7 @@ type judgeRow struct {
 	ID        int64
 	Name      string
 	Languages string
+	Caps      string
 	Seen      string
 	Note      string
 }
@@ -482,7 +493,11 @@ func (s *Server) handleJudgeList(w http.ResponseWriter, r *http.Request) {
 	rows := make([]judgeRow, 0, len(judges))
 	for _, j := range judges {
 		rows = append(rows, judgeRow{
-			ID: j.ID, Name: j.Name, Languages: joinOr(j.Languages, "不限"), Seen: ago(j.LastSeenAt), Note: j.Note,
+			ID: j.ID, Name: j.Name, Languages: joinOr(j.Languages, "不限"),
+			// 自报能力为空 = 这台判机是没这功能时注册的：需要版本选项 / SPJ / 交互题的
+			// 工单不会派给它，会排队等一台判得了的机器。操作员要能一眼看出是哪台掉队了。
+			Caps: joinOr(j.Capabilities, "未自报（老判机：不派 SPJ/交互题/选过版本的工单）"),
+			Seen: ago(j.LastSeenAt), Note: j.Note,
 		})
 	}
 	s.page(w, r, http.StatusOK, "判机", "judges", s.viewerOf(r), msgOf(r), map[string]any{"Rows": rows})

@@ -13,7 +13,7 @@ func queueFixture(t *testing.T) (*DB, User, Problem, Judge) {
 	ctx := context.Background()
 	u := mustUser(t, db, "alice")
 	p := mustProblem(t, db, "P1", "Queue problem")
-	j, err := db.UpsertJudge(ctx, "box-1", []string{"cpp"}, "")
+	j, err := db.UpsertJudge(ctx, "box-1", []string{"cpp"}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func submitSomething(t *testing.T, db *DB, u User, p Problem, source string) Sub
 func TestClaimNextIsFifoAndStampsOwner(t *testing.T) {
 	ctx := context.Background()
 	db, u, p, j := queueFixture(t)
-	j2, err := db.UpsertJudge(ctx, "box-2", nil, "")
+	j2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestClaimNextIsFifoAndStampsOwner(t *testing.T) {
 	first := submitSomething(t, db, u, p, "int main(){}")
 	second := submitSomething(t, db, u, p, "int main(){return 1;}")
 
-	task, err := db.ClaimNext(ctx, j.ID)
+	task, err := db.ClaimNext(ctx, j.ID, CapsAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestClaimNextIsFifoAndStampsOwner(t *testing.T) {
 	}
 
 	// A second box takes the next row, not the one already owned.
-	other, err := db.ClaimNext(ctx, j2.ID)
+	other, err := db.ClaimNext(ctx, j2.ID, CapsAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestClaimNextIsFifoAndStampsOwner(t *testing.T) {
 		t.Fatalf("second claim = %+v, want %d", other, second.ID)
 	}
 
-	if _, err := db.ClaimNext(ctx, j.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := db.ClaimNext(ctx, j.ID, CapsAll); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("empty queue err = %v, want ErrNotFound", err)
 	}
 }
@@ -81,7 +81,7 @@ func TestConcurrentClaimsNeverDuplicate(t *testing.T) {
 	}
 	boxes := make([]int64, 4)
 	for i := range boxes {
-		j, err := db.UpsertJudge(ctx, string(rune('a'+i))+":box", nil, "")
+		j, err := db.UpsertJudge(ctx, string(rune('a'+i))+":box", nil, nil, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +99,7 @@ func TestConcurrentClaimsNeverDuplicate(t *testing.T) {
 		go func(judgeID int64) {
 			defer wg.Done()
 			for {
-				task, err := db.ClaimNext(ctx, judgeID)
+				task, err := db.ClaimNext(ctx, judgeID, CapsAll)
 				if errors.Is(err, ErrNotFound) {
 					return
 				}
@@ -133,12 +133,12 @@ func TestConcurrentClaimsNeverDuplicate(t *testing.T) {
 func TestReportStatusOnlyByOwnerAndLegalStep(t *testing.T) {
 	ctx := context.Background()
 	db, u, p, j := queueFixture(t)
-	j2, err := db.UpsertJudge(ctx, "box-2", nil, "")
+	j2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := submitSomething(t, db, u, p, "x")
-	if _, err := db.ClaimNext(ctx, j.ID); err != nil {
+	if _, err := db.ClaimNext(ctx, j.ID, CapsAll); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,7 +175,7 @@ func TestReapStaleAndRequeue(t *testing.T) {
 	ctx := context.Background()
 	db, u, p, j := queueFixture(t)
 	s := submitSomething(t, db, u, p, "x")
-	if _, err := db.ClaimNext(ctx, j.ID); err != nil {
+	if _, err := db.ClaimNext(ctx, j.ID, CapsAll); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a judge box that died an hour ago.
@@ -217,7 +217,7 @@ func TestReapLeavesFreshWorkAlone(t *testing.T) {
 	ctx := context.Background()
 	db, u, p, j := queueFixture(t)
 	s := submitSomething(t, db, u, p, "x")
-	if _, err := db.ClaimNext(ctx, j.ID); err != nil {
+	if _, err := db.ClaimNext(ctx, j.ID, CapsAll); err != nil {
 		t.Fatal(err)
 	}
 	n, err := db.ReapStale(ctx, 60_000)
@@ -242,7 +242,7 @@ func TestClaimNextCarriesVersionOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := db.ClaimNext(ctx, j.ID)
+	task, err := db.ClaimNext(ctx, j.ID, CapsAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,15 +269,125 @@ func TestClaimNextCarriesVersionOptions(t *testing.T) {
 	if options[plain.ID] != "" {
 		t.Errorf("列表里 #%d 没选版本却带上了 %q", plain.ID, options[plain.ID])
 	}
-	box2, err := db.UpsertJudge(ctx, "box-2", nil, "")
+	box2, err := db.UpsertJudge(ctx, "box-2", nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := db.ClaimNext(ctx, box2.ID)
+	next, err := db.ClaimNext(ctx, box2.ID, CapsAll)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if next.SubmissionID != plain.ID || next.Options != "" {
 		t.Errorf("领取到的工单 = %+v，要那条没选版本的", next)
+	}
+}
+
+// 一台不会 SPJ 的判机不该领到 SPJ 题。它不认识工单里的判题器，会按逐字节比较判掉
+// 然后正常回报成功——于是页面上那句「本题由 SPJ 判定」成了谎。领不到就排队等一台
+// 判得了的机器，而不是"降级判"。
+func TestClaimNextSkipsWorkTheBoxCannotHonour(t *testing.T) {
+	ctx := context.Background()
+	db, u, plain1, _ := queueFixture(t)
+	spj := mustProblem(t, db, "P9", "SPJ problem")
+	if err := db.PutJudgeProgram(ctx, JudgeProgram{
+		ProblemID: spj.ID, Kind: ProgramChecker, Language: "cpp", Source: "int main(){return 0;}",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 队首是 SPJ 题的提交，队尾是普通题的。
+	first := submitSomething(t, db, u, spj, "int main(){}")
+	second := submitSomething(t, db, u, plain1, "int main(){}")
+
+	old, err := db.UpsertJudge(ctx, "box-old", []string{"cpp"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := db.ClaimNext(ctx, old.ID, Caps{})
+	if err != nil {
+		t.Fatalf("没有 checker 能力的判机领单失败：%v", err)
+	}
+	if task.SubmissionID != second.ID {
+		t.Fatalf("没有 checker 能力却领到了 SPJ 题的 #%d（要 #%d）", task.SubmissionID, second.ID)
+	}
+	if row, err := db.GetSubmission(ctx, first.ID); err != nil || row.Status != "queued" {
+		t.Fatalf("SPJ 题那条应当还在排队 = %+v, %v", row, err)
+	}
+
+	newBox, err := db.UpsertJudge(ctx, "box-new", []string{"cpp"},
+		[]string{"options", "checker", "interactor"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !newBox.Has("checker") {
+		t.Fatalf("自报的能力没存下来：%+v", newBox)
+	}
+	task, err = db.ClaimNext(ctx, newBox.ID, Caps{
+		Options: newBox.Has("options"), Checker: newBox.Has("checker"),
+		Interactor: newBox.Has("interactor"),
+	})
+	if err != nil {
+		t.Fatalf("会 SPJ 的判机领单失败：%v", err)
+	}
+	if task.SubmissionID != first.ID {
+		t.Fatalf("会 SPJ 的判机应当拿回队首那条 SPJ 工单，得到 #%d", task.SubmissionID)
+	}
+}
+
+// 选过版本的提交不该派给一台不认版本的判机：它会按自己那套硬编码编，而页面留着
+// 「C++14 · O2 关」那句话——那是判机没说过的话。
+func TestClaimNextSkipsOptionsForBoxThatIgnoresThem(t *testing.T) {
+	ctx := context.Background()
+	db, u, p, _ := queueFixture(t)
+	chosen, err := db.CreateSubmission(ctx, &Submission{
+		UserID: u.ID, ProblemID: p.ID, Language: "cpp",
+		Options: "std=c++14", Source: "int main(){}", TotalScore: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := submitSomething(t, db, u, p, "int main(){}")
+
+	box, err := db.UpsertJudge(ctx, "box-nocap", []string{"cpp"}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := db.ClaimNext(ctx, box.ID, Caps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.SubmissionID != plain.ID {
+		t.Fatalf("不认版本的判机领走了选了版本的 #%d（应当是那条没选的 #%d）",
+			task.SubmissionID, plain.ID)
+	}
+	if row, err := db.GetSubmission(ctx, chosen.ID); err != nil || row.Status != "queued" {
+		t.Fatalf("选了版本的那条应当还在排队 = %+v, %v", row, err)
+	}
+}
+
+// 语言不参与派单，这是有意的：判机领到一门它没有的语言时会如实回一条判机故障
+// （"这台判机没有 X 工具链"），学生看得到、操作员查得到。把它扣在队列里"等一台会判的机器"
+// 反而是更坏的失败——站点上只有一台判机时，那条提交会永远排队。
+func TestClaimNextDoesNotGateOnLanguage(t *testing.T) {
+	ctx := context.Background()
+	db, u, p, _ := queueFixture(t)
+	want, err := db.CreateSubmission(ctx, &Submission{
+		UserID: u.ID, ProblemID: p.ID, Language: "python", Source: "print(3)", TotalScore: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 一台只自报会判 cpp 的机器。
+	box, err := db.UpsertJudge(ctx, "box-cpp", []string{"cpp"},
+		[]string{"options", "checker", "interactor"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := db.ClaimNext(ctx, box.ID, CapsAll)
+	if err != nil {
+		t.Fatalf("语言名单不该挡派单：%v", err)
+	}
+	if task.SubmissionID != want.ID || task.Language != "python" {
+		t.Fatalf("领到 %+v，要那条 python 提交（由判机自己回实话说没有工具链）", task)
 	}
 }

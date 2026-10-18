@@ -108,18 +108,22 @@ func rowOf(d store.SubmissionDetail) subRow {
 	}
 	return subRow{
 		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title,
-		Language: langCell(d.Language, d.Options),
+		Language: langCell(d.Language, d.Options, d.Toolchain),
 		Class:    class, Outcome: outcome,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Ago: agoMS(d.CreatedAt),
 	}
 }
 
-// langCell 是列表里那一格语言。只在选得与判机默认不同时才补上版本：列表是拿来扫的，
-// 每行都挂一句"C++17 · O2 开"反而让真选过版本的那几条看不出来。全称在提交详情页上。
-func langCell(lang, options string) string {
+// langCell 是列表里那一格语言。判机自报过口径就显示自报的那一份；没自报时只在选得与判机
+// 默认不同时补一句，并标出「未回报」——列表也是拿来核对的，不能把提交时的选择写成判机
+// 做过的事。全称在提交详情页上。
+func langCell(lang, options, reported string) string {
+	if reported != "" {
+		return lang + " · " + reported
+	}
 	if note := versionNote(lang, options); note != "" {
-		return lang + " · " + note
+		return lang + " · " + note + "（判机未回报）"
 	}
 	return lang
 }
@@ -487,7 +491,7 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 
 	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
 		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title,
-		Language: d.Language, Version: versionLabel(d.Language, d.Options),
+		Language: d.Language, Version: toolchainCell(d.Language, d.Toolchain, d.Options),
 		Class: class, Outcome: outcome, Headline: headline,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,

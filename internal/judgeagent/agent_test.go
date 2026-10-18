@@ -153,6 +153,11 @@ func TestEndToEndAccepted(t *testing.T) {
 	if row.StartedAt == 0 || row.JudgedAt == 0 || row.JudgeID == 0 {
 		t.Fatalf("timestamps or owner missing: %+v", row)
 	}
+	// 判机自报"这次实际用的口径"要落到库里：页面上那句版本说明必须是动手编这份代码的
+	// 那台机器说的，而不是服务器照提交表单猜的。
+	if row.Toolchain != "C++17 · O2 开" {
+		t.Fatalf("自报的工具链 = %q，要 %q", row.Toolchain, "C++17 · O2 开")
+	}
 	runs, err := e.db.ListRuns(context.Background(), sub.ID)
 	if err != nil {
 		t.Fatal(err)

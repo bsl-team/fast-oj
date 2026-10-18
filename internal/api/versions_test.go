@@ -157,3 +157,41 @@ func (h *harness) submitID(t *testing.T, s session, pid string, extra url.Values
 	}
 	return strings.TrimPrefix(hdr.Get("Location"), "/submissions/")
 }
+
+// 页面上那句"这次是怎么编的"只能来自判机自报的那一份。
+//
+// 判机没回报时不能把提交时选的版本原样贴上去：那等于替一台没说过话的机器说一句
+// 「C++14 · O2 关」，而它可能按自己的默认编了。写「未回报」是把不确定摆在明面上。
+func TestToolchainCellTrustsOnlyTheJudge(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		lang           string
+		reported, want string
+		options        string
+	}{
+		{"自报优先", "cpp", "C++11 · O2 关", "C++11 · O2 关", "std=c++14,O=0"},
+		{"没选也没回报是默认口径", "cpp", "", "C++17 · O2 开", ""},
+		{"选了却没回报", "cpp", "", "未回报", "std=c++14"},
+		{"python 由解释器自己说", "python", "python 3.14", "python 3.14", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := toolchainCell(c.lang, c.reported, c.options)
+			if !strings.Contains(got, c.want) {
+				t.Errorf("toolchainCell(%q,%q,%q) = %q，要含 %q", c.lang, c.reported, c.options, got, c.want)
+			}
+		})
+	}
+}
+
+// 列表那一格同理：判机自报过就用自报的；只有它没说话时才回到提交时的选择，并标出来。
+func TestLangCellShowsWhatTheJudgeReported(t *testing.T) {
+	if got := langCell("cpp", "std=c++14", "C++17 · O2 开"); got != "cpp · C++17 · O2 开" {
+		t.Errorf("自报应当盖过提交时选的：%q", got)
+	}
+	if got := langCell("cpp", "std=c++14", ""); !strings.Contains(got, "判机未回报") {
+		t.Errorf("没自报时要把这层不确定写出来：%q", got)
+	}
+	if got := langCell("cpp", "", ""); got != "cpp" {
+		t.Errorf("没选版本也没回报应当就是语言名本身：%q", got)
+	}
+}

@@ -57,6 +57,9 @@ type Tool struct {
 	// WithOptions("") 的结果，也就是默认版本已经展开的那一份。
 	Base []string
 	Axes []OptionAxis
+	// ResolvedLabel 是 WithOptions 展开之后的人类说法（"C++14 · O2 关"）。它跟着工具
+	// 走而不是跟着工单走，因为"这次实际用的哪条命令行"是判机自己说的一句话。
+	ResolvedLabel string
 	// Support 是开跑之前要顺便写进工作目录的文件：解释型语言的护栏就是这一份。
 	// 它跟着工单现落，不是判机上事先摆好的东西——换一道题就换一份，跑完即删。
 	Support []SupportFile
@@ -216,7 +219,17 @@ func (t Tool) WithOptions(raw string) (Tool, string, error) {
 	if len(t.Run) > 0 {
 		out.Run = splice(t.Run, args)
 	}
+	out.ResolvedLabel = strings.Join(labels, " · ")
 	return out, strings.Join(labels, " · "), nil
+}
+
+// ToolchainLabel 是"这台判机这次用的什么口径"的人类说法。编译型语言报选定的版本标签，
+// Python 报解释器自己的版本；说不出就留空——页面会写「未回报」，判机不替自己编一句。
+func (t Tool) ToolchainLabel() string {
+	if !t.Compiles() && t.Language == PythonLanguage {
+		return "python " + PythonVersion()
+	}
+	return t.ResolvedLabel
 }
 
 // splice 把版本轴参数插进 "{opts}" 所在的位置，让最终命令行读起来是正常的
