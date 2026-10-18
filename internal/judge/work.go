@@ -27,7 +27,10 @@ type Task struct {
 	Source       string
 	TimeLimitMS  int
 	MemLimitKB   int
-	Cases        []Case
+	// SPJ 是题目自带、已经编好的判题器命令行；空表示按标准输出与答案宽松比。
+	// 命令行而不是路径：解释型判题器要 "<解释器> <源码>" 两段。
+	SPJ   []string
+	Cases []Case
 }
 
 type RunRow struct {
@@ -144,8 +147,16 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 	for _, tc := range task.Cases {
 		ex := Run(argv, dir, tc.Input, runLimits)
 		v := ex.Verdict
-		if v == AC && !OutputsMatch(ex.Stdout, tc.Expected) {
-			v = WA
+		// note 是"这次为什么算这个判定"的那句话：普通题是首个不同的那一行，SPJ 题是
+		// 判题器自己打印的评语。
+		note := ""
+		if v == AC {
+			switch {
+			case len(task.SPJ) > 0:
+				v, note = checkWithSPJ(task.SPJ, dir, tc, ex.Stdout)
+			case !OutputsMatch(ex.Stdout, tc.Expected):
+				v, note = WA, diffExcerpt(ex.Stdout, tc.Expected)
+			}
 		}
 		row := RunRow{Ordinal: tc.Ordinal, CaseName: tc.Name, Verdict: v,
 			TimeMS: ex.TimeMS, MemKB: ex.MemKB, IsSample: tc.IsSample,
@@ -172,14 +183,14 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 		if firstFailure < 0 {
 			firstFailure = len(rep.Runs) - 1
 			rep.FailedCase = tc.Name
-			detail := strings.TrimSpace(string(ex.Stderr))
+			detail := note
+			if detail == "" {
+				detail = strings.TrimSpace(string(ex.Stderr))
+			}
 			if detail == "" {
 				// 一个跑都没跑起来的失败（可执行文件不在、沙盒没建起来、fork 被拒）不会
 				// 留下任何 stderr，原因只在 Note 里。丢掉它就是又一条查不出来的 IE。
 				detail = strings.TrimSpace(ex.Note)
-			}
-			if v == WA {
-				detail = diffExcerpt(ex.Stdout, tc.Expected)
 			}
 			rep.Detail = clipText(detail, maxDetail)
 		}

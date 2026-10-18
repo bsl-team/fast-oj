@@ -289,6 +289,21 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	// when the run ends.
 	defer os.RemoveAll(dir)
 
+	// 题目自带的判题器先在这儿编好。编不过时交出去的必须是判机故障：一份本该正确的代码
+	// 因为作者写坏了判题器而被判 WA，是本功能最不能出现的那种错。
+	var spj []string
+	if task.Checker != nil {
+		built, err := judge.BuildAux(a.cfg.Tools, judge.AuxProgram{
+			Language: task.Checker.Language, Source: task.Checker.Source,
+		}, dir, judge.AuxChecker)
+		if err != nil {
+			rep := judge.Report{Verdict: judge.IE, TimeMS: -1, MemKB: -1,
+				Detail: err.Error(), FailedCase: judge.AuxChecker}
+			return true, a.PostResult(ctx, task.SubmissionID, rep)
+		}
+		spj = built
+	}
+
 	cases := make([]judge.Case, 0, len(task.Cases))
 	for _, c := range task.Cases {
 		input, err := a.caseFile(ctx, c.ID, "in")
@@ -319,7 +334,7 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	rep := judge.Judge(judge.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
-		Cases: cases,
+		SPJ: spj, Cases: cases,
 	}, tool, dir, a.cfg.RunAs, judge.Progress(progress))
 	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s%s",
 		task.SubmissionID, rep.Verdict, rep.Score, rep.TotalScore, rep.TimeMS, rep.MemKB,
