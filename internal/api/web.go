@@ -103,11 +103,21 @@ func rowOf(d store.SubmissionDetail) subRow {
 		score = fmt.Sprintf("%d/%d", d.Score, d.TotalScore)
 	}
 	return subRow{
-		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title, Language: d.Language,
-		Class: class, Outcome: outcome,
+		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title,
+		Language: langCell(d.Language, d.Options),
+		Class:    class, Outcome: outcome,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Ago: agoMS(d.CreatedAt),
 	}
+}
+
+// langCell 是列表里那一格语言。只在选得与判机默认不同时才补上版本：列表是拿来扫的，
+// 每行都挂一句"C++17 · O2 开"反而让真选过版本的那几条看不出来。全称在提交详情页上。
+func langCell(lang, options string) string {
+	if note := versionNote(lang, options); note != "" {
+		return lang + " · " + note
+	}
+	return lang
 }
 
 // personName keeps a label printable when a row has no display name. The store's
@@ -192,10 +202,12 @@ type problemContest struct {
 }
 
 type problemData struct {
-	PID, Title  string
-	Time, Mem   string
-	LangText    string
-	Langs       []string
+	PID, Title string
+	Time, Mem  string
+	LangText   string
+	Langs      []string
+	// Versions 是提交页上的版本下拉：每根轴一份候选，值与判机的候选表同源。
+	Versions    []versionAxis
 	JudgedCases int
 	TotalScore  int
 	Solved      int
@@ -329,7 +341,7 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 	s.page(w, r, http.StatusOK, p.PID+" "+p.Title, "problem", a.viewer(), msgOf(r), problemData{
 		PID: p.PID, Title: p.Title,
 		Time: formatMS(p.TimeLimitMS, false), Mem: formatKB(p.MemLimitKB, false),
-		LangText: langText, Langs: options,
+		LangText: langText, Langs: options, Versions: versionAxesFor(options),
 		JudgedCases: judged, TotalScore: total,
 		Solved: c.Solved, Submits: c.Submits,
 		Hidden:     !p.Visible,
@@ -388,10 +400,13 @@ type submissionData struct {
 	Handle string
 	// Name is who the page credits with this run, which for a cancelled account is
 	// not its handle: that login name may already belong to someone else.
-	Name      string
-	PID       string
-	Title     string
-	Language  string
+	Name     string
+	PID      string
+	Title    string
+	Language string
+	// Version 是这次判完能引用的那句实话："C++17 · O2 开"。老数据也有，因为它的默认
+	// 口径正是把版本拆成选项之前硬编码的那一条命令行。
+	Version   string
 	Class     string
 	Outcome   string
 	Headline  string
@@ -458,7 +473,8 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 	}
 
 	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
-		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title, Language: d.Language,
+		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title,
+		Language: d.Language, Version: versionLabel(d.Language, d.Options),
 		Class: class, Outcome: outcome, Headline: headline,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,
@@ -731,6 +747,14 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 		return store.Submission{}, fmt.Sprintf("这道题只收 %s，不收 %s", strings.Join(p.Languages, "/"), lang),
 			problemPath, errors.New("language")
 	}
+	// 版本选择在写库前就按判机的候选表规范化：这一串以后会被拼进命令行，含糊的、越界的
+	// 都不该进去。被拒时说明能选哪些，而不是悄悄换成另一个版本编——那等于用一条谁都没
+	// 选过的命令行判了这份代码。
+	tool, _ := versionTool(lang)
+	options, err := submitVersion(tool, r.Form)
+	if err != nil {
+		return store.Submission{}, "版本选择：" + err.Error(), problemPath, err
+	}
 	total, err := s.db.ProblemScoreTotal(r.Context(), p.ID)
 	if err != nil {
 		return store.Submission{}, "数据库错误", problemPath, err
@@ -741,13 +765,13 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 
 	sub, err := s.db.CreateSubmission(r.Context(), &store.Submission{
 		UserID: a.User.ID, ProblemID: p.ID, ContestID: inside.ContestID,
-		Language: lang, Source: source, TotalScore: total,
+		Language: lang, Options: options, Source: source, TotalScore: total,
 	})
 	if err != nil {
 		return store.Submission{}, "数据库错误", problemPath, err
 	}
 	s.log.Info("submitted", "sid", sub.ID, "user", a.User.Handle, "pid", p.PID, "lang", lang,
-		"contest", sub.ContestID)
+		"options", options, "contest", sub.ContestID)
 	return sub, "", "", nil
 }
 

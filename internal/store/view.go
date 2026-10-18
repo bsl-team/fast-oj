@@ -24,7 +24,7 @@ type SubmissionDetail struct {
 	ContestCID string `json:"contest_cid"`
 }
 
-var detailColumns = `s.id, s.user_id, s.problem_id, IFNULL(s.contest_id, 0), s.language, s.status, s.verdict,
+var detailColumns = `s.id, s.user_id, s.problem_id, IFNULL(s.contest_id, 0), s.language, s.options, s.status, s.verdict,
 		s.time_ms, s.mem_kb, s.time_min, s.mem_min, s.score, s.total_score, s.failed_case,
 		IFNULL(s.judge_id, 0),
 		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0),
@@ -37,7 +37,7 @@ func scanDetail(row scanner) (SubmissionDetail, error) {
 		judgeID         int64
 		timeMin, memMin int
 	)
-	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.ContestID, &d.Language, &d.Status, &d.Verdict,
+	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.ContestID, &d.Language, &d.Options, &d.Status, &d.Verdict,
 		&d.TimeMS, &d.MemKB, &timeMin, &memMin, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
 		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle, &d.Name,
 		&d.DetailLevel, &d.ProblemOwner, &d.ContestCID)

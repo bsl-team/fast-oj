@@ -37,7 +37,8 @@ func (a OptionAxis) find(v string) (Option, bool) {
 	return Option{}, false
 }
 
-func (a OptionAxis) defaultOption() Option {
+// Default 是判机在这根轴上的默认口径。
+func (a OptionAxis) Default() Option {
 	for _, o := range a.Options {
 		if o.Default {
 			return o
@@ -79,29 +80,73 @@ func (t Tool) CompileArgs(dir string) []string { return t.expand(t.Compile, dir)
 func (t Tool) RunArgs(dir string) []string     { return t.expand(t.Run, dir) }
 func (t Tool) Compiles() bool                  { return len(t.Compile) > 0 }
 
-// WithOptions 按提交带上来的版本选择重拼一次命令行。raw 形如 "std=c++17,O=0"，
-// 空串就是这台判机的默认口径。
+// Normalize 把提交表单带来的版本选择写成规范串：轴按判机的顺序排，同一根轴重复给的
+// 以最后一个为准，没给的轴留空（也就是这台判机的默认）。
 //
-// 返回值里第二个人类说法（"C++17 · O2 开"）是给判题详情用的：同一段代码用
-// c++11 编出来和用 c++20 编出来不是一回事，出了争议要能看出当时用的是哪个。
-func (t Tool) WithOptions(raw string) (Tool, string, error) {
+// 库里存的是这个结果而不是表单原文，因为这一串以后会被拼进命令行——它必须只由判机
+// 候选表里的原话组成。命中不了表就报错，不降级成默认：用另一条命令行判了这份代码，
+// 却把提交时选的版本留在页面上，是不能接受的。
+func (t Tool) Normalize(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if len(t.Axes) == 0 {
+		return "", fmt.Errorf("%s 没有可选的版本，却收到了 %q", t.Language, raw)
+	}
+	given := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			return "", fmt.Errorf("版本选项 %q 缺了 =", pair)
+		}
+		axis, err := t.axis(name)
+		if err != nil {
+			return "", err
+		}
+		if _, ok := axis.find(value); !ok {
+			return "", fmt.Errorf("%s 的 %s 不支持 %q（这台机器只认：%s）",
+				t.Language, axis.Label, value, axisValues(axis))
+		}
+		given[name] = value
+	}
+	parts := make([]string, 0, len(given))
+	for _, a := range t.Axes {
+		if v, ok := given[a.Name]; ok {
+			parts = append(parts, a.Name+"="+v)
+		}
+	}
+	return strings.Join(parts, ","), nil
+}
+
+// axis 按名字找一根轴；找不到就是把表单塞了别的东西进来。
+func (t Tool) axis(name string) (OptionAxis, error) {
+	for _, a := range t.Axes {
+		if a.Name == name {
+			return a, nil
+		}
+	}
+	return OptionAxis{}, fmt.Errorf("%s 没有 %q 这个版本选项", t.Language, name)
+}
+
+// Resolved 报出这次选择里每根轴实际生效的候选值，顺序与 Axes 一致：没选的轴就是
+// 这台判机的默认。页面要写"C++14 · O2 关"或者"只有哪几根轴被人改过"，都从这里来，
+// 于是显示的话和拼进命令行的话不会是两套。
+func (t Tool) Resolved(raw string) ([]Option, error) {
 	raw = strings.TrimSpace(raw)
 	if len(t.Axes) == 0 {
 		if raw != "" {
-			return t, "", fmt.Errorf("%s 没有可选的版本，却收到了 %q", t.Language, raw)
+			return nil, fmt.Errorf("%s 没有可选的版本，却收到了 %q", t.Language, raw)
 		}
-		return t, "", nil
+		return nil, nil
 	}
-	// 版本轴必须真有一个地方落进命令行，否则"选了 c++11"和"没选"会是同一次编译，
-	// 那比报错更糟。
-	if !strings.Contains(strings.Join(t.Base, " "), "{opts}") &&
-		!strings.Contains(strings.Join(t.Run, " "), "{opts}") {
-		return t, "", fmt.Errorf("%s 的工具没有 {opts} 占位符，版本选项无处可插", t.Language)
-	}
-
 	chosen := make([]Option, len(t.Axes))
 	for i, axis := range t.Axes {
-		chosen[i] = axis.defaultOption()
+		chosen[i] = axis.Default()
 	}
 	for _, pair := range strings.Split(raw, ",") {
 		pair = strings.TrimSpace(pair)
@@ -110,23 +155,43 @@ func (t Tool) WithOptions(raw string) (Tool, string, error) {
 		}
 		name, value, ok := strings.Cut(pair, "=")
 		if !ok {
-			return t, "", fmt.Errorf("版本选项 %q 缺了 =", pair)
+			return nil, fmt.Errorf("版本选项 %q 缺了 =", pair)
 		}
-		axis := -1
+		axis, err := t.axis(name)
+		if err != nil {
+			return nil, err
+		}
+		opt, ok := axis.find(value)
+		if !ok {
+			return nil, fmt.Errorf("%s 的 %s 不支持 %q（这台机器只认：%s）",
+				t.Language, axis.Label, value, axisValues(axis))
+		}
 		for i := range t.Axes {
-			if t.Axes[i].Name == name {
-				axis = i
+			if t.Axes[i].Name == axis.Name {
+				chosen[i] = opt
 			}
 		}
-		if axis < 0 {
-			return t, "", fmt.Errorf("%s 没有 %q 这个版本选项", t.Language, name)
+	}
+	return chosen, nil
+}
+
+// WithOptions 按提交带上来的版本选择重拼一次命令行。raw 形如 "std=c++17,O=0"，
+// 空串就是这台判机的默认口径。
+//
+// 返回值里第二个人类说法（"C++17 · O2 开"）是给判题详情用的：同一段代码用
+// c++11 编出来和用 c++20 编出来不是一回事，出了争议要能看出当时用的是哪个。
+func (t Tool) WithOptions(raw string) (Tool, string, error) {
+	chosen, err := t.Resolved(raw)
+	if err != nil {
+		return t, "", err
+	}
+	if len(t.Axes) > 0 {
+		// 版本轴必须真有一个地方落进命令行，否则"选了 c++11"和"没选"会是同一次编译，
+		// 那比报错更糟。
+		if !strings.Contains(strings.Join(t.Base, " "), "{opts}") &&
+			!strings.Contains(strings.Join(t.Run, " "), "{opts}") {
+			return t, "", fmt.Errorf("%s 的工具没有 {opts} 占位符，版本选项无处可插", t.Language)
 		}
-		opt, ok := t.Axes[axis].find(value)
-		if !ok {
-			return t, "", fmt.Errorf("%s 的 %s 不支持 %q（这台机器只认：%s）",
-				t.Language, t.Axes[axis].Label, value, axisValues(t.Axes[axis]))
-		}
-		chosen[axis] = opt
 	}
 
 	args := make([]string, 0, len(chosen)*2)
@@ -221,7 +286,7 @@ func DefaultTools() map[string]Tool {
 func defaultArgs(axes []OptionAxis) []string {
 	var out []string
 	for _, axis := range axes {
-		out = append(out, axis.defaultOption().Args...)
+		out = append(out, axis.Default().Args...)
 	}
 	return out
 }

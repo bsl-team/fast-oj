@@ -49,6 +49,15 @@
         {{range .Data.Langs}}<option value="{{.}}">{{.}}</option>{{end}}
       </select>
     </div>
+    {{range .Data.Versions}}
+    <div>
+      <label>{{.Label}}</label>
+      <select name="{{.Name}}">
+        <option value="">判机默认</option>
+        {{range .Options}}<option value="{{.Value}}">{{.Label}}{{if .Default}}（默认）{{end}}</option>{{end}}
+      </select>
+    </div>
+    {{end}}
   </div>
   <label>源代码</label>
   <textarea name="source" spellcheck="false" autocomplete="off" required></textarea>
