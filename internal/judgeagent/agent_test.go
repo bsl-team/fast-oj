@@ -276,6 +276,127 @@ func TestNewValidatesConfig(t *testing.T) {
 // 而出争议时唯一能证明当时用了什么的证据就是判机实际跑的命令行。
 // 用泛型 lambda 做探针——它是 C++14 才有的东西，c++11 编不过，c++14 能编过但对不上
 // 用例，于是 CE 与 WA 这两个判定正好把"版本真的换了"说清楚。
+const (
+	// 算对了但多打了一行废话：逐字节比是 WA，判题器只认第一个整数的话就是 AC。
+	junkSource = "#include <iostream>\nint main(){int a,b;std::cin>>a>>b;std::cout<<a+b<<\" 顺手多打的\\n\";}"
+	// 只比第一个整数的判题器，并留下一句评语。
+	tolerantChecker = "#include <cstdio>\n" +
+		"#include <cstdlib>\n" +
+		"static long first(const char *p){ FILE *f=fopen(p,\"rb\"); if(!f) return -424242;" +
+		" char b[512]={0}; fread(b,1,511,f); fclose(f); return strtol(b,0,10); }\n" +
+		"int main(int argc, char **argv){\n" +
+		"  if (argc < 4) return 3;\n" +
+		"  long got = first(argv[2]), want = first(argv[3]);\n" +
+		"  printf(\"判题器：选手第一个整数 %ld，答案 %ld\", got, want);\n" +
+		"  return got == want ? 0 : 1;\n" +
+		"}\n"
+)
+
+// 判题器必须一路从题目走到判机的命令行里。中间任何一环丢掉，用例页就写着"本题用 SPJ
+// 判定"，而判机实际按逐字节比——一份按题意正确的代码会被判 WA，还看不出来为什么。
+func TestEndToEndSpecialJudge(t *testing.T) {
+	ctx := context.Background()
+
+	// 不带判题器：同一份代码应当是 WA，这是后面那条 AC 的对照。
+	plain := newEnv(t)
+	sub := plain.seedSubmission(t, junkSource, "cpp", "")
+	if _, err := plain.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := plain.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "WA" {
+		t.Fatalf("不带判题器时 = %+v, %v，要 WA", row, err)
+	}
+
+	// 挂上只认第一个整数的判题器：同一份代码就该是 AC，而判题器那句评语进详情。
+	e := newEnv(t)
+	sub = e.seedSubmission(t, junkSource, "cpp", "")
+	if err := e.db.PutJudgeProgram(ctx, store.JudgeProgram{
+		ProblemID: sub.ProblemID, Kind: store.ProgramChecker, Language: "cpp", Source: tolerantChecker,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err = e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "AC" {
+		t.Fatalf("带上判题器后 = %+v, %v，要 AC", row, err)
+	}
+	if row.Score != row.TotalScore || row.TotalScore == 0 {
+		t.Errorf("判题器说对却没给满 %d/%d", row.Score, row.TotalScore)
+	}
+	if _, detail, err := e.db.SubmissionPayload(ctx, sub.ID); err != nil || detail != "" {
+		t.Errorf("全过的提交不该留失败详情：%q %v", detail, err)
+	}
+
+	// 答案本身不对时，判题器的话要成为详情里的评语：学生看得出差在哪，才不会提工单问
+	// "我为什么是 WA"。
+	e = newEnv(t)
+	sub = e.seedSubmission(t, offByOne, "cpp", "")
+	if err := e.db.PutJudgeProgram(ctx, store.JudgeProgram{
+		ProblemID: sub.ProblemID, Kind: store.ProgramChecker, Language: "cpp", Source: tolerantChecker,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err = e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "WA" {
+		t.Fatalf("算错的提交带判题器 = %+v, %v，要 WA", row, err)
+	}
+	if _, detail, err := e.db.SubmissionPayload(ctx, sub.ID); err != nil ||
+		!strings.Contains(detail, "判题器：选手第一个整数") {
+		t.Fatalf("判题器的评语没进详情：%q %v", detail, err)
+	}
+
+	// 判题器自己写坏了（这里让它缺文件就读、退 3）：必须是判机故障，并且把原因带回来。
+	// 把作者的 bug 判成学生的 CE/WA，是最难查的那种冤枉。
+	e = newEnv(t)
+	sub = e.seedSubmission(t, sumSource, "cpp", "")
+	if err := e.db.PutJudgeProgram(ctx, store.JudgeProgram{
+		ProblemID: sub.ProblemID, Kind: store.ProgramChecker, Language: "cpp",
+		Source: "int main(){ return 3; }",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err = e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "IE" {
+		t.Fatalf("判题器退 3 = %+v, %v，要 IE", row, err)
+	}
+	if _, detail, err := e.db.SubmissionPayload(ctx, sub.ID); err != nil ||
+		!strings.Contains(detail, "判题器退出码 3") {
+		t.Fatalf("判机故障没说出是谁的问题：%q %v", detail, err)
+	}
+}
+
+// 判题器编不过时，交出去的必须是判机故障而不是 CE：学生的代码一行都没错。
+func TestEndToEndUncompilableCheckerIsJudgeError(t *testing.T) {
+	e := newEnv(t)
+	sub := e.seedSubmission(t, sumSource, "cpp", "")
+	if err := e.db.PutJudgeProgram(context.Background(), store.JudgeProgram{
+		ProblemID: sub.ProblemID, Kind: store.ProgramChecker, Language: "cpp",
+		Source: "int main(){ this is not c++ }",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.db.GetSubmission(context.Background(), sub.ID)
+	if err != nil || row.Verdict != "IE" {
+		t.Fatalf("判题器编不过 = %+v, %v，要 IE 而不是 CE", row, err)
+	}
+	if _, detail, err := e.db.SubmissionPayload(context.Background(), sub.ID); err != nil ||
+		!strings.Contains(detail, "判题器编不过") {
+		t.Fatalf("详情没点名是判题器的问题：%q %v", detail, err)
+	}
+}
+
 func TestEndToEndVersionOptionsReachTheCompiler(t *testing.T) {
 	const probe = "#include <iostream>\n" +
 		"int main(){ auto f=[](auto x){return x*2;}; std::cout<<f(21)<<std::endl; }"
