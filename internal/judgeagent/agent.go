@@ -289,19 +289,32 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	// when the run ends.
 	defer os.RemoveAll(dir)
 
-	// 题目自带的判题器先在这儿编好。编不过时交出去的必须是判机故障：一份本该正确的代码
-	// 因为作者写坏了判题器而被判 WA，是本功能最不能出现的那种错。
-	var spj []string
+	// 题目自带的判题器与交互器先在这儿编好。编不过时交出去的必须是判机故障：一份本该
+	// 正确的代码因为作者写坏了判题器而被判 WA，是本功能最不能出现的那种错。
+	var spj, itx []string
 	if task.Checker != nil {
 		built, err := judge.BuildAux(a.cfg.Tools, judge.AuxProgram{
 			Language: task.Checker.Language, Source: task.Checker.Source,
 		}, dir, judge.AuxChecker)
 		if err != nil {
-			rep := judge.Report{Verdict: judge.IE, TimeMS: -1, MemKB: -1,
-				Detail: err.Error(), FailedCase: judge.AuxChecker}
-			return true, a.PostResult(ctx, task.SubmissionID, rep)
+			return true, a.postJudgeError(ctx, task.SubmissionID, err)
 		}
 		spj = built
+	}
+	if task.Interactor != nil {
+		built, err := judge.BuildAux(a.cfg.Tools, judge.AuxProgram{
+			Language: task.Interactor.Language, Source: task.Interactor.Source,
+		}, dir, judge.AuxInteractor)
+		if err != nil {
+			return true, a.postJudgeError(ctx, task.SubmissionID, err)
+		}
+		itx = built
+	}
+	// 两个同时配上必须当面拒绝，不能"交互器说了算，判题器静默不跑"：出题人以为自己配了
+	// 两层判定，实际有一层从来没生效过。
+	if len(spj) > 0 && len(itx) > 0 {
+		return true, a.postJudgeError(ctx, task.SubmissionID,
+			errBothPrograms(task.PID))
 	}
 
 	cases := make([]judge.Case, 0, len(task.Cases))
@@ -334,7 +347,7 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	rep := judge.Judge(judge.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
-		SPJ: spj, Cases: cases,
+		SPJ: spj, Interactor: itx, Cases: cases,
 	}, tool, dir, a.cfg.RunAs, judge.Progress(progress))
 	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s%s",
 		task.SubmissionID, rep.Verdict, rep.Score, rep.TotalScore, rep.TimeMS, rep.MemKB,
@@ -359,6 +372,22 @@ func (a *Agent) reportProgress(ctx context.Context, submissionID int64, row judg
 	if err := a.PostRun(ctx, submissionID, detail, row); err != nil {
 		a.cfg.Logf("progress report failed (continuing): %v", err)
 	}
+}
+
+// postJudgeError 把"判机侧自带的程序出了问题"交回服务器：判定一律是判机故障。
+// 学生的代码不为一个编不过的判题器背 CE，也不为一个跑飞的交互器背 WA——那两类错误会让人
+// 去改一份也许本来就正确的代码。
+func (a *Agent) postJudgeError(ctx context.Context, submissionID int64, err error) error {
+	return a.PostResult(ctx, submissionID, judge.Report{
+		Verdict: judge.IE, TimeMS: -1, MemKB: -1,
+		Detail: err.Error(), FailedCase: "judge program",
+	})
+}
+
+// errBothPrograms 是"同一题同时配了判题器和交互器"。不能默默让其中一个不跑：
+// 出题人以为自己有两层判定，实际那一层从来没生效过。
+func errBothPrograms(pid string) error {
+	return fmt.Errorf("%s 同时配了判题器与交互器：交互题由交互器判定，判题器不会被跑到。两者只能留一个", pid)
 }
 
 func (a *Agent) reportInfra(ctx context.Context, submissionID int64, detail string) error {

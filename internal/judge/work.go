@@ -29,8 +29,11 @@ type Task struct {
 	MemLimitKB   int
 	// SPJ 是题目自带、已经编好的判题器命令行；空表示按标准输出与答案宽松比。
 	// 命令行而不是路径：解释型判题器要 "<解释器> <源码>" 两段。
-	SPJ   []string
-	Cases []Case
+	SPJ []string
+	// Interactor 是题目自带、已经编好的交互器命令行。交互题由它判定：这时候既不比字节，
+	// 也不再跑判题器（两个同时配上会被判机拒绝，见 judgeagent）。
+	Interactor []string
+	Cases      []Case
 }
 
 type RunRow struct {
@@ -145,17 +148,30 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 	worst := AC
 	firstFailure := -1
 	for _, tc := range task.Cases {
-		ex := Run(argv, dir, tc.Input, runLimits)
-		v := ex.Verdict
+		var ex Execution
+		v := AC
 		// note 是"这次为什么算这个判定"的那句话：普通题是首个不同的那一行，SPJ 题是
-		// 判题器自己打印的评语。
+		// 判题器自己打印的评语，交互题是交互器打印的评语。
 		note := ""
-		if v == AC {
-			switch {
-			case len(task.SPJ) > 0:
-				v, note = checkWithSPJ(task.SPJ, dir, tc, ex.Stdout)
-			case !OutputsMatch(ex.Stdout, tc.Expected):
-				v, note = WA, diffExcerpt(ex.Stdout, tc.Expected)
+		switch {
+		case len(task.Interactor) > 0:
+			// 交互题：选手的 stdin/stdout 接到交互器上，判定由交互器的退出码给出。
+			duo := runInteractive(task.Interactor, argv, dir, tc, runLimits)
+			ex = duo.User
+			// 用时按两侧之和报（口径与判定一致），内存仍报选手那一份——交互器占多少不是
+			// 学生的错。
+			ex.TimeMS, ex.TimeMin = duo.TimeMS, duo.User.TimeMin || duo.Interactor.TimeMin
+			v, note = verdictForDuo(duo)
+		default:
+			ex = Run(argv, dir, tc.Input, runLimits)
+			v = ex.Verdict
+			if v == AC {
+				switch {
+				case len(task.SPJ) > 0:
+					v, note = checkWithSPJ(task.SPJ, dir, tc, ex.Stdout)
+				case !OutputsMatch(ex.Stdout, tc.Expected):
+					v, note = WA, diffExcerpt(ex.Stdout, tc.Expected)
+				}
 			}
 		}
 		row := RunRow{Ordinal: tc.Ordinal, CaseName: tc.Name, Verdict: v,
