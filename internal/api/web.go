@@ -16,7 +16,11 @@ import (
 
 // defaultLanguages is what the submit form offers when a problem does not
 // restrict languages; it mirrors judge.DefaultTools().
-var defaultLanguages = []string{"c", "cpp"}
+var defaultLanguages = []string{"c", "cpp", judge.PythonLanguage}
+
+// pythonMinMemKB 是收 Python 的题至少要给的内存：解释器空跑的常驻就要 ~9MB（实测
+// python3.14），再 import 一点标准库只多不少。低于这条线，判定量的就不是学生的程序。
+const pythonMinMemKB = 64 << 10
 
 func statusLine(status int) string {
 	return strconv.Itoa(status) + " " + http.StatusText(status)
@@ -755,6 +759,17 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 	if !languageAllowed(p.Languages, lang) {
 		return store.Submission{}, fmt.Sprintf("这道题只收 %s，不收 %s", strings.Join(p.Languages, "/"), lang),
 			problemPath, errors.New("language")
+	}
+	// Python 的内存下限是解释器自己要的那一份：实测 python3.14 空跑一次就要 ~9MB 常驻，
+	// 加上 import 一点标准库就更多。题面内存比这还小的时候，每一条 Python 提交都会
+	// MLE——那不是判定，那是解释器在替学生报错。所以这里当面拒绝并说清原因，而不是
+	// 让提交进去撞一条莫名其妙的内存超限。
+	if lang == judge.PythonLanguage && p.MemLimitKB < pythonMinMemKB {
+		return store.Submission{}, fmt.Sprintf(
+				"这道题的内存上限是 %s，Python 解释器自己就要占约 10MB，交上来只会因为内存超限被拒。"+
+					"要么把题面内存调到 %d KB 以上，要么这道题别收 Python",
+				formatKB(p.MemLimitKB, false), pythonMinMemKB),
+			problemPath, errors.New("python memory")
 	}
 	// 版本选择在写库前就按判机的候选表规范化：这一串以后会被拼进命令行，含糊的、越界的
 	// 都不该进去。被拒时说明能选哪些，而不是悄悄换成另一个版本编——那等于用一条谁都没

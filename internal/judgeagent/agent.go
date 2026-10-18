@@ -99,6 +99,25 @@ func (a *Agent) Dir() string { return a.cfg.Dir }
 // SetNote 在自测之后补一句给 /judges 看的话：沙盒到底开没开，只有真建过一次才知道。
 func (a *Agent) SetNote(note string) { a.cfg.Note = note }
 
+// DisableLanguage 把一门语言从这台判机的名单上摘掉，并把原因挂在 /judges 那句备注里。
+// 启动自测没过就用它：站点宁可不摆这个选项，也不会收到一条"能交但判不了"的判机故障，
+// 更不会收到一条"能交、也跑了，只是跑得没隔离"。
+func (a *Agent) DisableLanguage(name, why string) {
+	delete(a.cfg.Tools, name)
+	kept := a.cfg.Languages[:0]
+	for _, l := range a.cfg.Languages {
+		if l != name {
+			kept = append(kept, l)
+		}
+	}
+	a.cfg.Languages = kept
+	if a.cfg.Note == "" {
+		a.cfg.Note = name + " 不可用：" + why
+		return
+	}
+	a.cfg.Note += "；" + name + " 不可用：" + why
+}
+
 func (a *Agent) greeting() protocol.Greeting {
 	return protocol.Greeting{Name: a.cfg.Name, Languages: a.cfg.Languages, Note: a.cfg.Note}
 }
@@ -273,6 +292,14 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 			Detail: "this judge box has no toolchain for " + task.Language}
 		return true, a.PostResult(ctx, task.SubmissionID, rep)
 	}
+	// 闸门（启动时已经用自测把 Python 从名单上摘过一次，这里是第二道）：没牢房就不跑
+	// Python。护栏拦不住的那一类操作，恰好是"这台机器本来就是判机的"这一件事。
+	if !judge.Jailed() && wantsPython(task) {
+		return true, a.postJudgeError(ctx, task.SubmissionID,
+			fmt.Errorf("这台判机没有可用的沙盒（%s），不收 Python：%s 的护栏要靠 chroot 才能画出边界，"+
+				"没有牢房时它拦不住想出去的东西。要么把 -sandbox 开起来，要么这道题别用 Python（含判题器与交互器）",
+				judge.SandboxNote(), judge.PythonLanguage))
+	}
 	// 版本选项只有命中这台判机的候选表才会被拼进命令行。命中不了就报 IE 并把拒绝的话
 	// 交回去：把工单按另一个版本偷偷编出来，比判不了更不能接受。
 	picked, label, err := tool.WithOptions(task.Options)
@@ -377,6 +404,19 @@ func (a *Agent) reportProgress(ctx context.Context, submissionID int64, row judg
 	if err := a.PostRun(ctx, submissionID, detail, row); err != nil {
 		a.cfg.Logf("progress report failed (continuing): %v", err)
 	}
+}
+
+// wantsPython 报告这份工单里有没有要靠 Python 解释器跑的东西：学生的提交、判题器、
+// 交互器都算。闸门问的是"这台机器会不会把一段 Python 关在牢房外执行"，三份里任何一份
+// 都是同一个答案。
+func wantsPython(task *protocol.Task) bool {
+	if task.Language == judge.PythonLanguage {
+		return true
+	}
+	if task.Checker != nil && task.Checker.Language == judge.PythonLanguage {
+		return true
+	}
+	return task.Interactor != nil && task.Interactor.Language == judge.PythonLanguage
 }
 
 // postJudgeError 把"判机侧自带的程序出了问题"交回服务器：判定一律是判机故障。

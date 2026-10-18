@@ -113,6 +113,11 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 		rep.Detail = "write source: " + err.Error()
 		return rep
 	}
+	// 解释型语言自带的那份护栏要在学生代码之前落到同一个目录里：Run 里按 {dir} 引用它。
+	if err := writeSupport(tool, dir); err != nil {
+		rep.Verdict, rep.Detail = IE, err.Error()
+		return rep
+	}
 
 	if tool.Compiles() {
 		build := Run(tool.CompileArgs(dir), dir, nil, CompileLimits)
@@ -140,8 +145,9 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 
 	runLimits := Limits{TimeMS: task.TimeLimitMS, MemKB: task.MemLimitKB, RunAs: drop}
 	argv := tool.RunArgs(dir)
-	if !tool.Compiles() {
-		// Interpreters take the source file after the program name.
+	if !tool.Compiles() && !strings.Contains(strings.Join(tool.Run, " "), "{src}") {
+		// 解释器把源码接在命令行末尾；Run 里已经写了 {src} 的（Python 要在源码之前
+		// 先上护栏）就不再追加，否则同一份 main.py 会被交给解释器两遍。
 		argv = append(argv, source)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -154,6 +155,15 @@ func run() error {
 		return sandboxErr
 	}
 	agent.SetNote(note)
+	// Python 要两道都过才上名单：这台机器有解释器，且护栏在牢房里真挡得住一次子进程调用。
+	// 缺任何一道就把这门语言摘掉并把原因写在 /judges 上——"页面上能选、判机却判不了"是
+	// 最差的一种，"能判但没隔离"是更差的一种。
+	if pyNote, err := judge.PythonProbe(filepath.Join(agent.Dir(), "pyprobe")); err != nil {
+		agent.DisableLanguage(judge.PythonLanguage, err.Error())
+		log.Printf("Python 不在这台判机的名单上：%v", err)
+	} else {
+		log.Printf("Python 自测：%s", pyNote)
+	}
 	log.Printf("judge %s polling %s for [%v]", *name, *server, agent.Languages())
 	log.Printf("隔离边界：%s。环境变量只发最小集，内存/CPU/进程数与超时由判机实测加内核 rlimit 双重兜住。", note)
 	if mode == jail.Off {

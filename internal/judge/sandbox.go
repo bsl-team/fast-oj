@@ -64,6 +64,14 @@ func SandboxAvailable() bool { return sandbox.probed == probeOK }
 
 func SandboxNote() string { return sandbox.note }
 
+// Jailed 回答"这台判机现在会把一次运行关进牢房吗"。收 Python 之前要先问它：护栏
+// （internal/judge/pyguard.py）拦的是"离开这次运行的目录"，而那个边界是 chroot 给的；
+// 没有牢房的判机上，解释器和判机是同一个身份、同一个文件系统。
+func Jailed() bool {
+	_, ok := jailFor(Limits{})
+	return ok
+}
+
 // reportSandbox 记下自测结论。
 //
 // -sandbox=on 时开不起来根本不启动（setupSandbox 直接报错退出），所以这里记下的

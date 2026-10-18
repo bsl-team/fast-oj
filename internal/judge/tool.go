@@ -57,6 +57,15 @@ type Tool struct {
 	// WithOptions("") 的结果，也就是默认版本已经展开的那一份。
 	Base []string
 	Axes []OptionAxis
+	// Support 是开跑之前要顺便写进工作目录的文件：解释型语言的护栏就是这一份。
+	// 它跟着工单现落，不是判机上事先摆好的东西——换一道题就换一份，跑完即删。
+	Support []SupportFile
+}
+
+// SupportFile 是一份由判机写进工作目录、供 Run 引用的文件。
+type SupportFile struct {
+	Name string
+	Body []byte
 }
 
 // expand substitutes {src}, {exe} and {dir} in an argv template.
@@ -280,7 +289,7 @@ func DefaultTools() map[string]Tool {
 	// 拿到的都必须是这台机器的口径，不能是一份带占位符的骨架。
 	cxx.Compile = splice(cxxBase, defaultArgs(cxx.Axes))
 	c.Compile = splice(cBase, defaultArgs(c.Axes))
-	return map[string]Tool{"cpp": cxx, "c": c}
+	return map[string]Tool{"cpp": cxx, "c": c, PythonLanguage: pythonTool}
 }
 
 func defaultArgs(axes []OptionAxis) []string {
@@ -291,15 +300,24 @@ func defaultArgs(axes []OptionAxis) []string {
 	return out
 }
 
-// Available drops tools whose compiler binary is not on PATH.
+// Available drops tools this box cannot actually use: a compiler that is not on
+// PATH, and an interpreter that is not on PATH either.
+//
+// 解释型那一支以前是"无条件通过"的，那等于在没装 Python 的机器上也把 Python 报给
+// 站点——页面说能交，判机却只能回一条判机故障。
 func Available(tools map[string]Tool) map[string]Tool {
 	out := map[string]Tool{}
 	for name, t := range tools {
-		if !t.Compiles() {
-			out[name] = t
+		bin := ""
+		if t.Compiles() {
+			bin = t.Compile[0]
+		} else if len(t.Run) > 0 {
+			bin = t.Run[0]
+		}
+		if bin == "" {
 			continue
 		}
-		if _, err := exec.LookPath(t.Compile[0]); err == nil {
+		if _, err := exec.LookPath(bin); err == nil {
 			out[name] = t
 		}
 	}
