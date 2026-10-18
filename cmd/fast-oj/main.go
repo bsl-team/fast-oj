@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,8 +27,12 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load(os.Args[1:])
+	args := os.Args[1:]
+	cfg, err := config.Load(args)
 	if err != nil {
+		return err
+	}
+	if err := checkArgvSecrets(args, cfg); err != nil {
 		return err
 	}
 
@@ -81,4 +87,25 @@ func run() error {
 		}
 		return nil
 	}
+}
+
+// checkArgvSecrets 拦住"把令牌写在命令行上"这种启动方式。Linux 上它是硬拒绝：
+// /proc/<pid>/cmdline 所有本地账号可读，判机上还跑着别人的代码，写在 argv 里就等于把
+// 令牌发给了整台机器。其他平台（Windows 开发机：没有 /proc，单机一个人用）只警告，
+// 免得 README 里的快速上手变成砖。
+func checkArgvSecrets(args []string, cfg config.Config) error {
+	leaked := config.ArgvSecrets(args, map[string]string{
+		"-admin-token": cfg.AdminToken, "-judge-token": cfg.JudgeToken,
+	})
+	if len(leaked) == 0 {
+		return nil
+	}
+	if runtime.GOOS == "linux" {
+		return fmt.Errorf("令牌不能写在命令行上（%s）：/proc/<pid>/cmdline 这台机器上谁都读得到。"+
+			"改用环境变量 FASTOJ_ADMIN_TOKEN / FASTOJ_JUDGE_TOKEN——systemd 用 EnvironmentFile 提供，"+
+			"不要出现在 ExecStart 里", strings.Join(leaked, "、"))
+	}
+	fmt.Fprintf(os.Stderr, "fast-oj: 警告：%s 的值出现在命令行上，本机上其他账号看得到；"+
+		"正式部署请改用环境变量 FASTOJ_ADMIN_TOKEN / FASTOJ_JUDGE_TOKEN\n", strings.Join(leaked, "、"))
+	return nil
 }

@@ -43,6 +43,14 @@ powershell -File build.ps1        # 产出 dist\fast-oj.exe dist\fast-judge.exe
 ./dist/fast-judge.exe -server http://127.0.0.1:8080 -token JDG -name box1 -v
 ```
 
+**Linux 上不要把令牌写在命令行上**：`-token` / `-admin-token` / `-judge-token` 在 Linux 会直接拒绝启动，
+只认环境变量 `FASTOJ_JUDGE_TOKEN` / `FASTOJ_ADMIN_TOKEN`。原因是 `/proc/<pid>/cmdline` 是 0444、
+所有本地账号都读得到（`hidepid` 默认没开），而判机上跑的正是别人提交的代码——写在 argv 里的令牌
+等于发给整台机器，一次逃逸出沙盒的运行就能把它抄走。systemd 里 `-token $FASTOJ_JUDGE_TOKEN` 这种写法
+也是同一个问题：`ExecStart` 会先展开再 exec，0600 的 `EnvironmentFile` 就白设了——正确做法是让
+`ExecStart` 里不出现令牌，进程自己去读那个文件提供的环境变量。Windows 开发机没有 `/proc`、单机一个人用，
+所以只警告不拦。
+
 浏览器打开 <http://127.0.0.1:8080>。**全新库的第一步**：打开 <http://127.0.0.1:8080/admin/claim>，把 `-admin-token` 的值填进去，给 `admin` 账号设一个网页密码，之后就是普通登录（这个页面在旧库上也能用，属于恢复手段，会先警告你要覆盖已有密码）。命令行只留一件事——探活：
 
 ```bash
@@ -862,8 +870,8 @@ data/
 | `-addr` | `127.0.0.1:8080` | 监听地址（`FASTOJ_ADDR`） |
 | `-data` | `./data` | 数据目录（`FASTOJ_DATA`） |
 | `-db` | `<data>/fast-oj.db` | 单独指定库文件（`FASTOJ_DB`） |
-| `-admin-token` | 必填 | 管理令牌（`FASTOJ_ADMIN_TOKEN`） |
-| `-judge-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`） |
+| `-admin-token` | 必填 | 管理令牌（`FASTOJ_ADMIN_TOKEN`）。**Linux 上只能用环境变量**：写在命令行上会拒绝启动 |
+| `-judge-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`）。同上 |
 | `-max-source` | 262144 | 源码/JSON 请求体上限 |
 | `-max-upload` | 64 MiB | 用例包上限 |
 | `-max-case` | 16 MiB | 单个用例文件上限 |
@@ -878,7 +886,7 @@ data/
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `-server` | `http://127.0.0.1:8080` | 服务器地址（`FASTOJ_SERVER`） |
-| `-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`） |
+| `-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`）。**Linux 上只能用环境变量**：`/proc/<pid>/cmdline` 所有本地账号可读，写在命令行上直接拒绝启动 |
 | `-name` | 主机名 | 判机框名字（`FASTOJ_JUDGE_NAME`） |
 | `-dir` | 用户缓存目录 | 工作目录（`FASTOJ_JUDGE_DIR`），每次判题用 `sid` 子目录，跑完即删 |
 | `-poll` | 500ms | 空队列轮询间隔 |

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/liangbinchen2013/fast-oj/internal/config"
 	"github.com/liangbinchen2013/fast-oj/internal/jail"
 	"github.com/liangbinchen2013/fast-oj/internal/judge"
 	"github.com/liangbinchen2013/fast-oj/internal/judgeagent"
@@ -98,6 +99,19 @@ func run() error {
 		verbose = flag.Bool("v", false, "log each step")
 	)
 	flag.Parse()
+
+	// 令牌写在命令行上就等于发给了整台机器：/proc/<pid>/cmdline 是所有本地账号可读的，
+	// 而判机上跑的正是别人提交的代码。systemd 里写 `-token $FASTOJ_JUDGE_TOKEN` 会先展开
+	// 再 exec，0600 的 EnvironmentFile 也因此白设——默认值本来就是那个环境变量，别再传一遍。
+	if leaked := config.ArgvSecrets(os.Args[1:], map[string]string{"-token": *token}); len(leaked) > 0 {
+		if runtime.GOOS == "linux" {
+			return fmt.Errorf("判机令牌不能写在命令行上（%s）：改用环境变量 FASTOJ_JUDGE_TOKEN，"+
+				"并把它从 ExecStart 里去掉（systemd 的 EnvironmentFile 已经提供了它）",
+				strings.Join(leaked, "、"))
+		}
+		fmt.Fprintf(os.Stderr, "fast-judge: 警告：判机令牌出现在命令行上，本机上其他账号看得到；"+
+			"正式部署请改用环境变量 FASTOJ_JUDGE_TOKEN\n")
+	}
 
 	drop, err := parseRunAs(*runAs)
 	if err != nil {

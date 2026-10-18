@@ -63,7 +63,9 @@ CGO_ENABLED=0 "$GO" build -o dist/ ./cmd/...
 
 if [ "$JUDGE" = 1 ]; then
   echo "==> 起判机 $JUDGE_NAME → $SERVER_URL"
-  ./dist/fast-judge -server "$SERVER_URL" -token "$FASTOJ_JUDGE_TOKEN" -name "$JUDGE_NAME" -v &
+  # 令牌走上面 export 的环境变量，不写在命令行上：Linux 上 /proc/<pid>/cmdline 是所有
+  # 本地账号可读的，而判机上跑的正是别人提交的代码。
+  ./dist/fast-judge -server "$SERVER_URL" -name "$JUDGE_NAME" -v &
   JUDGE_PID=$!
   # 服务器退出（含 Ctrl-C）时别留一个孤儿判机在那儿空轮询。
   trap 'kill "$JUDGE_PID" 2>/dev/null || true' EXIT
