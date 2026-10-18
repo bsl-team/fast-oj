@@ -228,3 +228,56 @@ func TestReapLeavesFreshWorkAlone(t *testing.T) {
 		t.Fatalf("row = %+v", row)
 	}
 }
+
+// 提交选的版本要一路走到判机手里：这一列在写库、读列表、领取工单任何一环被丢掉，
+// 页面上写的"C++14"就和实际编译用的东西不是一回事了。
+func TestClaimNextCarriesVersionOptions(t *testing.T) {
+	ctx := context.Background()
+	db, u, p, j := queueFixture(t)
+
+	chosen, err := db.CreateSubmission(ctx, &Submission{
+		UserID: u.ID, ProblemID: p.ID, Language: "cpp", Options: "std=c++14,O=0",
+		Source: "int main(){}", TotalScore: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := db.ClaimNext(ctx, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Options != "std=c++14,O=0" {
+		t.Errorf("领到的工单带的版本选项 = %q，要 std=c++14,O=0", task.Options)
+	}
+	if row, err := db.GetSubmission(ctx, chosen.ID); err != nil || row.Options != "std=c++14,O=0" {
+		t.Fatalf("写库后读回 = %+v, %v", row, err)
+	}
+
+	// 不选的老路：空串一路是空串，判定基准交给判机的默认。
+	plain := submitSomething(t, db, u, p, "int main(){}")
+	list, err := db.ListSubmissions(ctx, SubmissionFilter{UserID: u.ID})
+	if err != nil || len(list) != 2 {
+		t.Fatalf("列表 = %d 条, %v", len(list), err)
+	}
+	options := map[int64]string{}
+	for _, s := range list {
+		options[s.ID] = s.Options
+	}
+	if options[chosen.ID] != "std=c++14,O=0" {
+		t.Errorf("列表里 #%d 的版本选项 = %q", chosen.ID, options[chosen.ID])
+	}
+	if options[plain.ID] != "" {
+		t.Errorf("列表里 #%d 没选版本却带上了 %q", plain.ID, options[plain.ID])
+	}
+	box2, err := db.UpsertJudge(ctx, "box-2", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := db.ClaimNext(ctx, box2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.SubmissionID != plain.ID || next.Options != "" {
+		t.Errorf("领取到的工单 = %+v，要那条没选版本的", next)
+	}
+}

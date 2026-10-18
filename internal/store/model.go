@@ -60,11 +60,15 @@ type Submission struct {
 	// not unwind it.
 	ContestID int64  `json:"contest_id"`
 	Language  string `json:"language"`
-	Source    string `json:"source,omitempty"`
-	Status    string `json:"status"`
-	Verdict   string `json:"verdict"`
-	TimeMS    int    `json:"time_ms"`
-	MemKB     int    `json:"mem_kb"`
+	// Options is what this submission asked to be built with, in the judge's own
+	// allowlist notation ("std=c++14,O=0"). Empty means the box's default, which is
+	// the same command line every pre-M28 submission used.
+	Options string `json:"options,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Status  string `json:"status"`
+	Verdict string `json:"verdict"`
+	TimeMS  int    `json:"time_ms"`
+	MemKB   int    `json:"mem_kb"`
 	// TimeMin/MemMin: the headline numbers came from a run that was cut off, so
 	// they are lower bounds and the views prefix them with ">".
 	TimeMin    bool   `json:"time_min,omitempty"`

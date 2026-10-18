@@ -76,7 +76,8 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	work := protocol.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
-		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
+		Options: task.Options,
+		Source:  task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
 	}
 	for _, tc := range cases {
 		work.Cases = append(work.Cases, protocol.Case{

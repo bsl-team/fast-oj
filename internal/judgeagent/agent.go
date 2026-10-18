@@ -259,13 +259,25 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	if err != nil || task == nil {
 		return false, err
 	}
-	a.cfg.Logf("claimed sid=%d problem=%s lang=%s cases=%d", task.SubmissionID, task.PID, task.Language, len(task.Cases))
+	a.cfg.Logf("claimed sid=%d problem=%s lang=%s options=%q cases=%d",
+		task.SubmissionID, task.PID, task.Language, task.Options, len(task.Cases))
 
 	tool, ok := a.cfg.Tools[task.Language]
 	if !ok {
 		rep := judge.Report{Verdict: judge.IE, TimeMS: -1, MemKB: -1,
 			Detail: "this judge box has no toolchain for " + task.Language}
 		return true, a.PostResult(ctx, task.SubmissionID, rep)
+	}
+	// 版本选项只有命中这台判机的候选表才会被拼进命令行。命中不了就报 IE 并把拒绝的话
+	// 交回去：把工单按另一个版本偷偷编出来，比判不了更不能接受。
+	picked, label, err := tool.WithOptions(task.Options)
+	if err != nil {
+		rep := judge.Report{Verdict: judge.IE, TimeMS: -1, MemKB: -1, Detail: err.Error()}
+		return true, a.PostResult(ctx, task.SubmissionID, rep)
+	}
+	tool = picked
+	if label != "" {
+		a.cfg.Logf("sid=%d 版本：%s", task.SubmissionID, label)
 	}
 
 	dir := filepath.Join(a.cfg.Dir, strconv.FormatInt(task.SubmissionID, 10))

@@ -23,10 +23,13 @@ type Task struct {
 	SubmissionID int64  `json:"submission_id"`
 	PID          string `json:"pid"`
 	Language     string `json:"language"`
-	Source       string `json:"source"`
-	TimeLimitMS  int    `json:"time_limit_ms"`
-	MemLimitKB   int    `json:"mem_limit_kb"`
-	Cases        []Case `json:"cases"`
+	// Options is the version selection written in the judge's own allowlist
+	// notation ("std=c++14,O=0"); empty means the box should use its default.
+	Options     string `json:"options,omitempty"`
+	Source      string `json:"source"`
+	TimeLimitMS int    `json:"time_limit_ms"`
+	MemLimitKB  int    `json:"mem_limit_kb"`
+	Cases       []Case `json:"cases"`
 }
 
 // Status is a progress report while a submission is in flight.

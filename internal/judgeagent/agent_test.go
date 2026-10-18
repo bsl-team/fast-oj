@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/liangbinchen2013/fast-oj/internal/api"
@@ -60,9 +61,9 @@ func newEnv(t *testing.T) *env {
 	return &env{srv: srv, db: db, cfg: cfg, agent: agent}
 }
 
-// seedProblem writes a sample plus two judged cases to disk and returns a
-// queued submission carrying the candidate source.
-func (e *env) seedProblem(t *testing.T, source, language string) store.Submission {
+// seedSubmission 写一个样例加两条计分用例，并留下一条排好队的提交，版本选择由
+// options 带进去。
+func (e *env) seedSubmission(t *testing.T, source, language, options string) store.Submission {
 	t.Helper()
 	ctx := context.Background()
 	user, err := e.db.EnsureUser(ctx, "alice", "user")
@@ -104,12 +105,19 @@ func (e *env) seedProblem(t *testing.T, source, language string) store.Submissio
 		t.Fatal(err)
 	}
 	sub, err := e.db.CreateSubmission(ctx, &store.Submission{
-		UserID: user.ID, ProblemID: prob.ID, Language: language, Source: source, TotalScore: total,
+		UserID: user.ID, ProblemID: prob.ID, Language: language, Options: options,
+		Source: source, TotalScore: total,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return sub
+}
+
+// seedProblem 是不选版本的那条路：老数据与不选的人都走判机的默认口径。
+func (e *env) seedProblem(t *testing.T, source, language string) store.Submission {
+	t.Helper()
+	return e.seedSubmission(t, source, language, "")
 }
 
 func (e *env) process(t *testing.T) (bool, error) {
@@ -261,5 +269,57 @@ func TestNewValidatesConfig(t *testing.T) {
 	if _, err := New(Config{Server: base.Server, Token: base.Token, Name: base.Name,
 		Tools: map[string]judge.Tool{}}); err == nil {
 		t.Error("a box with no usable toolchain was accepted")
+	}
+}
+
+// 版本选择必须一路走到命令行：这一环在半路被丢掉，页面上写的"C++14"就成了谎话，
+// 而出争议时唯一能证明当时用了什么的证据就是判机实际跑的命令行。
+// 用泛型 lambda 做探针——它是 C++14 才有的东西，c++11 编不过，c++14 能编过但对不上
+// 用例，于是 CE 与 WA 这两个判定正好把"版本真的换了"说清楚。
+func TestEndToEndVersionOptionsReachTheCompiler(t *testing.T) {
+	const probe = "#include <iostream>\n" +
+		"int main(){ auto f=[](auto x){return x*2;}; std::cout<<f(21)<<std::endl; }"
+	cases := []struct {
+		options string
+		want    string
+	}{
+		{"std=c++11", "CE"},
+		{"std=c++14", "WA"},
+		{"", "WA"}, // 默认 c++17，也编得过
+	}
+	for _, c := range cases {
+		e := newEnv(t)
+		sub := e.seedSubmission(t, probe, "cpp", c.options)
+		if _, err := e.process(t); err != nil {
+			t.Fatalf("%q: %v", c.options, err)
+		}
+		row, err := e.db.GetSubmission(context.Background(), sub.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.Verdict != c.want {
+			t.Errorf("选 %q 判成 %s（%s），要 %s", c.options, row.Verdict, row.Detail, c.want)
+		}
+	}
+}
+
+// 判机不认识的值不能"降级成默认口径"继续编：那等于用另一条命令行判了这份代码，
+// 却把提交时选的版本留在页面上。报 IE 并把拒绝的话交回去才是能查的那种失败。
+func TestEndToEndRefusesAnOptionTheBoxDoesNotKnow(t *testing.T) {
+	e := newEnv(t)
+	sub := e.seedSubmission(t, sumSource, "cpp", "std=c++98")
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.db.GetSubmission(context.Background(), sub.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Verdict != "IE" {
+		t.Fatalf("row = %+v，要 IE", row)
+	}
+	if _, detail, err := e.db.SubmissionPayload(context.Background(), sub.ID); err != nil ||
+		!strings.Contains(detail, "不支持") {
+		t.Fatalf("拒绝的话没交回去：%q %v", detail, err)
 	}
 }

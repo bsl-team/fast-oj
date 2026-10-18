@@ -13,9 +13,12 @@ type ClaimedTask struct {
 	ProblemID    int64
 	PID          string
 	Language     string
-	Source       string
-	TimeLimitMS  int
-	MemLimitKB   int
+	// Options is the version selection this submission asked for ("std=c++14,O=0");
+	// empty means the judge box's own default.
+	Options     string
+	Source      string
+	TimeLimitMS int
+	MemLimitKB  int
 }
 
 // ClaimNext hands out the oldest queued submission to this judge, or
@@ -44,10 +47,10 @@ func (db *DB) ClaimNext(ctx context.Context, judgeID int64) (ClaimedTask, error)
 	// Source can be large, so it is fetched only now, for the judge that owns
 	// the row.
 	err = db.SQL.QueryRowContext(ctx,
-		`SELECT s.language, s.source, p.pid, p.time_limit_ms, p.mem_limit_kb
+		`SELECT s.language, s.options, s.source, p.pid, p.time_limit_ms, p.mem_limit_kb
 		 FROM submissions s JOIN problems p ON p.id=s.problem_id
 		 WHERE s.id=? AND s.judge_id=?`, t.SubmissionID, judgeID).
-		Scan(&t.Language, &t.Source, &t.PID, &t.TimeLimitMS, &t.MemLimitKB)
+		Scan(&t.Language, &t.Options, &t.Source, &t.PID, &t.TimeLimitMS, &t.MemLimitKB)
 	if err != nil {
 		return t, notFound(err)
 	}
