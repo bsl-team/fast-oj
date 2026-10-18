@@ -27,7 +27,7 @@ type SubmissionDetail struct {
 var detailColumns = `s.id, s.user_id, s.problem_id, IFNULL(s.contest_id, 0), s.language, s.options, s.status, s.verdict,
 		s.time_ms, s.mem_kb, s.time_min, s.mem_min, s.score, s.total_score, s.failed_case,
 		IFNULL(s.judge_id, 0),
-		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0),
+		s.created_at, IFNULL(s.started_at, 0), IFNULL(s.judged_at, 0), s.toolchain,
 		p.pid, p.title, u.handle, ` + personSQL(`u`) + `,
 		IFNULL(p.detail_level, 'diff'), IFNULL(p.owner_id, 0), IFNULL(ct.cid, '')`
 
@@ -39,7 +39,7 @@ func scanDetail(row scanner) (SubmissionDetail, error) {
 	)
 	err := row.Scan(&d.ID, &d.UserID, &d.ProblemID, &d.ContestID, &d.Language, &d.Options, &d.Status, &d.Verdict,
 		&d.TimeMS, &d.MemKB, &timeMin, &memMin, &d.Score, &d.TotalScore, &d.FailedCase, &judgeID,
-		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.PID, &d.Title, &d.Handle, &d.Name,
+		&d.CreatedAt, &d.StartedAt, &d.JudgedAt, &d.Toolchain, &d.PID, &d.Title, &d.Handle, &d.Name,
 		&d.DetailLevel, &d.ProblemOwner, &d.ContestCID)
 	d.JudgeID = judgeID
 	d.TimeMin, d.MemMin = timeMin != 0, memMin != 0

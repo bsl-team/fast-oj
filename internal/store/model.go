@@ -68,6 +68,9 @@ type Submission struct {
 	// allowlist notation ("std=c++14,O=0"). Empty means the box's default, which is
 	// the same command line every pre-M28 submission used.
 	Options string `json:"options,omitempty"`
+	// Toolchain 是判机回报的"我这次实际用的口径"。空 = 这台判机没回报（老二进制），
+	// 页面要写「未回报」而不是替它说一句。
+	Toolchain string `json:"toolchain,omitempty"`
 	Source  string `json:"source,omitempty"`
 	Status  string `json:"status"`
 	Verdict string `json:"verdict"`
@@ -106,11 +109,25 @@ type Run struct {
 }
 
 type Judge struct {
-	ID         int64    `json:"id"`
-	Name       string   `json:"name"`
-	Languages  []string `json:"languages,omitempty"`
-	Note       string   `json:"note"`
-	LastSeenAt int64    `json:"last_seen_at"`
+	ID        int64    `json:"id"`
+	Name      string   `json:"name"`
+	Languages []string `json:"languages,omitempty"`
+	// Capabilities 是这台判机自报的"我这版代码真会做什么"：options / checker / interactor。
+	// 老判机不送这一列，于是它是空的，服务器就不会把需要新能力的工单派给它。
+	Capabilities []string `json:"capabilities,omitempty"`
+	Note         string   `json:"note"`
+	LastSeenAt   int64    `json:"last_seen_at"`
+}
+
+// Has 报告自报能力里有没有这一项。词表在 internal/protocol（那是两端之间的一句话），
+// 这里只按字符串查。
+func (j Judge) Has(cap string) bool {
+	for _, c := range j.Capabilities {
+		if c == cap {
+			return true
+		}
+	}
+	return false
 }
 
 func joinList(items []string) string { return strings.Join(items, ",") }

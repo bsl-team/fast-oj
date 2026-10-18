@@ -94,6 +94,22 @@ func submitVersion(tool judge.Tool, form url.Values) (string, error) {
 	return tool.Normalize(strings.Join(parts, ","))
 }
 
+// toolchainCell 是提交详情页上那句"这次到底是怎么编的"。
+//
+// 优先用判机**自报**的那一份：选了 c++14 却被一台旧判机按它自己那套硬编码编了，差别只有
+// 动手编的那台机器知道。没有回报时不能把提交时的选择当成判机说的话——空着的含义是
+// "没人说过"，写「未回报」就是把这层不确定摆在明面上。
+func toolchainCell(lang, reported, options string) string {
+	if reported != "" {
+		return reported
+	}
+	if strings.TrimSpace(options) == "" {
+		// 老数据与"没选"是同一条路：用的就是这台判机的默认口径，那句话本来就是默认的。
+		return versionLabel(lang, "")
+	}
+	return "未回报（提交时选的是 " + versionLabel(lang, options) + "，而这台判机没说过它实际用了什么）"
+}
+
 // versionLabel 是给判题详情看的全称："C++17 · O2 开"。老数据（空串）也有一句实话：
 // 它用的就是判机当时的默认，而默认正是把版本拆成选项之前硬编码的那一条命令行。
 func versionLabel(lang, options string) string {

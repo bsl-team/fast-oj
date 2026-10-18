@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -98,8 +99,32 @@ func (a *Agent) Dir() string { return a.cfg.Dir }
 // SetNote 在自测之后补一句给 /judges 看的话：沙盒到底开没开，只有真建过一次才知道。
 func (a *Agent) SetNote(note string) { a.cfg.Note = note }
 
+// DisableLanguage 把一门语言从这台判机的名单上摘掉，并把原因挂在 /judges 那句备注里。
+// 启动自测没过就用它：站点宁可不摆这个选项，也不会收到一条"能交但判不了"的判机故障，
+// 更不会收到一条"能交、也跑了，只是跑得没隔离"。
+func (a *Agent) DisableLanguage(name, why string) {
+	delete(a.cfg.Tools, name)
+	kept := a.cfg.Languages[:0]
+	for _, l := range a.cfg.Languages {
+		if l != name {
+			kept = append(kept, l)
+		}
+	}
+	a.cfg.Languages = kept
+	if a.cfg.Note == "" {
+		a.cfg.Note = name + " 不可用：" + why
+		return
+	}
+	a.cfg.Note += "；" + name + " 不可用：" + why
+}
+
 func (a *Agent) greeting() protocol.Greeting {
-	return protocol.Greeting{Name: a.cfg.Name, Languages: a.cfg.Languages, Note: a.cfg.Note}
+	return protocol.Greeting{
+		Name: a.cfg.Name, Languages: a.cfg.Languages,
+		// 自报的是这一版代码真会做的事：需要新能力的工单只会派给报了它的机器。
+		Capabilities: protocol.Capabilities,
+		Note:         a.cfg.Note,
+	}
 }
 
 // request sends an authenticated call and returns the status plus raw body.
@@ -181,8 +206,12 @@ func (a *Agent) Claim(ctx context.Context) (*protocol.Task, error) {
 	return &task, nil
 }
 
-func (a *Agent) caseFile(ctx context.Context, caseID int64, which string) ([]byte, error) {
-	path := "/judge/cases/" + strconv.FormatInt(caseID, 10) + "/" + which
+// caseFile 取这份工单里第 ordinal 条用例的正文。地址是「这条提交的第 N 条」而不是
+// 「用例 id 为 X」：服务器会核对这条提交确实派给了本机，判机因此读不到别的题目的数据。
+func (a *Agent) caseFile(ctx context.Context, submissionID int64, ordinal int, which string) ([]byte, error) {
+	path := "/judge/submissions/" + strconv.FormatInt(submissionID, 10) +
+		"/cases/" + strconv.Itoa(ordinal) + "/" + which +
+		"?judge=" + url.QueryEscape(a.cfg.Name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.Server+path, nil)
 	if err != nil {
 		return nil, err
@@ -199,7 +228,7 @@ func (a *Agent) caseFile(ctx context.Context, caseID int64, which string) ([]byt
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("case %d %s: %s", caseID, which, firstLine(body))
+		return nil, fmt.Errorf("sid %d case #%d %s: %s", submissionID, ordinal, which, firstLine(body))
 	}
 	return body, nil
 }
@@ -221,6 +250,7 @@ func (a *Agent) PostResult(ctx context.Context, submissionID int64, rep judge.Re
 		MemMin:     rep.MemMin,
 		FailedCase: rep.FailedCase,
 		Detail:     rep.Detail,
+		Toolchain:  rep.Toolchain,
 	}
 	for _, row := range rep.Runs {
 		result.Runs = append(result.Runs, protocol.RunRow{
@@ -268,6 +298,14 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 			Detail: "this judge box has no toolchain for " + task.Language}
 		return true, a.PostResult(ctx, task.SubmissionID, rep)
 	}
+	// 闸门（启动时已经用自测把 Python 从名单上摘过一次，这里是第二道）：没牢房就不跑
+	// Python。护栏拦不住的那一类操作，恰好是"这台机器本来就是判机的"这一件事。
+	if !judge.Jailed() && wantsPython(task) {
+		return true, a.postJudgeError(ctx, task.SubmissionID,
+			fmt.Errorf("这台判机没有可用的沙盒（%s），不收 Python：%s 的护栏要靠 chroot 才能画出边界，"+
+				"没有牢房时它拦不住想出去的东西。要么把 -sandbox 开起来，要么这道题别用 Python（含判题器与交互器）",
+				judge.SandboxNote(), judge.PythonLanguage))
+	}
 	// 版本选项只有命中这台判机的候选表才会被拼进命令行。命中不了就报 IE 并把拒绝的话
 	// 交回去：把工单按另一个版本偷偷编出来，比判不了更不能接受。
 	picked, label, err := tool.WithOptions(task.Options)
@@ -289,33 +327,46 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	// when the run ends.
 	defer os.RemoveAll(dir)
 
-	// 题目自带的判题器先在这儿编好。编不过时交出去的必须是判机故障：一份本该正确的代码
-	// 因为作者写坏了判题器而被判 WA，是本功能最不能出现的那种错。
-	var spj []string
+	// 题目自带的判题器与交互器先在这儿编好。编不过时交出去的必须是判机故障：一份本该
+	// 正确的代码因为作者写坏了判题器而被判 WA，是本功能最不能出现的那种错。
+	var spj, itx []string
 	if task.Checker != nil {
 		built, err := judge.BuildAux(a.cfg.Tools, judge.AuxProgram{
 			Language: task.Checker.Language, Source: task.Checker.Source,
 		}, dir, judge.AuxChecker)
 		if err != nil {
-			rep := judge.Report{Verdict: judge.IE, TimeMS: -1, MemKB: -1,
-				Detail: err.Error(), FailedCase: judge.AuxChecker}
-			return true, a.PostResult(ctx, task.SubmissionID, rep)
+			return true, a.postJudgeError(ctx, task.SubmissionID, err)
 		}
 		spj = built
+	}
+	if task.Interactor != nil {
+		built, err := judge.BuildAux(a.cfg.Tools, judge.AuxProgram{
+			Language: task.Interactor.Language, Source: task.Interactor.Source,
+		}, dir, judge.AuxInteractor)
+		if err != nil {
+			return true, a.postJudgeError(ctx, task.SubmissionID, err)
+		}
+		itx = built
+	}
+	// 两个同时配上必须当面拒绝，不能"交互器说了算，判题器静默不跑"：出题人以为自己配了
+	// 两层判定，实际有一层从来没生效过。
+	if len(spj) > 0 && len(itx) > 0 {
+		return true, a.postJudgeError(ctx, task.SubmissionID,
+			errBothPrograms(task.PID))
 	}
 
 	cases := make([]judge.Case, 0, len(task.Cases))
 	for _, c := range task.Cases {
-		input, err := a.caseFile(ctx, c.ID, "in")
+		input, err := a.caseFile(ctx, task.SubmissionID, c.Ordinal, "in")
 		if err != nil {
 			return true, a.reportInfra(ctx, task.SubmissionID, "fetch input: "+err.Error())
 		}
-		expected, err := a.caseFile(ctx, c.ID, "out")
+		expected, err := a.caseFile(ctx, task.SubmissionID, c.Ordinal, "out")
 		if err != nil {
 			return true, a.reportInfra(ctx, task.SubmissionID, "fetch answer: "+err.Error())
 		}
 		cases = append(cases, judge.Case{
-			ID: c.ID, Name: c.Name, Ordinal: c.Ordinal, IsSample: c.IsSample,
+			Name: c.Name, Ordinal: c.Ordinal, IsSample: c.IsSample,
 			Score: c.Score, Input: input, Expected: expected,
 		})
 	}
@@ -334,7 +385,7 @@ func (a *Agent) ProcessOnce(ctx context.Context) (bool, error) {
 	rep := judge.Judge(judge.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Source: task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
-		SPJ: spj, Cases: cases,
+		SPJ: spj, Interactor: itx, Cases: cases,
 	}, tool, dir, a.cfg.RunAs, judge.Progress(progress))
 	a.cfg.Logf("sid=%d verdict=%s score=%d/%d time=%dms mem=%dKB wall=%s%s",
 		task.SubmissionID, rep.Verdict, rep.Score, rep.TotalScore, rep.TimeMS, rep.MemKB,
@@ -359,6 +410,35 @@ func (a *Agent) reportProgress(ctx context.Context, submissionID int64, row judg
 	if err := a.PostRun(ctx, submissionID, detail, row); err != nil {
 		a.cfg.Logf("progress report failed (continuing): %v", err)
 	}
+}
+
+// wantsPython 报告这份工单里有没有要靠 Python 解释器跑的东西：学生的提交、判题器、
+// 交互器都算。闸门问的是"这台机器会不会把一段 Python 关在牢房外执行"，三份里任何一份
+// 都是同一个答案。
+func wantsPython(task *protocol.Task) bool {
+	if task.Language == judge.PythonLanguage {
+		return true
+	}
+	if task.Checker != nil && task.Checker.Language == judge.PythonLanguage {
+		return true
+	}
+	return task.Interactor != nil && task.Interactor.Language == judge.PythonLanguage
+}
+
+// postJudgeError 把"判机侧自带的程序出了问题"交回服务器：判定一律是判机故障。
+// 学生的代码不为一个编不过的判题器背 CE，也不为一个跑飞的交互器背 WA——那两类错误会让人
+// 去改一份也许本来就正确的代码。
+func (a *Agent) postJudgeError(ctx context.Context, submissionID int64, err error) error {
+	return a.PostResult(ctx, submissionID, judge.Report{
+		Verdict: judge.IE, TimeMS: -1, MemKB: -1,
+		Detail: err.Error(), FailedCase: "judge program",
+	})
+}
+
+// errBothPrograms 是"同一题同时配了判题器和交互器"。不能默默让其中一个不跑：
+// 出题人以为自己有两层判定，实际那一层从来没生效过。
+func errBothPrograms(pid string) error {
+	return fmt.Errorf("%s 同时配了判题器与交互器：交互题由交互器判定，判题器不会被跑到。两者只能留一个", pid)
 }
 
 func (a *Agent) reportInfra(ctx context.Context, submissionID int64, detail string) error {

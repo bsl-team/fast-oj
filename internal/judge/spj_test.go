@@ -27,22 +27,27 @@ func checker(code string) string {
 	return strings.ReplaceAll(checkerFmt, "EXITCODE", code)
 }
 
-func buildChecker(t *testing.T, body string) []string {
+// buildChecker 把判题器编进 root。**必须编在本次提交的工作目录里**：编到外面时开了沙盒
+// 之后它在牢房里看不见自己的可执行文件，判机故障会看起来像沙盒坏了。
+func buildChecker(t *testing.T, root, body string) []string {
 	t.Helper()
 	argv, err := BuildAux(Available(DefaultTools()), AuxProgram{Language: "cpp", Source: body},
-		filepath.Join(t.TempDir(), "aux"), AuxChecker)
+		root, AuxChecker)
 	if err != nil {
 		t.Fatalf("编判题器失败：%v", err)
 	}
 	return argv
 }
 
-func judgeWithSPJ(t *testing.T, tool Tool, spj []string, source string, cases []Case) Report {
+// judgeWithSPJ 按生产的样子跑一次判题：工作目录先建好，判题器编在它里面。
+func judgeWithSPJ(t *testing.T, tool Tool, checkerSource, source string, cases []Case) Report {
 	t.Helper()
+	dir := filepath.Join(t.TempDir(), "work")
 	return Judge(Task{
 		SubmissionID: 1, PID: "P1", Language: "cpp", Source: source,
-		TimeLimitMS: 2000, MemLimitKB: 262144, SPJ: spj, Cases: cases,
-	}, tool, filepath.Join(t.TempDir(), "work"), nil, nil)
+		TimeLimitMS: 2000, MemLimitKB: 262144,
+		SPJ: buildChecker(t, dir, checkerSource), Cases: cases,
+	}, tool, dir, nil, nil)
 }
 
 const messySum = `#include <iostream>
@@ -58,7 +63,7 @@ func TestSPJReplacesTheByteCompare(t *testing.T) {
 	if rep := judgeSource(t, tool, messySum, oneSumCase, 2000, 262144); rep.Verdict != WA {
 		t.Fatalf("不带判题器时多打了字应当 WA，实际 %s：%s", rep.Verdict, rep.Detail)
 	}
-	rep := judgeWithSPJ(t, tool, buildChecker(t, checker("0")), messySum, oneSumCase)
+	rep := judgeWithSPJ(t, tool, checker("0"), messySum, oneSumCase)
 	if rep.Verdict != AC || rep.Score != 100 {
 		t.Errorf("判题器说对之后 = %s %d/%d（%s），要 AC 100/100",
 			rep.Verdict, rep.Score, rep.TotalScore, rep.Detail)
@@ -73,7 +78,7 @@ func TestSPJVerdictCodeAndComment(t *testing.T) {
 int main(){ printf("42\n"); }`
 	cases := []Case{{Name: "1", Ordinal: 1, Score: 50, Input: []byte("x\n"), Expected: []byte("42\n")}}
 
-	rep := judgeWithSPJ(t, tool, buildChecker(t, checker("1")), source, cases)
+	rep := judgeWithSPJ(t, tool, checker("1"), source, cases)
 	if rep.Verdict != WA || rep.FailedCase != "1" {
 		t.Fatalf("判题器退 1 判成 %s（%s），要 WA 且指名这条用例", rep.Verdict, rep.Detail)
 	}
@@ -91,7 +96,7 @@ int main(){ printf("1\n"); }`
 	cases := []Case{{Name: "1", Ordinal: 1, Score: 10, Input: []byte("i\n"), Expected: []byte("1\n")}}
 
 	for _, code := range []string{"2", "70", "99"} {
-		rep := judgeWithSPJ(t, tool, buildChecker(t, checker(code)), source, cases)
+		rep := judgeWithSPJ(t, tool, checker(code), source, cases)
 		if rep.Verdict != IE {
 			t.Errorf("判题器退出码 %s 判成 %s（%s），要 IE", code, rep.Verdict, rep.Detail)
 			continue
@@ -108,9 +113,9 @@ int main(){ printf("1\n"); }`
 // argv 的顺序是判题器与判机之间唯一的约定，弄反了会把答案当输入用：每一道题都判错，
 // 而且错得很安静。
 func TestSPJPassesInputOutputAnswerInThatOrder(t *testing.T) {
-	buildChecker(t, checker("0")) // 先确认这台机器真能编判题器
-	argv := buildChecker(t, checker("0"))
+	requireToolchain(t)
 	dir := t.TempDir()
+	argv := buildChecker(t, dir, checker("0"))
 	for name, body := range map[string]string{
 		"a.in": "IN\n", "b.out": "OUT\n", "c.ans": "ANS\n",
 	} {
@@ -161,7 +166,7 @@ int main(){
   while (clock() - start < CLOCKS_PER_SEC / 2) {}
   return 0;
 }`
-	rep := judgeWithSPJ(t, tool, buildChecker(t, burn), source, cases)
+	rep := judgeWithSPJ(t, tool, burn, source, cases)
 	if rep.Verdict != AC {
 		t.Fatalf("慢判题器把判定改成了 %s：%s", rep.Verdict, rep.Detail)
 	}
@@ -177,7 +182,7 @@ func TestSPJFilesStayInTheSubmissionWorkdir(t *testing.T) {
 	source := `#include <cstdio>
 int main(){ printf("1\n"); }`
 	cases := []Case{{Name: "1", Ordinal: 1, IsSample: true, Input: []byte("i\n"), Expected: []byte("1\n")}}
-	rep := judgeWithSPJ(t, tool, buildChecker(t, checker("0")), source, cases)
+	rep := judgeWithSPJ(t, tool, checker("0"), source, cases)
 	if rep.Verdict != AC {
 		t.Fatalf("样例也要走判题器：%s %s", rep.Verdict, rep.Detail)
 	}

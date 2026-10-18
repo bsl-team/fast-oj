@@ -16,7 +16,11 @@ import (
 
 // defaultLanguages is what the submit form offers when a problem does not
 // restrict languages; it mirrors judge.DefaultTools().
-var defaultLanguages = []string{"c", "cpp"}
+var defaultLanguages = []string{"c", "cpp", judge.PythonLanguage}
+
+// pythonMinMemKB 是收 Python 的题至少要给的内存：解释器空跑的常驻就要 ~9MB（实测
+// python3.14），再 import 一点标准库只多不少。低于这条线，判定量的就不是学生的程序。
+const pythonMinMemKB = 64 << 10
 
 func statusLine(status int) string {
 	return strconv.Itoa(status) + " " + http.StatusText(status)
@@ -104,18 +108,22 @@ func rowOf(d store.SubmissionDetail) subRow {
 	}
 	return subRow{
 		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title,
-		Language: langCell(d.Language, d.Options),
+		Language: langCell(d.Language, d.Options, d.Toolchain),
 		Class:    class, Outcome: outcome,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Ago: agoMS(d.CreatedAt),
 	}
 }
 
-// langCell 是列表里那一格语言。只在选得与判机默认不同时才补上版本：列表是拿来扫的，
-// 每行都挂一句"C++17 · O2 开"反而让真选过版本的那几条看不出来。全称在提交详情页上。
-func langCell(lang, options string) string {
+// langCell 是列表里那一格语言。判机自报过口径就显示自报的那一份；没自报时只在选得与判机
+// 默认不同时补一句，并标出「未回报」——列表也是拿来核对的，不能把提交时的选择写成判机
+// 做过的事。全称在提交详情页上。
+func langCell(lang, options, reported string) string {
+	if reported != "" {
+		return lang + " · " + reported
+	}
 	if note := versionNote(lang, options); note != "" {
-		return lang + " · " + note
+		return lang + " · " + note + "（判机未回报）"
 	}
 	return lang
 }
@@ -207,7 +215,9 @@ type problemData struct {
 	LangText   string
 	Langs      []string
 	// Versions 是提交页上的版本下拉：每根轴一份候选，值与判机的候选表同源。
-	Versions    []versionAxis
+	Versions []versionAxis
+	// Mode 是题面页上那句"这题怎么判"（SPJ / 交互题）。普通题是空串，不打扰学生。
+	Mode        string
 	JudgedCases int
 	TotalScore  int
 	Solved      int
@@ -342,10 +352,17 @@ func (s *Server) problemPage(w http.ResponseWriter, r *http.Request, a actor, p 
 		options = defaultLanguages
 	}
 	c := counts[p.ID]
+	// 判定方式是学生打开题面第一眼就该看到的（交互题尤其），所以这一步按主键多读一张小表。
+	programs, err := s.db.JudgePrograms(r.Context(), p.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, http.StatusOK, p.PID+" "+p.Title, "problem", a.viewer(), msgOf(r), problemData{
 		PID: p.PID, Title: p.Title,
 		Time: formatMS(p.TimeLimitMS, false), Mem: formatKB(p.MemLimitKB, false),
 		LangText: langText, Langs: options, Versions: versionAxesFor(options),
+		Mode:        modeBadge(programs),
 		JudgedCases: judged, TotalScore: total,
 		Solved: c.Solved, Submits: c.Submits,
 		Hidden:     !p.Visible,
@@ -480,7 +497,7 @@ func (s *Server) submissionPage(w http.ResponseWriter, r *http.Request, a actor,
 
 	s.page(w, r, http.StatusOK, fmt.Sprintf("提交 #%d", d.ID), "submission", a.viewer(), "", submissionData{
 		ID: d.ID, Handle: d.Handle, Name: personName(d.Name, d.Handle), PID: d.PID, Title: d.Title,
-		Language: d.Language, Version: versionLabel(d.Language, d.Options),
+		Language: d.Language, Version: toolchainCell(d.Language, d.Toolchain, d.Options),
 		Class: class, Outcome: outcome, Headline: headline,
 		Time: formatMS(d.TimeMS, d.TimeMin), Mem: formatKB(d.MemKB, d.MemMin), Score: score,
 		Failed: orDash(d.FailedCase), JudgeName: judgeName,
@@ -758,6 +775,17 @@ func (s *Server) createSubmission(r *http.Request, a actor, problemKey, language
 	if !languageAllowed(p.Languages, lang) {
 		return store.Submission{}, fmt.Sprintf("这道题只收 %s，不收 %s", strings.Join(p.Languages, "/"), lang),
 			problemPath, errors.New("language")
+	}
+	// Python 的内存下限是解释器自己要的那一份：实测 python3.14 空跑一次就要 ~9MB 常驻，
+	// 加上 import 一点标准库就更多。题面内存比这还小的时候，每一条 Python 提交都会
+	// MLE——那不是判定，那是解释器在替学生报错。所以这里当面拒绝并说清原因，而不是
+	// 让提交进去撞一条莫名其妙的内存超限。
+	if lang == judge.PythonLanguage && p.MemLimitKB < pythonMinMemKB {
+		return store.Submission{}, fmt.Sprintf(
+				"这道题的内存上限是 %s，Python 解释器自己就要占约 10MB，交上来只会因为内存超限被拒。"+
+					"要么把题面内存调到 %d KB 以上，要么这道题别收 Python",
+				formatKB(p.MemLimitKB, false), pythonMinMemKB),
+			problemPath, errors.New("python memory")
 	}
 	// 版本选择在写库前就按判机的候选表规范化：这一串以后会被拼进命令行，含糊的、越界的
 	// 都不该进去。被拒时说明能选哪些，而不是悄悄换成另一个版本编——那等于用一条谁都没

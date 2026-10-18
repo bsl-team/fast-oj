@@ -39,9 +39,17 @@ powershell -File build.ps1        # 产出 dist\fast-oj.exe dist\fast-judge.exe
 # 1. 服务端（两个令牌必填，留空会拒绝启动）
 ./dist/fast-oj.exe -addr 127.0.0.1:8080 -data data -admin-token ADM -judge-token JDG
 
-# 2. 判机端（需要 g++ 在 PATH 上，可以和服务器同机）
+# 2. 判机端（需要 g++ 在 PATH 上，可以和服务器同机；要收 Python 就再装一个 python3）
 ./dist/fast-judge.exe -server http://127.0.0.1:8080 -token JDG -name box1 -v
 ```
+
+**Linux 上不要把令牌写在命令行上**：`-token` / `-admin-token` / `-judge-token` 在 Linux 会直接拒绝启动，
+只认环境变量 `FASTOJ_JUDGE_TOKEN` / `FASTOJ_ADMIN_TOKEN`。原因是 `/proc/<pid>/cmdline` 是 0444、
+所有本地账号都读得到（`hidepid` 默认没开），而判机上跑的正是别人提交的代码——写在 argv 里的令牌
+等于发给整台机器，一次逃逸出沙盒的运行就能把它抄走。systemd 里 `-token $FASTOJ_JUDGE_TOKEN` 这种写法
+也是同一个问题：`ExecStart` 会先展开再 exec，0600 的 `EnvironmentFile` 就白设了——正确做法是让
+`ExecStart` 里不出现令牌，进程自己去读那个文件提供的环境变量。Windows 开发机没有 `/proc`、单机一个人用，
+所以只警告不拦。
 
 浏览器打开 <http://127.0.0.1:8080>。**全新库的第一步**：打开 <http://127.0.0.1:8080/admin/claim>，把 `-admin-token` 的值填进去，给 `admin` 账号设一个网页密码，之后就是普通登录（这个页面在旧库上也能用，属于恢复手段，会先警告你要覆盖已有密码）。命令行只留一件事——探活：
 
@@ -99,6 +107,7 @@ curl -s localhost:8080/healthz          # ok
 | `POST` | `/problems/{key}/cases/{id}/delete` | 同上 | 删一条用例（连带它的文件） |
 | `POST` | `/problems/{key}/cases/wipe` | 同上 | 清空用例 |
 | `GET` | `/problems/{key}/cases/{name}/{in\|out}` | 样例公开，判题需 admin/判机 | 取单个用例正文 |
+| `POST` | `/problems/{key}/judge_program` | `judge_program.edit` | 存/撤本题的判题器或交互器（`kind=checker\|interactor`，源码留空即撤掉） |
 | `POST` | `/problems/{key}/submit` | 登录用户 | 网页表单提交 |
 | `GET` | `/submissions` | 公开 | 列表，`?user=`（或 `me`）`&problem=&limit=&after=` |
 | `GET` | `/submissions/{id}` | 公开 | 结果。判机每完成一个用例就回报一行，未判完时页面每 2 秒自动刷新，逐用例行一条条冒出来 |
@@ -145,7 +154,7 @@ curl -s localhost:8080/healthz          # ok
 | `GET` `/POST` | `/settings` `/settings/*` | 登录用户 | 资料、密码、私信策略、邮箱验证状态与重新发送 |
 | `GET` | `/verify?token=…` | 邮件里的链接 | 验证邮箱：一次有效，用过/过期都给出原因 |
 | `POST` | `/judge/claim` | 判机令牌 | 心跳 + 领取一条（空队列返回 404 `queue empty`） |
-| `GET` | `/judge/cases/{id}/{in\|out}` | 判机令牌 | 取用例正文（含判题用例） |
+| `GET` | `/judge/submissions/{id}/cases/{ordinal}/{in\|out}?judge=NAME` | 判机令牌 + 本机确实领到了这条工单 | 取这条工单的用例正文（含判题用例）。按「第 N 条」取而不是按用例 id 取：拿到令牌的人因此读不到自己没被派到的题的数据 |
 | `POST` | `/judge/submissions/{id}/status` | 判机令牌 | 进度 + 逐用例回报（`compiling` → `running`） |
 | `POST` | `/judge/submissions/{id}/result` | 判机令牌 | 终局判定与逐用例结果 |
 | `GET` | `/judges` | `judge.view` | 判机框清单 |
@@ -165,7 +174,8 @@ curl -s localhost:8080/healthz          # ok
 | `POST` | `/admin/ips/unban/{ip}` | `ip.manage` | 解封，缓存立即失效 |
 
 出题在浏览器里走：导航栏「出题」→ 填编号、标题、题面（可以「预览」看渲染效果，不保存）→ 保存后直接落到用例页，
-逐条加输入输出或用 zip 批量导入。表格里最后四行是判机协议：只有判机令牌能用，网页上没有任何入口，
+逐条加输入输出或用 zip 批量导入；答案不唯一或要一问一答，就在用例页最下面贴一份判题器或交互器（要 `judge_program.edit`）。
+表格里最后四行是判机协议：只有判机令牌能用，网页上没有任何入口，
 `/healthz` 与它们是两个非 HTML 的端点。
 
 ---
@@ -351,6 +361,115 @@ zip -j cases.zip 1.in 1.out sample1.in sample1.out
 
 ---
 
+## 判题方式：普通比较 / SPJ 判题器 / 交互题
+
+一道题「怎么算对」有三档。出题人在**用例页最下面**「判题方式」那一块决定，题面页用一行字把结论告诉学生（那两份程序的源码学生看不到）。
+
+| 档位 | 谁来判 | 判定 | 时限 | 内存 |
+|------|--------|------|------|------|
+| 普通 | 判机 | 标准输出与答案**宽松比较**：忽略每行行尾空白与整个输出的末尾空行 | 题面时限 | 题面内存 |
+| SPJ | 判题器 | 退出码 `0` 对、`1` 错、其他 → **判机故障** | 题面时限 | 题面内存 |
+| 交互 | 交互器 | 退出码 `0` 对、`1` 错、`7` 选手程序出错、其他 → **判机故障** | **两侧 CPU 之和**跟题面时限比 | **只算选手那一份** |
+
+判题器与交互器共用同一条命令行约定，作者只需要学一遍：`argv[1] argv[2] argv[3]` = **输入文件、选手输出文件、答案文件**，
+程序打印到标准输出的内容成为**评语**。交互题的第二个参数是对话**结束之后**才写进工作目录的转写，
+运行时去读只会读到空文件——要跟选手说话就走 stdin/stdout，别开那个文件。
+
+- **时限为什么按两侧之和**：交互器每答一句都要替选手算一次，分开算等于给交互题白送一份时限。
+- **内存为什么不算交互器**：它占多少不由学生负责。交互器另有自己的硬顶，顶穿了按**判机故障**收，不能让它把机器顶穿。
+- **判题器的预算**：10 秒、512MB、8 个进程，与题面时限无关，也不记在学生的用时里——它自己慢了或崩了是判机故障，不该变成学生的 TLE。
+- **交互器的预算**：同一份 512MB 与 8 个进程，但 **CPU 不设单独限值**。它的用时是和选手那份相加后跟题面时限比的，
+  各设一份时钟就会出现「按之和判定、按各自杀进程」两个对不上的口径。
+- **对话拓扑**：选手 stdout → 交互器 stdin，交互器 stdout → 选手 stdin，判机在中间各搬一份、各留一份转写。
+  一侧结束后判机立刻关掉对面的写端，所以规矩的程序会读到 EOF 自己收工，而不是永远等在管道上。
+
+### 存在哪儿、谁能改
+
+源码存在 `judge_programs`（`problem_id` + `kind ∈ {checker, interactor}`），单份上限 256KB。
+语言只能是**判机真认识的工具链**（现在与提交页同源：`c` / `cpp`）——允许存一份判机编不出来的语言，
+就是让下一个提交的学生吃一条判机故障。**源码留空保存就是撤掉**，题目回到逐字节比较。
+
+改它要 `judge_program.edit`，是一项**单独的权力**，不随 `testcase.manage` 或改题面的委托一起给：
+判题器等于把「在判机上执行一段作者写的代码」这件事发出去。没有这项权力的人看到的是只读说明，
+而不是整块消失——藏起来会让人以为这道题不支持 SPJ。
+
+### 判机拿到的是同样的牢房
+
+两份程序都由**判机现场编译**，然后在**同一个牢房**里执行（同一套 userns / chroot / rlimit，隔离程度不更高）。
+Web 侧不当场试编：编不编得过由判机那台机器的工具链说了算，替它说「这份能编」才是假保证。
+
+- **两份都配了 → 判机直接拒判**（判成判机故障，写明两者只能留一个）。它不会悄悄挑一个来用；保存时用例页就会提醒。
+- **编译失败、判题器崩溃、超时顶穿它自己的预算 → 判机故障**，detail 写明是哪份程序的问题。学生的代码不背这个锅，但那条提交确实废了。
+- 评语显示在详情页「判机信息」那一栏，受本题**详情级别**约束（低于 `diff` 学生看不到）；
+  多条用例同时失败时只留**第一条**的评语，所以判题器那句「为什么判错」要写成任何一条用例都能自洽的话。
+- 判题器判定过的题目不再有「第 N 行你输出 X、答案是 Y」那种逐行对照——答案不唯一，那种对照本身就没有意义。
+
+### 部署：服务器与判机要一起升级
+
+判题器与交互器的源码是**跟着工单发给判机**、由判机编译的，协议里没有版本协商这一层。
+所以**旧判机会把这两个字段直接看不见**，把带 SPJ 的题按逐字节比较判掉——而页面上写着「本题由 SPJ 判定」，
+那就是当着学生的面讲假话。升 SPJ / 交互题时先把判机升上去，再放配了判题器的题目。
+同理适用于提交页的版本选项（`-std=` / `-O2`）：旧判机也会默默按它自己的老口径编。
+
+---
+
+## Python 提交：护栏装在解释器里，边界还是牢房
+
+判机收 `c` / `cpp` / `python`。Python 那一支不编译：判机把源码写成 `main.py`，在同一目录里
+再落一份 `internal/judge/pyguard.py`，然后用
+
+```
+python3 -I -B -S -X utf8 <工作目录>/pyguard.py <工作目录>/main.py
+```
+
+跑起来——`-I` 让 `PYTHONPATH` 之类的环境变量进不来，`-S` 不跑 `site`（少一条把 site-packages
+塞进 `sys.path` 的路，`pip` 更进不来），`-B` 不落 `.pyc`，`-X utf8` 让学生打印中文时不跟着
+`LANG=C` 变乱码。
+
+- **时限原样算**：解释器启动那几十毫秒 CPU 也算在学生的用时里，不放宽。
+- **内存只算学生那一份**，但题面内存低于 **64MB** 时站点直接拒收 Python：实测 CPython 3.14
+  空跑常驻就要 ~9MB，再 import 一点标准库只多不少——那种题面判的不是学生的程序，是解释器。
+  提交页会把这句话当面说明，而不是让提交进去撞一条 MLE。
+
+### 护栏挡什么
+
+`pyguard.py` 装的是一个 CPython **审计钩子**（`sys.addaudithook`，装上就摘不掉，学生代码里
+`exec`/`eval` 出来的东西同样经过它）。挡下的是"离开这次运行"的那几扇门：`subprocess`、
+`socket`/`ssl`/`select`/`selectors`/`asyncio`、`ctypes`、`multiprocessing`、`pty`、`webbrowser`、
+`http`/`urllib`/`ftplib`/`smtplib` 等网络库，以及 `pip`/`ensurepip`/`venv`/`setuptools`/`distutils`。
+撞到钩子时学生看到的是一条 `RuntimeError: 判机不允许……`，判定是 **RE**，原因在 stderr 里。
+
+名单**只列真能出门的那几扇**，这有实测依据：`pathlib` 在 3.14 会去 `import fcntl`，早先那份
+名单把 `fcntl` 也禁了，于是 `import pathlib` 直接炸——而且只在 Linux 上炸（Windows 没有这个模块）。
+同理 `os`、`shutil`、`signal`、`threading` 都留着：禁 `os` 会让 `random`/`pathlib`/`tempfile`
+一起塌。有一条测试同时盯这两半（该挡的真挡住、常用的还能用）。
+
+**护栏是纵深，不是边界**。它假定牢房开着——"不许离开这次运行的目录"这条线是 chroot 画的。
+所以判机有两道闸门：
+
+1. **启动自测**（`judge.PythonProbe`）：一次正常程序必须跑通，一次想起子进程的必须被挡下来，
+   而且当前配置必须真能建牢房。任何一条不过，就把 `python` 从这台判机的名单上摘掉，并把原因
+   挂在 `/judges` 的备注里——站点因此不会摆出一个"能选但判不了"的选项。
+2. **领单时**（`internal/judgeagent`）：`!judge.Jailed()` 而工单里有任何一份要跑的 Python
+   （提交、Python 写的判题器或交互器都算）→ 判机故障 + 那句原因。
+
+`/judges` 上能看到这台机器实际的口径：`沙盒已启用（…）；Python 自测：…` 或者被摘掉的原因。
+
+### 判题器与交互器也能用 Python 写
+
+`BuildAux` 对不编译的工具会把那份护栏一起落进目录，交回"解释器 + 护栏 + 源码"这条命令行，
+所以 SPJ 与交互器的 `argv` 约定和 C++ 完全一致（`argv[1..3]` = 输入 / 选手输出 / 答案，
+退出码 `0/1/7`）。作者那份 Python 与学生那份拿到的是同一层护栏、同一个牢房、同一份
+`10 秒 / 512MB / 8 进程` 的预算。
+
+### 部署
+
+判机那台机器要有 `python3`（`Dockerfile.judge` 里 `apt install python3`）。**服务器与判机要一起升**：
+旧判机不认识工单里的 `python`，会按"这台机器没有这门语言"回一条判机故障——那条提交废了，
+但比悄悄用另一套口径判掉要好。启动日志与 `/judges` 会写明它到底有没有这门语言。
+
+---
+
 ## 比赛（限时 + 独立榜 + 加入码 + 队伍，OI/IOI/ACM 三种赛制）
 
 比赛只负责「谁在什么时间对哪些题交了什么」。**每题得分仍然由 M13 那套逐用例计分给出**（组内全过才给分），
@@ -512,6 +631,7 @@ zip -j cases.zip 1.in 1.out sample1.in sample1.out
 | `problem.edit.any` | 编辑他人创建的题目 |
 | `problem.publish` | 公开 / 隐藏题目（作者本人也不能隐藏自己的题，需要这一项） |
 | `testcase.manage` | 管理他人题目的用例 |
+| `judge_program.edit` | 写题目的判题器与交互器：**把一段作者写的代码送上判机执行**，所以不随 `testcase.manage` 或改题面一起给 |
 | `contest.create` | 创建比赛 |
 | `contest.manage.any` | 管理他人创建的比赛 |
 | `user.manage` | 改角色、封禁 / 解封 |
@@ -691,10 +811,15 @@ zip -j cases.zip 1.in 1.out sample1.in sample1.out
 
 ```
 POST /judge/claim                       → 心跳注册 + 领取（404 = 队列空）
-GET  /judge/cases/{id}/{in|out}         → 逐个取用例
+GET  /judge/submissions/{id}/cases/{ordinal}/{in|out}?judge=NAME → 取这条工单的用例
 POST /judge/submissions/{id}/status     → compiling → running
 POST /judge/submissions/{id}/result     → 判定 + 逐用例行
 ```
+
+用例正文按「这条提交的第 N 条」取，不按用例的数据库 id 取，而且服务器会核对这条提交确实
+派给了报上来的那台判机。老写法（`/judge/cases/{id}`）等于给判机一个可以顺着 1、2、3 枚举
+**全站隐藏输入与答案**的把手——判机令牌一旦泄露（它曾在 `ps` 里），那种泄露没法回收。
+现在拿到令牌的机器只能读到自己被派到的那几份文件。
 
 服务器侧的规则：
 
@@ -857,8 +982,8 @@ data/
 | `-addr` | `127.0.0.1:8080` | 监听地址（`FASTOJ_ADDR`） |
 | `-data` | `./data` | 数据目录（`FASTOJ_DATA`） |
 | `-db` | `<data>/fast-oj.db` | 单独指定库文件（`FASTOJ_DB`） |
-| `-admin-token` | 必填 | 管理令牌（`FASTOJ_ADMIN_TOKEN`） |
-| `-judge-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`） |
+| `-admin-token` | 必填 | 管理令牌（`FASTOJ_ADMIN_TOKEN`）。**Linux 上只能用环境变量**：写在命令行上会拒绝启动 |
+| `-judge-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`）。同上 |
 | `-max-source` | 262144 | 源码/JSON 请求体上限 |
 | `-max-upload` | 64 MiB | 用例包上限 |
 | `-max-case` | 16 MiB | 单个用例文件上限 |
@@ -874,7 +999,7 @@ data/
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `-server` | `http://127.0.0.1:8080` | 服务器地址（`FASTOJ_SERVER`） |
-| `-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`） |
+| `-token` | 必填 | 判机令牌（`FASTOJ_JUDGE_TOKEN`）。**Linux 上只能用环境变量**：`/proc/<pid>/cmdline` 所有本地账号可读，写在命令行上直接拒绝启动 |
 | `-name` | 主机名 | 判机框名字（`FASTOJ_JUDGE_NAME`） |
 | `-dir` | 用户缓存目录 | 工作目录（`FASTOJ_JUDGE_DIR`），每次判题用 `sid` 子目录，跑完即删 |
 | `-poll` | 500ms | 空队列轮询间隔 |
@@ -954,7 +1079,8 @@ powershell -File build.ps1 -Test
 
 | 事项 | 现状 |
 |------|------|
-| 语言 | 只有 C/C++；Python 判机的时间/内存测量另说 |
+| 语言 | C / C++ / Python（见 [Python 提交](#python-提交护栏装在解释器里边界还是牢房)）。Python 的时限原样算、内存下限 64MB、只在牢房开着的判机上收；`pypy` 之类的加速解释器没有，Java/Go 等仍未做 |
+| 判题方式 | SPJ 判题器与交互题已做（见[判题方式](#判题方式普通比较--spj-判题器--交互题)）。仍**没有**：与判机的版本协商——旧判机会把工单里的这两个字段看不见，按逐字节比较判掉带 SPJ 的题还照报成功，服务器与判机必须一起升；判题器只能用判机有的工具链（`c`/`cpp`）；多条用例同时失败时只留**第一条**的评语；交互器读不到选手的转写文件（那是对话结束后才写的，对话本身走 stdin/stdout） |
 | 判机隔离 | Linux 上每次运行都有命名空间牢房（无网络、看不到宿主目录、内核 rlimit 兜 CPU/内存/进程数），root 与非 root 两种部署都能开；容器再套一层。仍**没有**：seccomp-bpf 系统调用白名单（牢房里仍能 `execve`/`ptrace`，只是无网、无宿主文件、无权限）、pid 命名空间（Go 的 `unshare` 语义拿不到，见[判题沙盒](#判题沙盒-internaljail一次运行一个牢房)）、Windows 上的任何文件/网络隔离（平台没有这套机制，`-sandbox=on` 会直接拒绝启动） |
 | 账号 | 注册可关；**邮箱验证已做**（`/admin/site` 的第六个开关 + 图形化 SMTP 配置 + 发送测试邮件），未验证的账号能读能登录，但不能提交代码与参加比赛，验证链接一次有效、可在设置页重发。仍**没有**：「忘记密码」重置链接（忘了密码还是要管理员改库）、改邮箱入口（改了就得由管理员重发验证，因为旧邮箱收到的那条链接会被拒绝）、把验证做成"没验证连登录都不行"的更严模式 |
 | 工单 | 已做（五类、四状态、私密、流水、处理人角标）。仍**没有**：新工单的邮件/推送提醒、按人分派与 SLA、附件上传（正文能写 Markdown，贴图得靠外链） |

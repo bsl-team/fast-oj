@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// Case is one test case with its data already fetched.
+// Case is one test case with its data already fetched. 判定与回报都按 Ordinal 走，
+// 这里没有数据库 id：判机拿到那份 id 也没有能用的地方，它只会多一个枚举别题的把手。
 type Case struct {
-	ID       int64
 	Name     string
 	Ordinal  int
 	IsSample bool
@@ -29,8 +29,11 @@ type Task struct {
 	MemLimitKB   int
 	// SPJ 是题目自带、已经编好的判题器命令行；空表示按标准输出与答案宽松比。
 	// 命令行而不是路径：解释型判题器要 "<解释器> <源码>" 两段。
-	SPJ   []string
-	Cases []Case
+	SPJ []string
+	// Interactor 是题目自带、已经编好的交互器命令行。交互题由它判定：这时候既不比字节，
+	// 也不再跑判题器（两个同时配上会被判机拒绝，见 judgeagent）。
+	Interactor []string
+	Cases      []Case
 }
 
 type RunRow struct {
@@ -57,6 +60,10 @@ type Report struct {
 	Runs       []RunRow
 	Score      int
 	TotalScore int
+	// Toolchain 是这台判机自报"这次实际用的口径"（"C++14 · O2 关"、"python 3.14"）。
+	// 由判机回报而不是服务器按提交时的选择写：选了 c++14 却被一台旧判机按 c++17 编了，
+	// 差别只有动手编的那台机器知道。
+	Toolchain string
 }
 
 // CompileLimits are deliberately loose: a slow link step is not the submitter's
@@ -95,7 +102,7 @@ type Progress func(row RunRow)
 // the network: the caller has already fetched the case data. drop is the uid a
 // submission is run as, when the judge has one to give it; onProgress may be nil.
 func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) Report {
-	rep := Report{Verdict: IE, TimeMS: -1, MemKB: -1}
+	rep := Report{Verdict: IE, TimeMS: -1, MemKB: -1, Toolchain: tool.ToolchainLabel()}
 	if len(task.Cases) == 0 {
 		rep.Detail = "problem " + task.PID + " has no test cases"
 		return rep
@@ -108,6 +115,11 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 	source := filepath.Join(dir, tool.SourceFile)
 	if err := os.WriteFile(source, []byte(task.Source), 0o644); err != nil {
 		rep.Detail = "write source: " + err.Error()
+		return rep
+	}
+	// 解释型语言自带的那份护栏要在学生代码之前落到同一个目录里：Run 里按 {dir} 引用它。
+	if err := writeSupport(tool, dir); err != nil {
+		rep.Verdict, rep.Detail = IE, err.Error()
 		return rep
 	}
 
@@ -137,25 +149,39 @@ func Judge(task Task, tool Tool, dir string, drop *DropTo, onProgress Progress) 
 
 	runLimits := Limits{TimeMS: task.TimeLimitMS, MemKB: task.MemLimitKB, RunAs: drop}
 	argv := tool.RunArgs(dir)
-	if !tool.Compiles() {
-		// Interpreters take the source file after the program name.
+	if !tool.Compiles() && !strings.Contains(strings.Join(tool.Run, " "), "{src}") {
+		// 解释器把源码接在命令行末尾；Run 里已经写了 {src} 的（Python 要在源码之前
+		// 先上护栏）就不再追加，否则同一份 main.py 会被交给解释器两遍。
 		argv = append(argv, source)
 	}
 
 	worst := AC
 	firstFailure := -1
 	for _, tc := range task.Cases {
-		ex := Run(argv, dir, tc.Input, runLimits)
-		v := ex.Verdict
+		var ex Execution
+		v := AC
 		// note 是"这次为什么算这个判定"的那句话：普通题是首个不同的那一行，SPJ 题是
-		// 判题器自己打印的评语。
+		// 判题器自己打印的评语，交互题是交互器打印的评语。
 		note := ""
-		if v == AC {
-			switch {
-			case len(task.SPJ) > 0:
-				v, note = checkWithSPJ(task.SPJ, dir, tc, ex.Stdout)
-			case !OutputsMatch(ex.Stdout, tc.Expected):
-				v, note = WA, diffExcerpt(ex.Stdout, tc.Expected)
+		switch {
+		case len(task.Interactor) > 0:
+			// 交互题：选手的 stdin/stdout 接到交互器上，判定由交互器的退出码给出。
+			duo := runInteractive(task.Interactor, argv, dir, tc, runLimits)
+			ex = duo.User
+			// 用时按两侧之和报（口径与判定一致），内存仍报选手那一份——交互器占多少不是
+			// 学生的错。
+			ex.TimeMS, ex.TimeMin = duo.TimeMS, duo.User.TimeMin || duo.Interactor.TimeMin
+			v, note = verdictForDuo(duo)
+		default:
+			ex = Run(argv, dir, tc.Input, runLimits)
+			v = ex.Verdict
+			if v == AC {
+				switch {
+				case len(task.SPJ) > 0:
+					v, note = checkWithSPJ(task.SPJ, dir, tc, ex.Stdout)
+				case !OutputsMatch(ex.Stdout, tc.Expected):
+					v, note = WA, diffExcerpt(ex.Stdout, tc.Expected)
+				}
 			}
 		}
 		row := RunRow{Ordinal: tc.Ordinal, CaseName: tc.Name, Verdict: v,

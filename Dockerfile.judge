@@ -6,8 +6,11 @@
 FROM debian:bookworm-slim
 
 # g++/gcc 是判题工具链；-static 编译需要 libc6-dev 里的静态库。
+# python3 让这台判机能收 Python 提交——但只是"有解释器"，能不能真收还要看牢房开不开得起来：
+# 容器里 unshare 常被 Docker 的 seccomp 挡掉，那时闸门会把 python 从名单上摘掉并在
+# /judges 上写明原因，而不是让解释器裸跑。
 RUN apt-get update \
- && apt-get install -y --no-install-recommends g++ gcc libc6-dev ca-certificates \
+ && apt-get install -y --no-install-recommends g++ gcc libc6-dev ca-certificates python3 \
  && rm -rf /var/lib/apt/lists/*
 
 # 非 root 的专用账号：容器里它什么都不是，宿主上更不存在。

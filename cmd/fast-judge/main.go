@@ -8,12 +8,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/liangbinchen2013/fast-oj/internal/config"
 	"github.com/liangbinchen2013/fast-oj/internal/jail"
 	"github.com/liangbinchen2013/fast-oj/internal/judge"
 	"github.com/liangbinchen2013/fast-oj/internal/judgeagent"
@@ -99,6 +101,19 @@ func run() error {
 	)
 	flag.Parse()
 
+	// 令牌写在命令行上就等于发给了整台机器：/proc/<pid>/cmdline 是所有本地账号可读的，
+	// 而判机上跑的正是别人提交的代码。systemd 里写 `-token $FASTOJ_JUDGE_TOKEN` 会先展开
+	// 再 exec，0600 的 EnvironmentFile 也因此白设——默认值本来就是那个环境变量，别再传一遍。
+	if leaked := config.ArgvSecrets(os.Args[1:], map[string]string{"-token": *token}); len(leaked) > 0 {
+		if runtime.GOOS == "linux" {
+			return fmt.Errorf("判机令牌不能写在命令行上（%s）：改用环境变量 FASTOJ_JUDGE_TOKEN，"+
+				"并把它从 ExecStart 里去掉（systemd 的 EnvironmentFile 已经提供了它）",
+				strings.Join(leaked, "、"))
+		}
+		fmt.Fprintf(os.Stderr, "fast-judge: 警告：判机令牌出现在命令行上，本机上其他账号看得到；"+
+			"正式部署请改用环境变量 FASTOJ_JUDGE_TOKEN\n")
+	}
+
 	drop, err := parseRunAs(*runAs)
 	if err != nil {
 		return err
@@ -140,6 +155,15 @@ func run() error {
 		return sandboxErr
 	}
 	agent.SetNote(note)
+	// Python 要两道都过才上名单：这台机器有解释器，且护栏在牢房里真挡得住一次子进程调用。
+	// 缺任何一道就把这门语言摘掉并把原因写在 /judges 上——"页面上能选、判机却判不了"是
+	// 最差的一种，"能判但没隔离"是更差的一种。
+	if pyNote, err := judge.PythonProbe(filepath.Join(agent.Dir(), "pyprobe")); err != nil {
+		agent.DisableLanguage(judge.PythonLanguage, err.Error())
+		log.Printf("Python 不在这台判机的名单上：%v", err)
+	} else {
+		log.Printf("Python 自测：%s", pyNote)
+	}
 	log.Printf("judge %s polling %s for [%v]", *name, *server, agent.Languages())
 	log.Printf("隔离边界：%s。环境变量只发最小集，内存/CPU/进程数与超时由判机实测加内核 rlimit 双重兜住。", note)
 	if mode == jail.Off {

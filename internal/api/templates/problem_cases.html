@@ -102,43 +102,37 @@
 {{end}}
 
 <h2>判题方式</h2>
-{{if .Data.Checker.Source}}
-<p class="meta">本题用 <b>SPJ 判题器</b>判定（<code>{{.Data.Checker.Language}}</code>）：
-  不拿标准输出与答案文件逐字节比，而是由下面这份程序说了算。判题器的 argv 依次是
-  <b>输入文件、选手输出文件、答案文件</b>，退出码 <b>0 算正确、1 算错误、其他算判机故障</b>；
-  它打印的内容会当作评语显示在判题详情里（受题目「详情级别」约束）。</p>
-{{else}}
-<p class="meta">本题按<b>标准输出与答案宽松比较</b>判定（忽略行尾空白与末尾空行）。
-  答案不唯一、要判精度或特判格式时，在下面贴一份判题器就换成 SPJ。</p>
-{{end}}
-{{if .Data.Checker.CanEdit}}
-<form method="post" action="/problems/{{.Data.PID}}/judge_program">
-  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
-  <input type="hidden" name="kind" value="{{.Data.Checker.Kind}}">
+<p class="meta">{{.Data.Mode}}</p>
+{{range .Data.Programs}}
+{{$cur := .Language}}
+{{if .CanEdit}}
+<form method="post" action="/problems/{{$.Data.PID}}/judge_program">
+  <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+  <input type="hidden" name="kind" value="{{.Kind}}">
   <div class="row">
     <div>
-      <label>判题器语言</label>
+      <label>{{.KindName}}语言</label>
       <select name="language">
-        {{range .Data.Checker.Languages}}
-        <option value="{{.}}" {{if eq . $.Data.Checker.Language}}selected{{end}}>{{.}}</option>
-        {{end}}
+        {{range .Languages}}<option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>{{end}}
       </select>
     </div>
   </div>
-  <label>判题器源码</label>
-  <textarea name="source" spellcheck="false" autocomplete="off"
-            placeholder="int main(int argc, char **argv){ /* argv[1]=输入 argv[2]=选手输出 argv[3]=答案 */ return 0; }">{{.Data.Checker.Source}}</textarea>
-  <p><input type="submit" value="保存判题器"></p>
-  <p class="meta">源码留空保存就是<b>撤掉判题器</b>，这道题回到逐字节比较。
-    判题器由<b>判机现场编译并在沙盒里执行</b>，拿到的隔离与限额和学生提交一样，不是更高。
-    这一页没法替你验证它编不编得过：编不过时学生的提交会判成<b>判机故障</b>并写明是这个
-    判题器的问题，学生的代码不背这个锅，但那条提交就废了，保存前自己看一遍。</p>
+  <label>{{.KindName}}源码</label>
+  <textarea name="source" spellcheck="false" autocomplete="off" placeholder="{{.Hint}}">{{.Source}}</textarea>
+  <p><input type="submit" value="保存{{.KindName}}"></p>
 </form>
 {{else}}
-<p class="flash">你没有 <code>judge_program.edit</code>，看得到现在用的是哪种判定，但不能改。
-  判题器等于把「在判机上执行一段作者写的代码」发出去，所以它是一项单独的权力，不随
-  <code>testcase.manage</code> 或改题面的委托一起给。</p>
+<p class="flash">没有 <code>judge_program.edit</code>，{{.KindName}}这一块只能看不能改。</p>
 {{end}}
+{{end}}
+<p class="meta">源码留空保存就是<b>撤掉</b>它，这道题回到逐字节比较。两份程序都由<b>判机现场编译、
+  在同一个牢房里执行</b>，拿到的隔离与限额和学生提交一样，不是更高——所以这一项权力不随
+  <code>testcase.manage</code> 或改题面的委托一起给。
+  这一页没法替你验证编不编得过（判机才是现场编译的那一方）：编不过时学生的提交会判成
+  <b>判机故障</b>并写明是哪份程序的问题，学生的代码不背这个锅，但那条提交就废了，保存前自己看一遍。</p>
+<p class="meta">它打印的评语显示在详情页「判机信息」那一栏，受本题<b>详情级别</b>约束：级别低于
+  <code>diff</code> 时学生看不到。多条用例同时失败时只留下<b>第一条</b>的评语，所以判题器里那句
+  「为什么判错」要写成任何一条用例都自洽的话。</p>
 
 {{if .Data.Rows}}
 <form method="post" action="/problems/{{.Data.PID}}/cases/wipe"

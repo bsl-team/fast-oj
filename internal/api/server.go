@@ -120,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /contests/{key}/problems/{problemKey}/move", s.handleContestProblemMove)
 
 	mux.HandleFunc("POST /judge/claim", s.handleJudgeClaim)
-	mux.HandleFunc("GET /judge/cases/{id}/{which}", s.handleJudgeCaseFile)
+	mux.HandleFunc("GET /judge/submissions/{id}/cases/{ordinal}/{which}", s.handleJudgeCaseFile)
 	mux.HandleFunc("POST /judge/submissions/{id}/status", s.handleJudgeStatus)
 	mux.HandleFunc("POST /judge/submissions/{id}/result", s.handleJudgeResult)
 	mux.HandleFunc("GET /judges", s.handleJudgeList)
@@ -237,7 +237,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  POST /problems/{key}/cases/{id}/edit|delete  改用例 / 删用例",
 		"  POST /problems/{key}/cases/batch   批量改分值与捆绑（一次保存整张表）",
 		"  POST /problems/{key}/cases/wipe    清空用例",
-		"  POST /problems/{key}/judge_program 保存这道题的 SPJ 判题器（judge_program.edit）",
+		"  POST /problems/{key}/judge_program 保存这道题的判题器或交互器（judge_program.edit）",
 		"  GET  /problems/{key}/cases/{name}/{in|out}  用例正文（样例公开）",
 		"  GET  /problems/{key}/topics  这道题的求助贴；从这里发帖会自动带上题号",
 		"  POST /problems/{key}/submit   提交代码",
@@ -300,7 +300,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"",
 		"  判机内部协议（只有判机令牌能用，网页上没有入口）：",
 		"  POST /judge/claim             心跳 + 领取工单",
-		"  GET  /judge/cases/{id}/{which} 取用例正文",
+		"  GET  /judge/submissions/{id}/cases/{ordinal}/{in|out}?judge=NAME  取这条工单的用例正文",
 		"  POST /judge/submissions/{id}/status|result  逐用例回报 / 终局结果",
 	}
 

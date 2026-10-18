@@ -68,6 +68,11 @@ func BuildAux(tools map[string]Tool, prog AuxProgram, root, name string) ([]stri
 		return nil, err
 	}
 	if !tool.Compiles() {
+		// 解释型的判题器/交互器也要那份护栏：它和学生的 Python 走的是同一道闸门，
+		// 少写一份就是让作者的那份代码在没有钩子的解释器里跑。
+		if err := writeSupport(tool, dir); err != nil {
+			return nil, err
+		}
 		return tool.RunArgs(dir), nil
 	}
 	build := Run(tool.CompileArgs(dir), dir, nil, CompileLimits)

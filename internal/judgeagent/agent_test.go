@@ -153,6 +153,11 @@ func TestEndToEndAccepted(t *testing.T) {
 	if row.StartedAt == 0 || row.JudgedAt == 0 || row.JudgeID == 0 {
 		t.Fatalf("timestamps or owner missing: %+v", row)
 	}
+	// 判机自报"这次实际用的口径"要落到库里：页面上那句版本说明必须是动手编这份代码的
+	// 那台机器说的，而不是服务器照提交表单猜的。
+	if row.Toolchain != "C++17 · O2 开" {
+		t.Fatalf("自报的工具链 = %q，要 %q", row.Toolchain, "C++17 · O2 开")
+	}
 	runs, err := e.db.ListRuns(context.Background(), sub.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -442,5 +447,95 @@ func TestEndToEndRefusesAnOptionTheBoxDoesNotKnow(t *testing.T) {
 	if _, detail, err := e.db.SubmissionPayload(context.Background(), sub.ID); err != nil ||
 		!strings.Contains(detail, "不支持") {
 		t.Fatalf("拒绝的话没交回去：%q %v", detail, err)
+	}
+}
+
+// 判题器与交互器同时配上时，判机必须当面拒绝，不能"自己挑一个用"：那等于悄悄换了判定
+// 口径，而出题人以为两层都在生效。
+func TestEndToEndRejectsBothPrograms(t *testing.T) {
+	e := newEnv(t)
+	sub := e.seedSubmission(t, sumSource, "cpp", "")
+	ctx := context.Background()
+	for _, kind := range []string{store.ProgramChecker, store.ProgramInteractor} {
+		if err := e.db.PutJudgeProgram(ctx, store.JudgeProgram{
+			ProblemID: sub.ProblemID, Kind: kind, Language: "cpp", Source: tolerantChecker,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "IE" {
+		t.Fatalf("两个都配了 = %+v, %v，要 IE", row, err)
+	}
+	if _, detail, err := e.db.SubmissionPayload(ctx, sub.ID); err != nil ||
+		!strings.Contains(detail, "只能留一个") {
+		t.Fatalf("拒绝的话没说清只能留一个：%q %v", detail, err)
+	}
+}
+
+// 没有沙盒的判机不收 Python。护栏画的那条线要靠 chroot 才成立：在那种机器上跑解释器，
+// 就是让一份 Python 与判机同一个身份、同一个文件系统。"跑了但没隔离"是最不能悄悄发生的
+// 一种失败，所以这里交的是判机故障加一句原因。
+func TestEndToEndRefusesPythonWithoutSandbox(t *testing.T) {
+	e := newEnv(t)
+	sub := e.seedSubmission(t, "print(3)", "python", "")
+	ctx := context.Background()
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "IE" {
+		t.Fatalf("没沙盒却收了 Python = %+v %v，要 IE", row, err)
+	}
+	if _, detail, err := e.db.SubmissionPayload(ctx, sub.ID); err != nil ||
+		!strings.Contains(detail, "不收 Python") {
+		t.Fatalf("拒绝的话没说是因为没沙盒：%q %v", detail, err)
+	}
+}
+
+// 判题器是 Python 写的也算"要跑一份 Python"：闸门问的是这台机器会不会把 Python 关在
+// 牢房外执行，学生那份、判题器那份、交互器那份是同一个答案。
+func TestEndToEndRefusesPythonCheckerWithoutSandbox(t *testing.T) {
+	e := newEnv(t)
+	sub := e.seedSubmission(t, sumSource, "cpp", "")
+	ctx := context.Background()
+	if err := e.db.PutJudgeProgram(ctx, store.JudgeProgram{
+		ProblemID: sub.ProblemID, Kind: store.ProgramChecker, Language: "python",
+		Source: "import sys\nsys.exit(0)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "IE" {
+		t.Fatalf("Python 判题器在没有沙盒时被跑了 = %+v %v", row, err)
+	}
+}
+
+// 启动自测没过就把这门语言从名单上摘掉，并把原因挂在 /judges 那句备注上：站点从此
+// 不会摆出这个选项，操作者也看得见为什么少了一门。
+func TestDisableLanguageDropsItAndSaysWhy(t *testing.T) {
+	a, err := New(Config{Server: "http://127.0.0.1:1", Token: "t", Name: "box-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetNote("沙盒未启用")
+	a.DisableLanguage("python", "这台机器上没有 python3")
+	for _, l := range a.Languages() {
+		if l == "python" {
+			t.Fatalf("名单里还留着 python：%v", a.Languages())
+		}
+	}
+	if _, ok := a.cfg.Tools["python"]; ok {
+		t.Error("工具表里还留着 python，下一次领单还是会去跑它")
+	}
+	if g := a.greeting(); !strings.Contains(g.Note, "python 不可用：这台机器上没有 python3") ||
+		!strings.Contains(g.Note, "沙盒未启用") {
+		t.Errorf("备注没把原因挂上去：%q", g.Note)
 	}
 }

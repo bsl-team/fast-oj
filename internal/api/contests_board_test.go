@@ -17,7 +17,7 @@ import (
 // a judge would have written instead of a summary number.
 func (h *harness) scoreSubmission(sid int64, verdict string, earned ...int) {
 	h.t.Helper()
-	if _, err := h.db.UpsertJudge(ctx(), "box-contest", []string{"cpp"}, ""); err != nil {
+	if _, err := h.db.UpsertJudge(ctx(), "box-contest", []string{"cpp"}, nil, ""); err != nil {
 		h.t.Fatal(err)
 	}
 	if ok, err := h.db.SetStatus(ctx(), sid, "queued", "compiling", 1); err != nil || !ok {

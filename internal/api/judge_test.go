@@ -12,9 +12,21 @@ import (
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
+// claim 是测试用的判机心跳。它报的能力与现在这版判机一样（protocol.Capabilities）：
+// 服务器照自报的能力派单，测试要是只报个名字就变成在测"老判机"，SPJ 与选过版本的工单
+// 根本派不下来，那些测试会红得莫名其妙。
 func (h *harness) claim(name string) (int, string) {
-	return h.json(http.MethodPost, "/judge/claim", h.judge,
-		[]byte(`{"name":"`+name+`","languages":["cpp"],"note":"test box"}`))
+	return h.json(http.MethodPost, "/judge/claim", h.judge, claimBody(name, protocol.Capabilities))
+}
+
+func claimBody(name string, caps []string) []byte {
+	raw, err := json.Marshal(protocol.Greeting{
+		Name: name, Languages: []string{"cpp"}, Capabilities: caps, Note: "test box",
+	})
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 func (h *harness) claimTask(t *testing.T, name string) protocol.Task {
@@ -28,6 +40,42 @@ func (h *harness) claimTask(t *testing.T, name string) protocol.Task {
 		t.Fatalf("claim payload: %v (%s)", err, body)
 	}
 	return task
+}
+
+// 老判机（不报能力的那种）不能领到需要新能力的工单。让它领就是让它按逐字节比较去交一份
+// 页面上写着「本题由 SPJ 判定」的结果，或按自己那套硬编码去编一份「C++14 · O2 关」。
+func TestOldJudgeNotHandedWorkItCannotHonour(t *testing.T) {
+	h := newHarness(t)
+	keeper := h.author("keeper2100", permTestcaseManage, permJudgeProgram)
+	student := h.signIn("stu2100")
+	h.readyProblem("P2100")
+	if code, body := h.postAs(keeper, "/problems/P2100/judge_program", url.Values{
+		"kind": {"checker"}, "language": {"cpp"}, "source": {sampleChecker},
+	}); code != http.StatusOK {
+		t.Fatalf("存判题器 = %d：\n%s", code, short(body))
+	}
+	if code, _ := h.submitCode(student, "P2100", "cpp", "int main(){}"); code != http.StatusOK {
+		t.Fatalf("提交 = %d", code)
+	}
+
+	// 报名字、报语言，但不报能力——正是功能上线之前那一版判机的样子。
+	if code, body := h.json(http.MethodPost, "/judge/claim", h.judge,
+		claimBody("box-old", nil)); code != http.StatusNotFound {
+		t.Fatalf("老判机领到了 SPJ 工单 = %d：\n%s", code, short(body))
+	}
+	// 队列里那条还在等一台判得了的机器，而不是被将就判掉。
+	task := h.claimTask(t, "box-new")
+	if task.PID != "P2100" {
+		t.Fatalf("会 SPJ 的判机应当拿到这条工单，得到 %s", task.PID)
+	}
+	if task.Checker == nil || !strings.Contains(task.Checker.Source, "argv") {
+		t.Errorf("工单没把判题器带给会 SPJ 的判机：%+v", task.Checker)
+	}
+
+	_, page := h.get("/judges", h.admin)
+	if !strings.Contains(page, "未自报") {
+		t.Errorf("/judges 没把这台没自报能力的判机标出来：\n%s", short(page))
+	}
 }
 
 func (h *harness) postJSON(path, token string, body string) (int, string) {
@@ -79,23 +127,33 @@ func TestJudgeClaimWorkOrder(t *testing.T) {
 		t.Fatalf("judged row = %+v", task.Cases[1])
 	}
 
-	// The box can pull every case body, including judged ones.
+	// 判机能取到这份工单的每一条正文，包括判题用例。地址是「这条提交的第 N 条」，
+	// 不是「用例 id 为 X」——后者让一个拿到令牌的人顺着 id 把全站答案抄走。
 	for _, tc := range task.Cases {
-		if code, body := h.get("/judge/cases/"+itoa(int(tc.ID))+"/in", h.judge); code != http.StatusOK {
-			t.Fatalf("case %d in = %d %q", tc.ID, code, body)
+		base := "/judge/submissions/" + itoa(int(task.SubmissionID)) + "/cases/" + itoa(tc.Ordinal)
+		if code, body := h.get(base+"/in?judge=box-1", h.judge); code != http.StatusOK {
+			t.Fatalf("case #%d in = %d %q", tc.Ordinal, code, body)
 		}
-		if code, body := h.get("/judge/cases/"+itoa(int(tc.ID))+"/out", h.judge); code != http.StatusOK {
-			t.Fatalf("case %d out = %d %q", tc.ID, code, body)
+		if code, body := h.get(base+"/out?judge=box-1", h.judge); code != http.StatusOK {
+			t.Fatalf("case #%d out = %d %q", tc.Ordinal, code, body)
 		}
 	}
-	if code, _ := h.get("/judge/cases/1/in", ""); code != http.StatusUnauthorized {
+	if code, _ := h.get("/judge/submissions/1/cases/1/in", ""); code != http.StatusUnauthorized {
 		t.Fatalf("anonymous case fetch = %d", code)
 	}
-	if code, _ := h.get("/judge/cases/999/in", h.judge); code != http.StatusNotFound {
-		t.Fatalf("unknown case = %d", code)
+	// 没报机名的取件请求直接拒：判机身份是这一道门的另一半。
+	if code, body := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/1/in", h.judge); code != http.StatusBadRequest {
+		t.Fatalf("case fetch without judge name = %d %q", code, body)
 	}
-	if code, body := h.get("/judge/cases/1/other", h.judge); code != http.StatusBadRequest {
+	if code, _ := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/999/in?judge=box-1", h.judge); code != http.StatusNotFound {
+		t.Fatalf("unknown ordinal = %d", code)
+	}
+	if code, body := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/1/other?judge=box-1", h.judge); code != http.StatusBadRequest {
 		t.Fatalf("bad which = %d %q", code, body)
+	}
+	// 别的判机想读同一条提交的用例：它没派到这份工单，就读不到。
+	if code, body := h.get("/judge/submissions/"+itoa(int(task.SubmissionID))+"/cases/1/in?judge=box-9", h.judge); code != http.StatusForbidden {
+		t.Fatalf("a box that never claimed it = %d %q，要 403", code, body)
 	}
 
 	// The box shows up in the registry.
