@@ -895,6 +895,24 @@ func (s *Server) handleSubmitForm(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusRequestEntityTooLarge, "代码太长")
 		return
 	}
+	// 提交速率限制：判机是共享资源，队列深度就是所有人的等待时间。按人限而不是按 IP——
+	// 一个机房 NAT 出一个 IP 是常态，按 IP 限会在开学第一节课把整班人挡在门外。
+	if s.cfg.SubmitPerMinute > 0 {
+		key := "submit:user:" + strconv.FormatInt(a.User.ID, 10)
+		if allowed, err := s.db.RateAllowed(r.Context(), key, rateMinute, s.cfg.SubmitPerMinute); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		} else if !allowed {
+			s.errorPage(w, r, http.StatusTooManyRequests, fmt.Sprintf(
+				"提交太快了：一人每分钟最多 %d 次，等一分钟再试。"+
+					"判机是共享的，队列越长所有人的结果都越晚出来。", s.cfg.SubmitPerMinute))
+			return
+		}
+		if _, err := s.db.RateHit(r.Context(), key, rateMinute); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+	}
 	if err := r.ParseForm(); err != nil {
 		s.errorPage(w, r, http.StatusBadRequest, "表单解析失败: "+err.Error())
 		return

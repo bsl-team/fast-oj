@@ -252,6 +252,24 @@ func (s *Server) handleProblemCreate(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, r, http.StatusForbidden, "缺少权限："+permProblemCreate)
 		return
 	}
+	// 建题比提交更贵：每题都带出用例目录与文件。批量导入题库走的是 zip 与用例页的批量表，
+	// 不需要在这里一秒建十几题。
+	if s.cfg.ProblemPerMinute > 0 {
+		key := "problem:user:" + strconv.FormatInt(a.User.ID, 10)
+		if allowed, err := s.db.RateAllowed(r.Context(), key, rateMinute, s.cfg.ProblemPerMinute); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		} else if !allowed {
+			s.errorPage(w, r, http.StatusTooManyRequests, fmt.Sprintf(
+				"建题太快了：一人每分钟最多 %d 题，等一分钟再试。批量导入请走用例页的 zip。",
+				s.cfg.ProblemPerMinute))
+			return
+		}
+		if _, err := s.db.RateHit(r.Context(), key, rateMinute); err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+	}
 	f, errs := parseProblemForm(r)
 	d := newEditData(store.Problem{}, true)
 	d.fillFromForm(f, errs)

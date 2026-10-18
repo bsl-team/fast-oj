@@ -36,6 +36,10 @@ func testConfig(t testing.TB) config.Config {
 		// 一个用例里常常要注册好几个账号，全部来自同一个 127.0.0.1。生产默认是每分钟 1 次，
 		// 这里放开，测的就是别的逻辑；限流本身有用例单独测（newHarnessCfg 调回 1）。
 		RegisterPerMinute: 50,
+		// 提交与建题的速率限制同理放开：一个用例里常常连建十几道题、连交十几份代码，
+		// 限流本身有专门的用例（newHarnessCfg 调小）。
+		SubmitPerMinute:  200,
+		ProblemPerMinute: 200,
 	}
 }
 

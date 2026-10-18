@@ -21,6 +21,10 @@ const (
 	// IP 后面站着几十个学生，光看 IP 会误伤，光看设备号又能被清空存储绕过——所以两把键
 	// 一起看，任何一把超了就拒。
 	registerMinute = time.Minute
+
+	// rateMinute 是提交与建题那两条速率限制的窗口长度。与注册共用"一分钟"这个尺度，
+	// 是因为 operator 调的是同一个直觉：一个人一分钟能做几次。
+	rateMinute = time.Minute
 )
 
 // deviceToken is the browser-side machine handle: a random id the register page

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/liangbinchen2013/fast-oj/internal/config"
 	"github.com/liangbinchen2013/fast-oj/internal/store"
 )
 
@@ -758,5 +759,60 @@ func TestUserPageShowsSubmissionScore(t *testing.T) {
 	want := fmt.Sprintf("%d/%d", list[0].Score, list[0].TotalScore)
 	if !strings.Contains(page, want) {
 		t.Errorf("最近提交那一格的得分应当写着 %s：\n%s", want, short(page))
+	}
+}
+
+// 提交与建题都要限流：判机是共享资源，队列长度是所有人的等待时间。生产默认不是零，
+// 但按人而不是按 IP——一个机房 NAT 出一个地址是常态。
+func TestSubmitIsRateLimitedPerUser(t *testing.T) {
+	h := newHarnessCfg(t, func(c *config.Config) { c.SubmitPerMinute = 3 })
+	student := h.signIn("stu2120")
+	h.readyProblem("P2120")
+	for i := 0; i < 3; i++ {
+		if code, body := h.submitCode(student, "P2120", "cpp", "int main(){}"); code != http.StatusOK {
+			t.Fatalf("第 %d 次提交 = %d：\n%s", i+1, code, short(body))
+		}
+	}
+	code, body := h.submitCode(student, "P2120", "cpp", "int main(){}")
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("第 4 次提交 = %d，要 429：\n%s", code, short(body))
+	}
+	if !strings.Contains(body, "提交太快") {
+		t.Errorf("被限住却没说清原因：\n%s", short(body))
+	}
+	// 另一个人不受影响：限的是这一个人，不是这道题、不是这台机器。
+	other := h.signIn("stu2121")
+	if code, body := h.submitCode(other, "P2120", "cpp", "int main(){}"); code != http.StatusOK {
+		t.Fatalf("别人提交 = %d：\n%s", code, short(body))
+	}
+}
+
+func TestProblemCreateIsRateLimitedPerUser(t *testing.T) {
+	h := newHarnessCfg(t, func(c *config.Config) { c.ProblemPerMinute = 2 })
+	for i := 0; i < 2; i++ {
+		if code, body := h.createProblem(url.Values{
+			"pid": {fmt.Sprintf("P212%d", i)}, "title": {"建题限流"}, "languages": {"cpp"},
+		}); code != http.StatusOK {
+			t.Fatalf("建第 %d 题 = %d：\n%s", i+1, code, short(body))
+		}
+	}
+	code, body := h.createProblem(url.Values{"pid": {"P2129"}, "title": {"第三题"}, "languages": {"cpp"}})
+	if code != http.StatusTooManyRequests {
+		t.Fatalf("第三次建题 = %d，要 429：\n%s", code, short(body))
+	}
+	if !strings.Contains(body, "建题太快") {
+		t.Errorf("被限住却没说清原因：\n%s", short(body))
+	}
+}
+
+// 限流关掉时（0=不限）不能留任何痕迹：赶时间的人不该被一个他不知道存在的闸门挡住。
+func TestRateLimitsCanBeTurnedOff(t *testing.T) {
+	h := newHarnessCfg(t, func(c *config.Config) { c.SubmitPerMinute = 0 })
+	student := h.signIn("stu2123")
+	h.readyProblem("P2123")
+	for i := 0; i < 12; i++ {
+		if code, body := h.submitCode(student, "P2123", "cpp", "int main(){}"); code != http.StatusOK {
+			t.Fatalf("关掉限流后第 %d 次提交 = %d：\n%s", i+1, code, short(body))
+		}
 	}
 }

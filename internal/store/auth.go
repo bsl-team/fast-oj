@@ -292,6 +292,25 @@ func (db *DB) PruneExpired(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+// --- 通用速率限制 ---
+//
+// RateHit / RateAllowed 用的是登录失败那同一张计数表：它的语义本来就是"一个键在滚动窗口
+// 里被记了几次"，再开一张表只会让运维多一张要清理的表。名字不叫 failure 是因为提交与建题
+// 这些路径上，每一次尝试都要计数——限流挡的是刷屏，不是错。
+//
+// 注意调用顺序：先 RateAllowed 再 RateHit。反过来会把"被拒的那一次"也记进去，于是被
+// 限住的人永远出不去（每一次试探都续上一格）。
+
+// RateHit 记下这个键的一次动作。
+func (db *DB) RateHit(ctx context.Context, key string, window time.Duration) (int, error) {
+	return db.RegisterLoginFailure(ctx, key, window)
+}
+
+// RateAllowed 报告这个键在窗口里还能不能再做一次。
+func (db *DB) RateAllowed(ctx context.Context, key string, window time.Duration, max int) (bool, error) {
+	return db.LoginAllowed(ctx, key, window, max)
+}
+
 // --- login throttling ---
 
 // RegisterLoginFailure adds a strike for a key inside a rolling window and

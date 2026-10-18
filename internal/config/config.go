@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -24,7 +26,14 @@ type Config struct {
 	// RegisterPerMinute is how many signups one machine may submit per minute.
 	// 默认 1 是防刷；开学那天全班排队注册，把它调到 6 就够一节课用了。0 或负数按 1 处理。
 	RegisterPerMinute int
-	Verbose           bool
+	// SubmitPerMinute 是一个人每分钟能提交几次。默认 10：正常做题一道题试三四次也就
+	// 十几条，够；拿它刷队列（判机是共享资源，队列深度是所有人的等待时间）就不够了。
+	// 0 或负数按"不限"处理——这一条与注册不同，注册默认必须限，提交不该把赶时间的人挡在门外。
+	SubmitPerMinute int
+	// ProblemPerMinute 是一个人每分钟能建几道题。建题会带出用例文件与目录，是比提交更贵
+	// 的动作；批量导入题库的人靠的是 zip 与脚本，不是这个。
+	ProblemPerMinute int
+	Verbose          bool
 }
 
 func envOr(key, fallback string) string {
@@ -32,6 +41,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envInt 给一个整数型环境变量的默认值：非数字或空都按默认，不报错——部署脚本里
+// 写错一个数不该让服务起不来，而那条默认值本身就是安全的那一侧。
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func defaultDataDir() string {
@@ -95,11 +118,17 @@ func Load(args []string) (Config, error) {
 	fs.BoolVar(&c.Secure, "secure-cookies", false, "mark session cookies Secure (enable when serving over TLS)")
 	noRegister := fs.Bool("no-register", false, "关闭自助注册")
 	fs.IntVar(&c.RegisterPerMinute, "register-per-minute", 1, "每台机器每分钟可注册的账号数（开学集体注册时可以调大）")
+	submitPerMinute := fs.Int("submit-per-minute", envInt("FASTOJ_SUBMIT_PER_MINUTE", 10),
+		"一个人每分钟可提交几次（0=不限；判机是共享资源，队列深度是所有人的等待时间）")
+	problemPerMinute := fs.Int("problem-per-minute", 20,
+		"一个人每分钟可建几道题（0=不限）")
 	fs.BoolVar(&c.Verbose, "v", false, "verbose request logging")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
 	c.AllowRegister = !*noRegister
+	c.SubmitPerMinute = *submitPerMinute
+	c.ProblemPerMinute = *problemPerMinute
 	c.DataDir, _ = filepath.Abs(c.DataDir)
 	if err := c.Validate(); err != nil {
 		return c, err
