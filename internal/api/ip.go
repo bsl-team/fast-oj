@@ -251,6 +251,10 @@ func (s *Server) handleIPBanAdd(w http.ResponseWriter, r *http.Request) {
 	case err == store.ErrLoopbackBanned:
 		s.redirectMsg(w, r, back, "环回地址不能封：那等于把整站封掉，包括你自己的管理入口。")
 		return
+	case err == store.ErrBanEverything:
+		s.redirectMsg(w, r, back, "0.0.0.0/0 与 ::/0 封的是全世界，包括按这个按钮的你："+
+			"封完之后这一页自己也打不开，谁都没法再解封。要停站请用站点开关。")
+		return
 	case err != nil:
 		s.writeStoreError(w, r, err)
 		return

@@ -49,8 +49,47 @@ func TestIPBanRoundTrip(t *testing.T) {
 	if _, err := db.BanIP(ctx, "127.0.0.1", "", op.ID); !errors.Is(err, ErrLoopbackBanned) {
 		t.Errorf("环回 = %v, want ErrLoopbackBanned", err)
 	}
+	// 封全世界那一条挡在写库前：按下去的人自己也一起被 403，而这一页之后再也打不开，
+	// 没有任何人 able 再解封它。
+	for _, selfLockout := range []string{"0.0.0.0/0", "::/0"} {
+		if _, err := db.BanIP(ctx, selfLockout, "", op.ID); !errors.Is(err, ErrBanEverything) {
+			t.Errorf("%s = %v, want ErrBanEverything", selfLockout, err)
+		}
+	}
 	if _, err := db.BanIP(ctx, "192.168.1.50", "", op.ID); err != nil {
 		t.Errorf("校园内网地址应当可以封：%v", err)
+	}
+}
+
+// 历史里躺着一条禁令不让封的规则时（这条禁令是后加的），列表要还能把它读出来、删掉它。
+// 如果读与删也走禁令，那条记录就成了永远拆不掉的锁——封禁功能自己把钥匙吞了。
+func TestLegacyBanStaysListableAndRemovable(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	op := mustUser(t, db, "operator")
+
+	for _, raw := range []string{"0.0.0.0/0", "127.0.0.1"} {
+		if _, err := db.SQL.ExecContext(ctx,
+			`INSERT INTO ip_bans (ip, note, created_at, created_by) VALUES (?, '升级前留下的', 1, ?)`,
+			raw, op.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := db.ListIPBans(ctx)
+	if err != nil {
+		t.Fatalf("旧记录让列表报错了：%v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("列表 = %+v，要两条", list)
+	}
+	if !list[0].Contains(netip.MustParseAddr("203.0.113.9")) {
+		t.Error("0.0.0.0/0 那条仍然要能匹配，别因为加了禁令就让旧规则变成哑弹")
+	}
+	for _, raw := range []string{"0.0.0.0/0", "127.0.0.1"} {
+		removed, err := db.UnbanIP(ctx, raw)
+		if err != nil || !removed {
+			t.Errorf("解封 %s = %v %v，旧记录必须删得掉", raw, removed, err)
+		}
 	}
 }
 

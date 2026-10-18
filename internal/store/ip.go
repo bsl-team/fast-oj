@@ -21,6 +21,56 @@ var ErrNotAnAddress = errors.New("要写成 IP 或 CIDR 网段，例如 203.0.11
 // host, or a purely local deployment) banning 127.0.0.1 bans every visitor.
 var ErrLoopbackBanned = errors.New("不能封环回地址（127.0.0.1 / ::1）：那等于把整站封掉")
 
+// ErrBanEverything refuses 0.0.0.0/0 与 ::/0：这一条封的不是某个地址，而是"所有地址"，
+// 包括按下去的那个人自己。封完之后连这一页都打不开，谁都没法再解封，所以必须在写库前挡掉。
+var ErrBanEverything = errors.New("不能封 0.0.0.0/0 或 ::/0：那是封全世界，包括你自己，封完就再也打不开这一页了")
+
+// parseIPRule 只做"看懂并写成规范形式"，不做能不能封的判断。
+//
+// 读库与解封走这一条：如果历史里已经躺着一条 0.0.0.0/0 或环回记录，而列出它、删掉它都要
+// 先过一遍禁令，那么这条记录就永远删不掉了——列表页会因为它报错，禁令本身反而成了锁死的门。
+func parseIPRule(raw string) (string, netip.Prefix, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", netip.Prefix{}, ErrNotAnAddress
+	}
+	if strings.ContainsRune(raw, '/') {
+		p, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return "", netip.Prefix{}, ErrNotAnAddress
+		}
+		// "::ffff:1.2.3.4/128" 存成它本来的 v4 写法：客户端地址进来时一律 Unmap 过，
+		// 留一份 v4-in-v6 的规则在库里只会是一条谁都匹配不上的死规则。
+		if a := p.Addr(); a.Is4In6() {
+			p = netip.PrefixFrom(a.Unmap(), p.Bits()-96)
+		}
+		return p.Masked().String(), p.Masked(), nil
+	}
+	a, err := netip.ParseAddr(raw)
+	if err != nil {
+		return "", netip.Prefix{}, ErrNotAnAddress
+	}
+	// A bare v4-mapped-v6 address ("::ffff:1.2.3.4") is stored as the v4 it is.
+	a = a.Unmap()
+	p := netip.PrefixFrom(a, a.BitLen())
+	return a.String(), p, nil
+}
+
+// NormalizeIPRule 是写禁令：能看懂，而且必须是一条"封的是别人"的规则。
+func NormalizeIPRule(raw string) (string, netip.Prefix, error) {
+	key, p, err := parseIPRule(raw)
+	if err != nil {
+		return "", netip.Prefix{}, err
+	}
+	if p.Bits() == 0 {
+		return "", netip.Prefix{}, ErrBanEverything
+	}
+	if p.Addr().IsLoopback() {
+		return "", netip.Prefix{}, ErrLoopbackBanned
+	}
+	return key, p, nil
+}
+
 // IPBan is one row of the ban list, already parsed so matching never re-parses text
 // on the request path.
 type IPBan struct {
@@ -47,36 +97,6 @@ func (b IPBan) Contains(addr netip.Addr) bool {
 	return b.prefix.Contains(addr.Unmap())
 }
 
-// NormalizeIPRule validates and canonically formats an address or prefix, so
-// "203.0.113.009" and "203.0.113.9" cannot become two separate rows for one host.
-func NormalizeIPRule(raw string) (string, netip.Prefix, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", netip.Prefix{}, ErrNotAnAddress
-	}
-	if strings.ContainsRune(raw, '/') {
-		p, err := netip.ParsePrefix(raw)
-		if err != nil {
-			return "", netip.Prefix{}, ErrNotAnAddress
-		}
-		if p.Addr().IsLoopback() {
-			return "", netip.Prefix{}, ErrLoopbackBanned
-		}
-		return p.Masked().String(), p.Masked(), nil
-	}
-	a, err := netip.ParseAddr(raw)
-	if err != nil {
-		return "", netip.Prefix{}, ErrNotAnAddress
-	}
-	if a.IsLoopback() {
-		return "", netip.Prefix{}, ErrLoopbackBanned
-	}
-	// A bare v4-mapped-v6 address ("::ffff:1.2.3.4") is stored as the v4 it is.
-	a = a.Unmap()
-	p := netip.PrefixFrom(a, a.BitLen())
-	return a.String(), p, nil
-}
-
 // BanIP adds or refreshes an entry. Re-banning the same address updates the note and
 // the timestamp instead of failing, because the admin's intent is "keep this out".
 func (db *DB) BanIP(ctx context.Context, raw, note string, byUserID int64) (IPBan, error) {
@@ -100,8 +120,10 @@ func (db *DB) BanIP(ctx context.Context, raw, note string, byUserID int64) (IPBa
 }
 
 // UnbanIP reports whether an entry was actually removed.
+//
+// 解封走宽松解析：禁令只管"不许新封"，不能把已经躺在库里的那条变成删不掉的记录。
 func (db *DB) UnbanIP(ctx context.Context, raw string) (bool, error) {
-	key, _, err := NormalizeIPRule(raw)
+	key, _, err := parseIPRule(raw)
 	if err != nil {
 		return false, err
 	}
@@ -130,7 +152,7 @@ func scanBan(row scanner) (IPBan, error) {
 	if err = row.Scan(&b.IP, &b.Note, &b.CreatedAt, &b.CreatedBy, &b.CreatorTag); err != nil {
 		return b, notFound(err)
 	}
-	_, b.prefix, err = NormalizeIPRule(b.IP)
+	_, b.prefix, err = parseIPRule(b.IP)
 	if err != nil {
 		return b, fmt.Errorf("stored ip rule %q: %w", b.IP, err)
 	}

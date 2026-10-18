@@ -127,6 +127,12 @@ func TestIPBanAcceptsCIDRAndRejectsNonsense(t *testing.T) {
 	if _, body := h.from(http.MethodPost, "/admin/ips/ban", "127.0.0.1:1", h.admin, url.Values{"ip": {"::1"}}); !strings.Contains(body, "环回") {
 		t.Errorf("封 ::1 没被拦住：\n%s", short(body))
 	}
+	// 封全世界那条也一样拦死：按下去的人连同这一页一起被 403，之后就没人解封得了。
+	for _, selfLockout := range []string{"0.0.0.0/0", "::/0"} {
+		if _, body := h.from(http.MethodPost, "/admin/ips/ban", "127.0.0.1:1", h.admin, url.Values{"ip": {selfLockout}}); !strings.Contains(body, "全世界") {
+			t.Errorf("封 %s 没被拦住：\n%s", selfLockout, short(body))
+		}
+	}
 	if n := h.countIPBans(); n != 1 {
 		t.Errorf(" ip_bans 行数 = %d, want 1（只有那个网段）", n)
 	}
@@ -232,9 +238,18 @@ func TestNormalizeIPRule(t *testing.T) {
 		{"203.0.113.0/24", "203.0.113.0/24", true},
 		{"203.0.113.7/24", "203.0.113.0/24", true}, // 存的是网段本身，不是那个地址
 		{"::ffff:203.0.113.9", "203.0.113.9", true},
+		{"::ffff:203.0.113.0/120", "203.0.113.0/24", true}, // 存成它本来的 v4 写法，别留一条谁都匹配不上的死规则
 		{"127.0.0.1", "", false},
 		{"::1", "", false},
-		{"10.0.0.0/8", "10.0.0.0/8", true}, // 校园内网地址是有意义的封禁粒度
+		{"127.0.0.1/8", "", false},
+		{"::ffff:127.0.0.1", "", false},
+		// 封全世界的那两条：按下去的人自己也进不来，而且这一页再也打不开，没人能解封。
+		{"0.0.0.0/0", "", false},
+		{"::/0", "", false},
+		{"255.0.0.0/0", "", false}, // 掩成全零之后是同一条规则
+		{"0.0.0.0", "0.0.0.0", true},
+		{"10.0.0.0/8", "10.0.0.0/8", true},   // 校园内网地址是有意义的封禁粒度
+		{"128.0.0.0/1", "128.0.0.0/1", true}, // 只挡 /0 这一条线，更宽的网段仍归操作者判断
 		{"example.com", "", false},
 	} {
 		got, _, err := store.NormalizeIPRule(c.in)
