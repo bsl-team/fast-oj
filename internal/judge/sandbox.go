@@ -47,9 +47,14 @@ var sandbox struct {
 
 // SetSandbox 打开（或关掉）判题沙盒。self 是判机可执行文件路径；userNS 为真表示
 // 判机不是 root，牢房要靠非特权 user namespace 撑起来。
+//
+// 换配置必须同时把上一次自测的结论丢掉：probed 回答的是"按**当前**这套配置，这台机器
+// 开不开得了牢房"。模式、jailer 路径、身份任一项变了，旧结论就不再成立——留着它，
+// 下一份配置会继承上一条命的判决（实测就是这样让一次自测悄悄跳过牢房，然后报"已启用"）。
 func SetSandbox(self string, mode jail.Mode, userNS bool, uid, gid uint32) {
 	sandbox.mode, sandbox.self, sandbox.userNS = mode, self, userNS
 	sandbox.uid, sandbox.gid = uid, gid
+	sandbox.probed, sandbox.note = probeUnknown, ""
 }
 
 // SandboxMode 与 SandboxAvailable 给状态展示用。
@@ -122,7 +127,16 @@ func ProbeSandbox(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	ex := Run([]string{"/bin/true"}, dir, nil, Limits{TimeMS: 5000, MemKB: 64 << 10})
+	lim := Limits{TimeMS: 5000, MemKB: 64 << 10}
+	// 自测必须在牢房里跑，否则它测的是别的东西。jailFor 在这里返回 false 只有两种可能：
+	// self 是空的（mode 不是 off 却连 jailer 都没有），或者上一份配置的结论还留着。
+	// 两种都不能让"/bin/true 在牢房外跑通了"冒充"沙盒已启用"。
+	if _, jailed := jailFor(lim); !jailed {
+		note := "沙盒未能建立: 配置要求建牢房，可 jailFor 拒绝了一次——自测没法在牢房里跑"
+		reportSandbox(false, note)
+		return note, errors.New(note)
+	}
+	ex := Run([]string{"/bin/true"}, dir, nil, lim)
 	if note, failed := probeFailure(ex); failed {
 		reportSandbox(false, note)
 		return note, errors.New(note)

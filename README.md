@@ -700,6 +700,9 @@ exec 之间插东西，所以 `setrlimit`、`mount`、`chroot` 这些必须由�
   fork→unshare→exec 的失败报成 `fork/exec <路径>: permission denied`，退出码还是 0。
   只看退出码就会把"这台开不了牢房"记成"沙盒已启用"，判机于是边在日志里说谎、边把每条
   提交判成 `IE`（阿里云 ECS 上撞到的正是这条）。自测认的是**判定**：任何一次 `IE` 都是失败。
+  同理，`SetSandbox` 换配置时必须把上一次自测的结论清掉——`probeUnavailable` 是"按这套
+  配置这台机器开不了"的答案，留着它下一次自测根本不去建牢房，于是又在牢房外把 `/bin/true`
+  跑成功、报"已启用"。
 - **不能开 `CLONE_NEWPID`**。Go 是 fork 之后再 `unshare()` 的，而 `unshare(CLONE_NEWPID)`
   只把调用者的**子进程**放进新 pid 命名空间，被 exec 的程序自己还在原来那个；留着它
   拿不到好处，还会让被 exec 起来的 Go 程序（判机自己）在起线程时 `EINVAL`。

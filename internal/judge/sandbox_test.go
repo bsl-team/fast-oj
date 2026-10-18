@@ -154,6 +154,17 @@ func TestJailStopsAfterAFailedProbe(t *testing.T) {
 		t.Error("SandboxAvailable 应当跟着自测结论走，/judges 上那行说明靠它")
 	}
 
+	// 换一套配置就把上一条命的判决带走：ECS 上就是这么把一次自测悄悄变成"没建牢房也
+	// 算通过"的——旧的 probeUnavailable 让 jailFor 直接返回 false，/bin/true 在牢房外
+	// 跑得好好的，于是日志写"沙盒已启用"。
+	SetSandbox("/proc/self/exe", jail.Auto, true, 1000, 1000)
+	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); !ok {
+		t.Error("换了配置就该重新照计划建牢房，让新的自测测得出东西")
+	}
+	if SandboxNote() != "" {
+		t.Errorf("换配置后那句旧结论不该还留着：%q", SandboxNote())
+	}
+
 	// -sandbox=off 永远不建牢房，与自测结论无关。
 	SetSandbox("", jail.Off, false, 0, 0)
 	if _, ok := jailFor(Limits{TimeMS: 100, MemKB: 1024}); ok {
@@ -237,5 +248,24 @@ func TestProbeSandboxFailsOnABrokenJailer(t *testing.T) {
 	}
 	if SandboxAvailable() {
 		t.Error("/judges 上那行说明不该显示沙盒可用")
+	}
+}
+
+// 自测必须在牢房里跑。jailFor 已经拒绝建牢房时还去跑一次 /bin/true，测的是牢房外的
+// 世界，跑通了就会把"未隔离"写成"沙盒已启用"——上面那条 ECS 事故的另一半。
+func TestProbeDoesNotPretendWithoutAJailer(t *testing.T) {
+	want := sandbox
+	t.Cleanup(func() { sandbox = want })
+
+	SetSandbox("", jail.Auto, true, 65534, 65534) // mode 不是 off，却没有 jailer
+	note, err := ProbeSandbox(filepath.Join(t.TempDir(), "probe"))
+	if err == nil {
+		t.Fatalf("连 jailer 都没有，自测却报了成功：%q", note)
+	}
+	if !strings.Contains(note, "沙盒未能建立") {
+		t.Errorf("这句话应当直说牢房没建起来，got %q", note)
+	}
+	if SandboxAvailable() {
+		t.Error("没建过牢房就不能声称建过")
 	}
 }
