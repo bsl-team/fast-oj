@@ -74,10 +74,23 @@ func (s *Server) handleJudgeClaim(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	programs, err := s.db.JudgePrograms(r.Context(), task.ProblemID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	work := protocol.Task{
 		SubmissionID: task.SubmissionID, PID: task.PID, Language: task.Language,
 		Options: task.Options,
 		Source:  task.Source, TimeLimitMS: task.TimeLimitMS, MemLimitKB: task.MemLimitKB,
+	}
+	// 判题器与交互器跟着工单走：判机必须用**自己那套工具链**现编它们，别处编好的二进制
+	// 带着另一套 libc，判出来的东西和判这台机器上学生程序的不是同一件事。
+	if p, ok := programs[store.ProgramChecker]; ok {
+		work.Checker = &protocol.AuxProgram{Language: p.Language, Source: p.Source}
+	}
+	if p, ok := programs[store.ProgramInteractor]; ok {
+		work.Interactor = &protocol.AuxProgram{Language: p.Language, Source: p.Source}
 	}
 	for _, tc := range cases {
 		work.Cases = append(work.Cases, protocol.Case{
