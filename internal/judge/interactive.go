@@ -366,9 +366,12 @@ func RunDuo(userArgv, interactorArgv []string, dir string, userLim, interactorLi
 // 就是让作者程序的坏结果算到学生头上。所以：
 //
 //  1. 任一侧的牢房没建起来或进程起不来 → 判机故障。
-//  2. 交互器没给出判定（退出码不在 0/1/7，或它自己超时/超内存/崩了）→ 判机故障。
-//  3. 给出了判定，选手这边的物理事实仍然优先：超内存 MLE、两侧之和超时 TLE、自己崩了 RE。
-//  4. 剩下的才按交互器说的算：0 对、1 错、7 选手错误；它打印的内容成为评语。
+//  2. 选手这边超时或超内存 → 如实判：这是判机量到的物理事实。墙上时钟收场时两边都是被
+//     信号杀掉的（交互器退出码 -1），此时"交互器没给出判定"只是被杀的后果，把它摆在前面
+//     就会把一条 TLE 报成判机故障——Linux 上实测踩过。
+//  3. 交互器没给出判定（退出码不在 0/1/7，或它自己崩了/跑不完）→ 判机故障。
+//  4. 选手自己崩了 → RE。
+//  5. 剩下的按交互器说的算：0 对、1 错、7 选手程序出错；它打印的内容成为评语。
 func verdictForDuo(d Duo) (Verdict, string) {
 	itxVerdict := d.Interactor.Exit
 	itxSaid := itxVerdict == 0 || itxVerdict == 1 || itxVerdict == 7
@@ -378,15 +381,15 @@ func verdictForDuo(d Duo) (Verdict, string) {
 		return IE, orText(d.User.Note, "选手程序没能跑起来，也没有给出原因")
 	case d.Interactor.Verdict == IE:
 		return IE, orText(d.Interactor.Note, "交互器没能跑起来，也没有给出原因")
-	case !itxSaid:
-		// 交互器自己超时或超内存也落在这一条里：它没资格替这轮对话下判定。
-		return IE, "交互器没给出判定（退出码 " + strconv.Itoa(d.Interactor.Exit) +
-			"；只有 0 算对、1 算错、7 算选手程序出错）；它那边的话：" +
-			orText(comment, "没有输出")
 	case d.User.Verdict == MLE:
 		return MLE, d.User.Note
 	case d.User.Verdict == TLE:
 		return TLE, orText(d.User.Note, "两侧用时之和超过了时限")
+	case !itxSaid:
+		// 交互器自己崩了或没跑完也落在这一条里：它没资格替这轮对话下判定。
+		return IE, "交互器没给出判定（退出码 " + strconv.Itoa(d.Interactor.Exit) +
+			"；只有 0 算对、1 算错、7 算选手程序出错）；它那边的话：" +
+			orText(comment, "没有输出")
 	case d.User.Verdict == RE:
 		return RE, orText(d.User.Note, "选手程序异常退出（退出码 "+strconv.Itoa(d.User.Exit)+"）")
 	case itxVerdict == 0:

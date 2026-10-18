@@ -48,20 +48,27 @@ func itxCases() []Case {
 	return []Case{{Name: "1", Ordinal: 1, Score: 100, Input: []byte("5\n"), Expected: []byte("6\n")}}
 }
 
-func judgeInteractive(t *testing.T, tool Tool, itx []string, source string, cases []Case, timeMS int) Report {
+// judgeInteractive 按生产的样子跑一次交互判题：工作目录先建好，交互器编在**这个目录里面**。
+//
+// 后一句不是讲究而是必须：判题器与交互器落在本次提交的目录外，开了沙盒之后它在牢房里
+// 看不见自己的可执行文件（牢房里第一条实测就是踩在这个上面）。测试要是把交互器编到别的
+// 临时目录，就等于把这条生产约束跳过去了。
+func judgeInteractive(t *testing.T, tool Tool, itxSource, source string, cases []Case, timeMS int) Report {
 	t.Helper()
+	dir := filepath.Join(t.TempDir(), "work")
 	return Judge(Task{
 		SubmissionID: 1, PID: "P1", Language: "cpp", Source: source,
-		TimeLimitMS: timeMS, MemLimitKB: 262144, Interactor: itx, Cases: cases,
-	}, tool, filepath.Join(t.TempDir(), "work"), nil, nil)
+		TimeLimitMS: timeMS, MemLimitKB: 262144,
+		Interactor: buildAuxIn(t, dir, AuxInteractor, itxSource), Cases: cases,
+	}, tool, dir, nil, nil)
 }
 
-func buildInteractor(t *testing.T, body string) []string {
+// buildAuxIn 在 root 里编一份判机自带的程序，返回它的命令行。
+func buildAuxIn(t *testing.T, root, kind, body string) []string {
 	t.Helper()
-	argv, err := BuildAux(Available(DefaultTools()), AuxProgram{Language: "cpp", Source: body},
-		filepath.Join(t.TempDir(), "aux"), AuxInteractor)
+	argv, err := BuildAux(Available(DefaultTools()), AuxProgram{Language: "cpp", Source: body}, root, kind)
 	if err != nil {
-		t.Fatalf("编交互器失败：%v", err)
+		t.Fatalf("编%s失败：%v", auxKindName(kind), err)
 	}
 	return argv
 }
@@ -70,7 +77,7 @@ func buildInteractor(t *testing.T, body string) []string {
 // （选手读到了交互器从输入文件转发的 5），以及退出码 0 被翻译成了 AC。
 func TestInteractiveAcceptsAGoodDialogue(t *testing.T) {
 	tool := requireToolchain(t)
-	rep := judgeInteractive(t, tool, buildInteractor(t, itxCandidate), itxGood, itxCases(), 5000)
+	rep := judgeInteractive(t, tool, itxCandidate, itxGood, itxCases(), 5000)
 	if rep.Verdict != AC || rep.Score != 100 {
 		t.Fatalf("对话正确 = %s %d/%d（%s），要 AC 100/100", rep.Verdict, rep.Score, rep.TotalScore, rep.Detail)
 	}
@@ -79,7 +86,7 @@ func TestInteractiveAcceptsAGoodDialogue(t *testing.T) {
 // 答错时交互器退 1，而它打印的那句话要成为评语："收到 7，期望 6"是学生唯一能看到的线索。
 func TestInteractiveWrongAnswerCarriesTheInteractorMessage(t *testing.T) {
 	tool := requireToolchain(t)
-	rep := judgeInteractive(t, tool, buildInteractor(t, itxCandidate), itxWrong, itxCases(), 5000)
+	rep := judgeInteractive(t, tool, itxCandidate, itxWrong, itxCases(), 5000)
 	if rep.Verdict != WA {
 		t.Fatalf("答错 = %s（%s），要 WA", rep.Verdict, rep.Detail)
 	}
@@ -93,7 +100,7 @@ func TestInteractiveWrongAnswerCarriesTheInteractorMessage(t *testing.T) {
 func TestInteractiveDeadlockIsCutOff(t *testing.T) {
 	tool := requireToolchain(t)
 	started := time.Now()
-	rep := judgeInteractive(t, tool, buildInteractor(t, itxCandidate), itxIgnore, itxCases(), 300)
+	rep := judgeInteractive(t, tool, itxCandidate, itxIgnore, itxCases(), 300)
 	if elapsed := time.Since(started); elapsed > 40*time.Second {
 		t.Fatalf("判机等了 %s 才收场，两侧进程没被干净杀掉", elapsed)
 	}
@@ -109,7 +116,7 @@ func TestInteractiveDeadlockIsCutOff(t *testing.T) {
 // 不是原因；把学生自己的崩溃盖成判机故障，他就永远不知道自己程序崩了。
 func TestInteractiveCrashIsReportedAsRE(t *testing.T) {
 	tool := requireToolchain(t)
-	rep := judgeInteractive(t, tool, buildInteractor(t, itxCandidate), itxCrash, itxCases(), 5000)
+	rep := judgeInteractive(t, tool, itxCandidate, itxCrash, itxCases(), 5000)
 	if rep.Verdict != RE {
 		t.Fatalf("选手中途崩 = %s（%s），要 RE", rep.Verdict, rep.Detail)
 	}
@@ -122,7 +129,7 @@ func TestInteractiveBrokenInteractorIsJudgeError(t *testing.T) {
 	// 一个上来就退 2、什么都不说的交互器。
 	broken := `#include <cstdio>
 int main(){ printf("交互器自己坏了"); return 2; }`
-	rep := judgeInteractive(t, tool, buildInteractor(t, broken), itxGood, itxCases(), 5000)
+	rep := judgeInteractive(t, tool, broken, itxGood, itxCases(), 5000)
 	if rep.Verdict != IE {
 		t.Fatalf("交互器退 2 = %s（%s），要 IE", rep.Verdict, rep.Detail)
 	}
@@ -140,7 +147,7 @@ func TestInteractiveTimeIsTheSumOfBothSides(t *testing.T) {
 int main(){ clock_t s = clock(); while (clock() - s < (CLOCKS_PER_SEC / 2)) {}
   printf("5\n"); fflush(stdout); long g; if (scanf("%ld",&g)!=1) return 7;
   printf("交互器收到 %ld\n", g); fflush(stdout); return g==6?0:1; }`
-	itx := buildInteractor(t, burn)
+	itx := burn
 	// 选手本身几乎不花时间（读一个数、答一个数），慢的是交互器。
 	rep := judgeInteractive(t, tool, itx, itxGood, itxCases(), 300)
 	if rep.Verdict != TLE {
@@ -162,7 +169,7 @@ func TestInteractiveIgnoresTheByteCompare(t *testing.T) {
 	// 多打一句感谢的话，逐字节比必 WA，而交互器只认那个整数。
 	source := `#include <cstdio>
 int main(){ long n; scanf("%ld",&n); printf("%ld\n", n+1); printf("thanks\n"); fflush(stdout); return 0; }`
-	rep := judgeInteractive(t, tool, buildInteractor(t, itxCandidate), source, itxCases(), 5000)
+	rep := judgeInteractive(t, tool, itxCandidate, source, itxCases(), 5000)
 	if rep.Verdict != AC {
 		t.Fatalf("多打一句的对话 = %s（%s），要 AC：交互题不该按字节比", rep.Verdict, rep.Detail)
 	}
