@@ -37,8 +37,17 @@ jail_ok() {
   fi
 }
 
+# token_in_argv 只看判机那个进程自己的 argv。
+#
+# 别用 `ps -eo args= -C fast-judge | grep -- '-token'`：-e 会让 -C 形同不存在，于是列的是
+# **全部进程**的命令行 —— 而调用这个脚本的那句 `... --rotate-token` 自己就含 "-token"，
+# 结果永远报"泄露"，修好了也报修不好（这台机器上真就这么演了一遍）。
 token_in_argv() {
-  ps -eo args= -C fast-judge 2>/dev/null | grep -q -- '-token' 
+  local pid
+  pid=$(systemctl show "$UNIT_JUDGE" -p MainPID --value 2>/dev/null || true)
+  [ -n "$pid" ] && [ "$pid" != "0" ] || return 1
+  # 只匹配单独一个 -token 参数，绝不打印值本身。
+  tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -qx -- '-token'
 }
 
 check() {
