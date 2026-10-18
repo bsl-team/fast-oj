@@ -46,6 +46,11 @@ type harness struct {
 	cfg   config.Config
 	admin string
 	judge string
+	// app + handler are the same chain the listening server uses, kept so a test can
+	// drive a request with a chosen source address. Over the real listener every peer
+	// is 127.0.0.1, which would make the IP feature tests unable to say anything.
+	app     *Server
+	handler http.Handler
 }
 
 func newHarness(t *testing.T) *harness {
@@ -74,13 +79,14 @@ func newHarnessCfg(t *testing.T, mutate func(*config.Config)) *harness {
 	if _, err := db.ClaimOwner(ctx(), operator.ID); err != nil {
 		t.Fatal(err)
 	}
-	handler := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), db).Handler()
+	app := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), db)
+	handler := app.Handler()
 	hs := httptest.NewServer(handler)
 	t.Cleanup(func() {
 		hs.Close()
 		db.Close()
 	})
-	return &harness{t: t, srv: hs, db: db, cfg: cfg, admin: cfg.AdminToken, judge: cfg.JudgeToken}
+	return &harness{t: t, srv: hs, db: db, cfg: cfg, admin: cfg.AdminToken, judge: cfg.JudgeToken, app: app, handler: handler}
 }
 
 // do issues a request and returns status plus body as text.

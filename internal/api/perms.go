@@ -31,6 +31,8 @@ const (
 	permContestJoin = "contest.join"
 	// permStatsView 是统计页的键：能改首页文案的人不必看到运营数据。
 	permStatsView = "stats.view"
+	// permIPManage 同时管两件事：封人与看见谁在打。不能封人的权限不该拿到访客地址。
+	permIPManage = "ip.manage"
 )
 
 // bannedFrom is the refusal for those three: the account is still active and can

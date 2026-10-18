@@ -241,5 +241,6 @@ func (a actor) viewer() *viewer {
 		Unread:   a.Unread, Tickets: a.Tickets, CSRF: a.Session.CSRF,
 		HandleTickets: a.can(permTicketHandle),
 		Stats:         a.can(permStatsView),
+		IPs:           a.can(permIPManage),
 	}
 }

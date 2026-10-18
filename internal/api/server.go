@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,11 +42,23 @@ type Server struct {
 	cases   *casefs.Store
 	cache   *siteCache
 	hits    hitCounters
-	started time.Time
+	bans    banCache
+	traffic trafficTable
+	// muPublic guards the two IP-gate stamps: publicSeen throttles the once-a-minute
+	// write that keeps the page unlocked across a restart, publicOn caches the lookup
+	// so a loopback-only deployment does not query the database on every render.
+	muPublic      sync.Mutex
+	publicSeen    time.Time
+	publicChecked time.Time
+	publicOn      bool
+	started       time.Time
 }
 
 func New(cfg config.Config, log *slog.Logger, db *store.DB) *Server {
-	return &Server{cfg: cfg, log: log, db: db, cases: casefs.New(cfg.DataDir), cache: &siteCache{}, started: time.Now()}
+	return &Server{
+		cfg: cfg, log: log, db: db, cases: casefs.New(cfg.DataDir),
+		cache: &siteCache{}, started: time.Now(),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -160,6 +173,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/accounts/new", s.handleAccountsNew)
 	mux.HandleFunc("POST /admin/accounts", s.handleAccountsCreate)
 	mux.HandleFunc("GET /admin/stats", s.handleStats)
+	// IP 封禁与按地址流量：来源全是 127.0.0.1 时这一页会自动收起（见 ipFeatureOn）。
+	mux.HandleFunc("GET /admin/ips", s.handleIPs)
+	mux.HandleFunc("POST /admin/ips/ban", s.handleIPBanAdd)
+	mux.HandleFunc("POST /admin/ips/unban/{ip}", s.handleIPBanRemove)
 	mux.HandleFunc("POST /problems/{key}/submit", s.handleSubmitForm)
 	mux.HandleFunc("GET /static/{name}", s.handleStatic)
 	return s.wrap(mux)
@@ -256,6 +273,9 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		"  GET  /admin/claim             首次接管：用管理令牌给 admin 账号设网页密码",
 		"  GET  /admin/perms             权限控制台（permission.manage）",
 		"  GET  /admin/stats             站点统计：人数、提交、人均、判定分布、GET/POST 请求量（stats.view）",
+		"  GET  /admin/ips               IP 封禁名单与按地址流量 Top20（ip.manage）",
+		"  POST /admin/ips/ban         封一个 IP 或 CIDR 网段（整站拦死）",
+		"  POST /admin/ips/unban/{ip}  解封",
 		"  POST /admin/perms/u/{handle}  授予/撤销/清除单项能力",
 		"  POST /admin/users/{handle}/role|status  改角色 / 封禁解禁（超级管理员除外）",
 		"  POST /admin/users/{handle}/cancel  注销账号：抹掉身份、释放用户名，记录留着署名成封禁用户",
@@ -340,5 +360,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 // wrap orders the chain: log first so a rejected request is still recorded,
 // then the CSRF gate, then the handler.
 func (s *Server) wrap(next http.Handler) http.Handler {
-	return gzipResponses(s.logRequests(s.guardCSRF(next)))
+	// guardIP 在最外层：一个被 IP 挡掉的请求仍然要进日志和流量统计，
+	// 管理员正是因为看见那一大片被拒的请求才会去封。
+	return gzipResponses(s.logRequests(s.guardIP(s.guardCSRF(next))))
 }

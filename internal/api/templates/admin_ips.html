@@ -1,0 +1,93 @@
+{{define "content"}}
+<h1>IP 封禁与流量</h1>
+
+{{if not .Data.Enabled}}
+<p class="flash">
+  <b>这一页现在是收起的。</b>这台服务器到目前为止只收到过来自 127.0.0.1 的请求，
+  说明它前面有一层反向代理（或者只有本机能访问）。这种情况下"按 IP 封禁"两个方向都不可信：
+  所有访客在服务器眼里都是同一个地址，封谁都等于封全站，而流量表里也只会有一个地址。
+  要么让代理把真实来源透传到能用的地方（并把服务端的监听地址改成只信任内网转发），
+  要么直接让访客连到这台机器的端口上——只要 24 小时内出现过一次非环回来源，这一页就自动打开。
+</p>
+{{end}}
+
+<p class="meta">封禁是<b>整站拦死</b>：这个地址之后的任何请求都直接 403，包括题目页、静态资源、
+  登录与注册，也包括判机回调——所以封之前先看一眼下面的流量表，确认你没把判题机或学校出口
+  写进去。命中的规则不会显示给来访者，只记在日志里。</p>
+<p class="meta">写法接受单个地址（<code>203.0.113.9</code>）或 CIDR 网段
+  （<code>203.0.113.0/24</code>，机房一个出口后面几十台机器时用得上）。环回地址不让封。
+  流量计数活在内存里，意思是"本次运行以来"，进程重启归零。</p>
+
+<h2>封一个地址</h2>
+<form method="post" action="/admin/ips/ban" class="row">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <div style="flex:1 1 14rem">
+    <label>IP 或网段</label>
+    <input type="text" name="ip" placeholder="203.0.113.9 或 203.0.113.0/24"
+           autocomplete="off" spellcheck="false" required>
+  </div>
+  <div style="flex:1 1 18rem">
+    <label>原因（只给管理员看，最多 200 字）</label>
+    <input type="text" name="note" placeholder="脚本刷注册" maxlength="200" autocomplete="off">
+  </div>
+  <input type="submit" value="封禁">
+</form>
+
+<h2>当前封禁</h2>
+<table>
+  <tr><th>地址 / 网段</th><th>原因</th><th>谁封的</th><th>时间</th><th class="num">被拒请求</th><th></th></tr>
+  {{range .Data.Banned}}
+  <tr>
+    <td><code>{{.IP}}</code></td>
+    <td>{{if .Note}}{{.Note}}{{else}}—{{end}}</td>
+    <td>{{if .Creator}}{{.Creator}}{{else}}—{{end}}</td>
+    <td class="meta">{{.When}}</td>
+    <td class="num">{{.Blocked}}</td>
+    <td>
+      <form class="inline" method="post" action="/admin/ips/unban/{{.IP}}"
+            onsubmit="return confirm('解封 {{.IP}}？');">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <button type="submit">解封</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6">还没有封过任何地址。</td></tr>
+  {{end}}
+</table>
+
+<h2>流量 Top{{len .Data.Traffic}}</h2>
+{{if .Data.Truncated}}
+<p class="meta">注意：来源地址已经超过 5000 个，后面的新地址不再记录（这通常是有人在换地址刷）。
+  下面的数字仍然只包含被记下来的那部分。</p>
+{{end}}
+<table>
+  <tr>
+    <th>来源地址</th><th class="num">GET</th><th class="num">POST</th><th class="num">其他</th>
+    <th class="num">注册</th><th class="num">被拒</th><th></th>
+  </tr>
+  {{range .Data.Traffic}}
+  <tr>
+    <td><code>{{.IP}}</code></td>
+    <td class="num">{{.Get}}</td>
+    <td class="num">{{.Post}}</td>
+    <td class="num">{{.Other}}</td>
+    <td class="num">{{if .Registers}}{{.Registers}}{{else}}—{{end}}</td>
+    <td class="num">{{if .Blocked}}<b class="badge bad">{{.Blocked}}</b>{{else}}—{{end}}</td>
+    <td>
+      <form class="inline" method="post" action="/admin/ips/ban">
+        <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
+        <input type="hidden" name="ip" value="{{.IP}}">
+        <input type="hidden" name="note" value="从流量表封禁">
+        <button type="submit" class="danger">封这个地址</button>
+      </form>
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="7">还没有请求进来过。</td></tr>
+  {{end}}
+</table>
+
+<p class="meta">注册量与登录失败是分开算的：注册限流看的是 IP 加浏览器设备号两把键，
+  这里只是把同一个地址的访问总量摆出来，让你判断该不该动手。</p>
+{{end}}

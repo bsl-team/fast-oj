@@ -317,6 +317,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSession(w, sess.ID, store.SessionTTL)
+	s.traffic.noteRegister(clientIP(r))
 	s.log.Info("registered", "user", u.Handle, "ip", clientIP(r))
 	welcome := "邮箱还没验证，可以先正常使用。"
 	if claimed {

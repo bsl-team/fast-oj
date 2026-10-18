@@ -46,6 +46,10 @@ const (
 	setAllowTopics   = "site.allow_topics"
 	setAllowContests = "site.allow_contests"
 	setAllowDM       = "site.allow_dm"
+	// setPublicClientSeen is not a setting anyone edits: it is one stamped row that
+	// remembers "a visitor who was not this machine showed up", so the IP features can
+	// hide themselves on a deployment where every request comes from the loopback.
+	setPublicClientSeen = "ip.public_client_seen"
 )
 
 // openSwitch is the rule every feature switch follows: only an explicit "0" closes

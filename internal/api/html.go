@@ -74,6 +74,10 @@ type viewer struct {
 	// HandleTickets is the 工单 entry: a user sees their own queue, a handler sees
 	// the one that needs work.
 	HandleTickets bool
+	// IPs is the 封禁 entry. It is set per render, not from a capability: the page
+	// hides itself when every client address looks like the loopback (a same-host
+	// proxy), because banning by address is meaningless there.
+	IPs bool
 	// Stats is the 统计 entry: only someone holding stats.view sees the link.
 	Stats bool
 	CSRF  string
@@ -155,6 +159,8 @@ func (v *viewEngine) render(w http.ResponseWriter, status int, page string, data
 // page renders an HTML view, falling back to the text error shape if the
 // template blows up, so a rendering bug cannot turn into a blank 200.
 func (s *Server) page(w http.ResponseWriter, r *http.Request, status int, title, name string, me *viewer, flash string, data any) {
+	// 导航栏的封禁入口要同时满足"有这个能力"和"这一页现在有意义"，所以每次渲染时填。
+	s.injectIPGate(me, r)
 	err := views.render(w, status, name, shell{Title: title, Site: s.site(r.Context()), Me: me, Flash: flash, Data: data})
 	if err != nil {
 		s.log.Error("template", "page", name, "err", err)
