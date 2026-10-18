@@ -14,17 +14,24 @@ const BootstrapHandle = "admin"
 
 // userColumns never selects passhash: a hash must not ride along in a struct
 // that might get marshalled to JSON.
+//
+// email_verified reads with IFNULL because "unread" and "unverified" must never be the
+// same answer: a row this feature did not write — an account created before M25f, one
+// made by 批量建号, the token account — reads as verified, and nobody is locked out by
+// a column that was only ever meant to gate new registrations.
 const userColumns = `id, handle, IFNULL(email, ''), display_name, bio, role, status, dm_policy,
-		(passhash <> '') AS has_password, created_at, IFNULL(last_login_at, 0)`
+		(passhash <> '') AS has_password, IFNULL(email_verified, 1), created_at, IFNULL(last_login_at, 0)`
 
 func scanUser(row scanner) (User, error) {
 	var (
-		u       User
-		hasPass int
+		u          User
+		hasPass    int
+		verifiedMS int
 	)
 	err := row.Scan(&u.ID, &u.Handle, &u.Email, &u.DisplayName, &u.Bio, &u.Role, &u.Status,
-		&u.DMPolicy, &hasPass, &u.CreatedAt, &u.LastLoginAt)
+		&u.DMPolicy, &hasPass, &verifiedMS, &u.CreatedAt, &u.LastLoginAt)
 	u.HasPassword = hasPass != 0
+	u.EmailVerified = verifiedMS != 0
 	return u, notFound(err)
 }
 

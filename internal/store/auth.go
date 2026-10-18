@@ -69,6 +69,11 @@ type AccountInput struct {
 	Password    string
 	DisplayName string
 	Cost        int
+	// RequireEmailVerification is the site switch seen from the writing side: the row
+	// lands unverified, and the caller is responsible for mailing the link. The store
+	// does not read the switch itself, so a test or a bulk path that forgets it gets an
+	// ordinary verified account instead of a locked one.
+	RequireEmailVerification bool
 }
 
 // CreateAccount registers a normal user. Email uniqueness is enforced by a
@@ -83,10 +88,14 @@ func (db *DB) CreateAccount(ctx context.Context, in AccountInput) (User, error) 
 	if err != nil {
 		return User{}, err
 	}
+	verified := 1
+	if in.RequireEmailVerification {
+		verified = 0
+	}
 	res, err := db.SQL.ExecContext(ctx,
-		`INSERT INTO users (handle, email, passhash, display_name, role, status, created_at)
-		 VALUES (?, ?, ?, ?, 'user', 'active', ?)`,
-		in.Handle, in.Email, hash, strings.TrimSpace(in.DisplayName), nowMS())
+		`INSERT INTO users (handle, email, passhash, display_name, role, status, email_verified, created_at)
+		 VALUES (?, ?, ?, ?, 'user', 'active', ?, ?)`,
+		in.Handle, in.Email, hash, strings.TrimSpace(in.DisplayName), verified, nowMS())
 	if err != nil {
 		return User{}, conflict(err, "handle or email")
 	}

@@ -16,8 +16,12 @@ type User struct {
 	// people they follow back), following (only people they follow) or off.
 	DMPolicy    string `json:"dm_policy"`
 	HasPassword bool   `json:"has_password"`
-	CreatedAt   int64  `json:"created_at"`
-	LastLoginAt int64  `json:"last_login_at"`
+	// EmailVerified is whether this address has been confirmed through the link in a
+	// mail. Rows written before M25f read as verified (migration 0024 explains why);
+	// only a registration made while the switch was on starts out at false.
+	EmailVerified bool  `json:"email_verified"`
+	CreatedAt     int64 `json:"created_at"`
+	LastLoginAt   int64 `json:"last_login_at"`
 }
 
 type Problem struct {
