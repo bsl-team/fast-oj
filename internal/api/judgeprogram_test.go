@@ -134,6 +134,55 @@ func TestJudgeProgramTravelsWithTheTask(t *testing.T) {
 	}
 }
 
+// 交互器与判题器共用那一块表单，但它们是两种判定：出题页与题面都要说清现在是谁在判，
+// 尤其交互题——学生看不到"标准输出"的对照，不知道自己在跟谁对话就会照着普通题写。
+func TestInteractorAuthoringAndBadges(t *testing.T) {
+	h := newHarness(t)
+	keeper := h.author("keeper2005", permTestcaseManage, permJudgeProgram)
+	student := h.signIn("stu2005")
+	h.readyProblem("P2205")
+	pid := mustProblemID(t, h, "P2205")
+
+	if code, body := h.postAs(keeper, "/problems/P2205/judge_program", url.Values{
+		"kind": {"interactor"}, "language": {"cpp"}, "source": {sampleChecker},
+	}); code != http.StatusOK {
+		t.Fatalf("存交互器 = %d：\n%s", code, short(body))
+	}
+	if got, err := h.db.GetJudgeProgram(ctx(), pid, store.ProgramInteractor); err != nil || got.Source != sampleChecker {
+		t.Fatalf("交互器没存进库：%v", err)
+	}
+	_, cases := h.getAs(keeper, "/problems/P2205/cases")
+	if !strings.Contains(cases, "交互题") || !strings.Contains(cases, "之和") {
+		t.Errorf("用例页没说清这是交互题及其时限口径：\n%s", short(cases))
+	}
+	_, page := h.getAs(student, "/problems/P2205")
+	if !strings.Contains(page, "交互题") {
+		t.Errorf("题面没告诉学生这是交互题：\n%s", short(page))
+	}
+	// 学生看不到判题器与交互器的源码：那是出题人的实现，不该顺着题目页漏出去。
+	if strings.Contains(page, sampleChecker) {
+		t.Error("题面把判机程序的源码显示出来了")
+	}
+
+	// 两个都配上时判机会拒判，所以保存的那一刻就要被提醒，而不是等学生撞上一条判机故障。
+	if code, body := h.postAs(keeper, "/problems/P2205/judge_program", url.Values{
+		"kind": {"checker"}, "language": {"cpp"}, "source": {sampleChecker},
+	}); code != http.StatusOK || !strings.Contains(body, "只能留一个") {
+		t.Fatalf("两个都配了却没提醒 = %d：\n%s", code, short(body))
+	}
+
+	// 两份都在时撤掉一份不是回到逐字节比较，而是换成剩下那份在判：回执说错，出题人就会
+	// 以为这题已经恢复普通判定。
+	if code, body := h.postAs(keeper, "/problems/P2205/judge_program", url.Values{
+		"kind": {"checker"}, "language": {"cpp"}, "source": {""},
+	}); code != http.StatusOK || !strings.Contains(body, "现在由交互器判定") {
+		t.Errorf("撤掉判题器后的回执没说清现在是谁在判 = %d：\n%s", code, short(body))
+	}
+	if _, body := h.getAs(student, "/problems/P2205"); strings.Contains(body, "判题配置冲突") {
+		t.Errorf("冲突已经解除了，题面还在告诉学生这题判不了：\n%s", short(body))
+	}
+}
+
 func mustProblemID(t *testing.T, h *harness, pid string) int64 {
 	t.Helper()
 	p, err := h.db.FindProblem(ctx(), pid)

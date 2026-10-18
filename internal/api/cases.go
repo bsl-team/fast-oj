@@ -36,19 +36,43 @@ type casesData struct {
 	Groups     []groupRow
 	Judged     int
 	Total      int
-	// Checker 是用例页下面那块"判题器"的数据。
-	Checker programEditor
+	// Programs 是用例页下面"判题方式"那几块的数据：判题器与交互器各一份，共用一个表单。
+	Programs []programEditor
+	// Mode 是这一页顶部那句"本题怎么判"，包括两个都配了时判机会拒判的提醒。
+	Mode string
 }
 
-// programEditor 是判题器表单的数据。
+// programEditor 是一份判机自带程序在出题页上的样子。
 type programEditor struct {
-	Kind      string
-	Language  string
-	Source    string
+	Kind, KindName string
+	Language       string
+	Source         string
+	// Languages 是判机真能编的语言；候选来自判机的工具表，不是这里现编的列表。
 	Languages []string
 	// CanEdit 为假时页面只读，并说明为什么：让出题人看到"这儿本来是能填的，是你没这项
 	// 权力"，比把整块藏起来让他以为这题不支持 SPJ 好。
 	CanEdit bool
+	// Hint 是输入框里的样子，把 argv 顺序与退出码约定写在离手最近的地方。
+	Hint string
+}
+
+// modeBadge 是题面页上那一行短到能一眼看完的判定说明。空串表示普通比较，不用打扰学生。
+func modeBadge(programs map[string]store.JudgeProgram) string {
+	checker := strings.TrimSpace(programs[store.ProgramChecker].Source) != ""
+	interactor := strings.TrimSpace(programs[store.ProgramInteractor].Source) != ""
+	switch {
+	case checker && interactor:
+		// 学生这一眼只需要知道"这题现在交上去也判不了"，改掉它是出题人的事，
+		// 不该把那句指令写在一堵学生看的页面上。
+		return "本题的判题配置冲突（判题器与交互器同时存在），现在判不了题：" +
+			"提交会判成判机故障，等出题人修正后再交。"
+	case interactor:
+		return "交互题：你的程序与判机端的交互器一问一答，判定与评语都由交互器给出；" +
+			"用时按两侧 CPU 之和算，内存只算你这一份。"
+	case checker:
+		return "SPJ 判题器判定：输出与答案文件不一样也可能是对的，判题器的话会写在详情里。"
+	}
+	return ""
 }
 
 // programLanguages 是判机能编的判题器语言。候选直接来自判机的工具表，与提交页那套同源：
@@ -167,19 +191,69 @@ func (s *Server) renderCases(w http.ResponseWriter, r *http.Request, a actor, p 
 	if strings.HasPrefix(msg, "批量修改没有保存") {
 		code = http.StatusBadRequest
 	}
-	// 判题器跟着用例页走：它判的就是这批文件，出题人改用例时顺手就该看见现在用的是谁。
-	checker, err := s.db.GetJudgeProgram(r.Context(), p.ID, store.ProgramChecker)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	// 判题器与交互器跟着用例页走：它们判的就是这批文件，出题人改用例时顺手就该看见现在用的是谁。
+	programs, err := s.db.JudgePrograms(r.Context(), p.ID)
+	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	editorFor := func(kind, kindName, hint string) programEditor {
+		pg := programs[kind]
+		return programEditor{
+			Kind: kind, KindName: kindName, Language: pg.Language, Source: pg.Source,
+			Languages: programLanguages(), CanEdit: a.can(permJudgeProgram), Hint: hint,
+		}
+	}
 	s.page(w, r, code, "用例 "+p.PID, "problem_cases", a.viewer(), msg, casesData{
 		PID: p.PID, Title: p.Title, Rows: rows, Groups: groups, Judged: judged, Total: total,
-		Checker: programEditor{
-			Kind: store.ProgramChecker, Language: checker.Language, Source: checker.Source,
-			Languages: programLanguages(), CanEdit: a.can(permJudgeProgram),
+		Programs: []programEditor{
+			editorFor(store.ProgramChecker, "判题器", checkerHint),
+			editorFor(store.ProgramInteractor, "交互器", interactorHint),
 		},
+		Mode: modeLine(programs),
 	})
+}
+
+// modeLine 是出题页与题面页上那句"这题怎么判"。它必须与判机那边的实现一字不差地对得上：
+// 出题人是照这句话写判题器与交互器的，说错了就是让他照一个不存在的约定写。
+func modeLine(programs map[string]store.JudgeProgram) string {
+	checker := strings.TrimSpace(programs[store.ProgramChecker].Source) != ""
+	interactor := strings.TrimSpace(programs[store.ProgramInteractor].Source) != ""
+	switch {
+	case checker && interactor:
+		return "同时配了判题器与交互器：这种题目判机会直接拒绝判题，两者只能留一个。" +
+			"交互题由交互器判定，判题器不会被跑到。"
+	case interactor:
+		return "本题是交互题：选手的程序与交互器用标准输入输出对话，判定由交互器的退出码给出" +
+			"（0 算正确、1 算错误、7 算选手程序出错，其他算判机故障），它打印的内容当作评语。" +
+			"交互器 argv 依次是输入文件、选手输出转写、答案文件。" +
+			"用时按两侧 CPU 之和算，内存只算选手那一份。" +
+			"题面要写清问几轮、每轮什么格式：学生看不到交互器，只能照题面对话。"
+	case checker:
+		return "本题由 SPJ 判题器判定：不拿标准输出与答案文件逐字节比，而是由那份程序说了算。" +
+			"判题器 argv 依次是输入文件、选手输出文件、答案文件，退出码" +
+			"0 算正确、1 算错误、其他算判机故障；它打印的内容当作评语。" +
+			"因为答案不唯一，详情页不会给你「标准输出」那一份对照。"
+	default:
+		return "本题按标准输出与答案宽松比较判定（忽略行尾空白与末尾空行）。" +
+			"答案不唯一、要判精度或特判格式时，在下面贴一份判题器就换成 SPJ；要一问一答的题就贴交互器。"
+	}
+}
+
+// 约定写在离手最近的地方：这两句话与判机那边的实现（internal/judge 的 checkWithSPJ 与
+// RunDuo）必须一字不差地对得上，出题人是照这里写的程序。
+const (
+	checkerHint    = "argv：输入文件 选手输出文件 答案文件；退出码 0=对 1=错 其他=判机故障；stdout 当评语"
+	interactorHint = "argv：输入文件 选手输出转写 答案文件；退出码 0=对 1=错 7=选手程序出错 其他=判机故障；与选手用 stdin/stdout 对话"
+)
+
+// bothProgramsWarn 是"两个都配了"的那句提醒。判机遇到这种题目会直接拒绝判题（它不能悄悄
+// 挑一个来用），所以与其等学生撞上一条判机故障，不如出题人在保存时就看见。
+func bothProgramsWarn(checker, interactor store.JudgeProgram) string {
+	if strings.TrimSpace(checker.Source) == "" || strings.TrimSpace(interactor.Source) == "" {
+		return ""
+	}
+	return "判题器与交互器同时配了：这种题目判机会直接拒绝判题，两者只能留一个。"
 }
 
 // handleJudgeProgram 保存题目自带的判题器。
@@ -198,17 +272,18 @@ func (s *Server) handleJudgeProgram(w http.ResponseWriter, r *http.Request) {
 		s.backToCases(w, r, p, "不认识的判机程序种类："+kind)
 		return
 	}
+	who := programKindName(kind)
 	lang := strings.ToLower(strings.TrimSpace(r.FormValue("language")))
 	if lang == "" {
 		lang = "cpp"
 	}
 	if _, ok := versionTool(lang); !ok {
-		s.backToCases(w, r, p, "判题器只能用判机认识的语言写："+strings.Join(programLanguages(), "/"))
+		s.backToCases(w, r, p, who+"只能用判机认识的语言写："+strings.Join(programLanguages(), "/"))
 		return
 	}
 	src := r.FormValue("source")
 	if len(src) > store.MaxProgramSource {
-		s.backToCases(w, r, p, "判题器源码太长，上限 "+strconv.Itoa(store.MaxProgramSource)+" 字节")
+		s.backToCases(w, r, p, who+"源码太长，上限 "+strconv.Itoa(store.MaxProgramSource)+" 字节")
 		return
 	}
 	if strings.ContainsRune(src, 0) {
@@ -221,14 +296,48 @@ func (s *Server) handleJudgeProgram(w http.ResponseWriter, r *http.Request) {
 		s.backToCases(w, r, p, "没保存上："+err.Error())
 		return
 	}
-	switch strings.TrimSpace(src) {
-	case "":
+	// 撤掉一份之后是谁在判，得看剩下那一份还是不是空：两份都配了时撤掉一份不是回到逐字节
+	// 比较，而是换成另一份判定。说错这一句，出题人就照错的约定去改题面了。
+	programs, err := s.db.JudgePrograms(r.Context(), p.ID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	left := programs[otherProgramKind(kind)]
+	switch {
+	case strings.TrimSpace(src) == "":
 		s.log.Info("judge program removed", "pid", p.PID, "kind", kind, "by", a.User.Handle)
-		s.backToCases(w, r, p, "已撤掉判题器：这道题回到「标准输出与答案宽松比」。")
+		if strings.TrimSpace(left.Source) != "" {
+			s.backToCases(w, r, p, "已撤掉"+who+"：这题现在由"+
+				programKindName(otherProgramKind(kind))+"判定。")
+		} else {
+			s.backToCases(w, r, p, "已撤掉"+who+"：这道题回到「标准输出与答案宽松比」。")
+		}
 	default:
 		s.log.Info("judge program saved", "pid", p.PID, "kind", kind, "bytes", len(src), "by", a.User.Handle)
-		s.backToCases(w, r, p, "判题器已存好，下一次判题起生效（判机现场编译）。")
+		msg := who + "已存好，下一次判题起生效（判机现场编译）。"
+		if warn := bothProgramsWarn(programs[store.ProgramChecker],
+			programs[store.ProgramInteractor]); warn != "" {
+			msg += warn
+		}
+		s.backToCases(w, r, p, msg)
 	}
+}
+
+// otherProgramKind 是另一种判机程序：判题器与交互器只有这两个种类，互为对方。
+func otherProgramKind(kind string) string {
+	if kind == store.ProgramChecker {
+		return store.ProgramInteractor
+	}
+	return store.ProgramChecker
+}
+
+// programKindName 是权限、提示语里给这两种程序起的人类名字，与判机那边一致。
+func programKindName(kind string) string {
+	if kind == store.ProgramInteractor {
+		return "交互器"
+	}
+	return "判题器"
 }
 
 // caseForm is one case as the editor posts it.

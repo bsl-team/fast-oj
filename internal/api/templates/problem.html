@@ -8,6 +8,8 @@
   {{if .Data.Hidden}} · <span class="hidden">未公开</span>{{end}}
 </p>
 
+{{if .Data.Mode}}<p class="flash">{{.Data.Mode}}</p>{{end}}
+
 {{if .Data.Contest.ID}}
 <p class="flash">
   本场比赛：<a href="{{.Data.Contest.Back}}">{{.Data.Contest.CID}}　{{.Data.Contest.Title}}</a>

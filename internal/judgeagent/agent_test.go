@@ -444,3 +444,29 @@ func TestEndToEndRefusesAnOptionTheBoxDoesNotKnow(t *testing.T) {
 		t.Fatalf("拒绝的话没交回去：%q %v", detail, err)
 	}
 }
+
+// 判题器与交互器同时配上时，判机必须当面拒绝，不能"自己挑一个用"：那等于悄悄换了判定
+// 口径，而出题人以为两层都在生效。
+func TestEndToEndRejectsBothPrograms(t *testing.T) {
+	e := newEnv(t)
+	sub := e.seedSubmission(t, sumSource, "cpp", "")
+	ctx := context.Background()
+	for _, kind := range []string{store.ProgramChecker, store.ProgramInteractor} {
+		if err := e.db.PutJudgeProgram(ctx, store.JudgeProgram{
+			ProblemID: sub.ProblemID, Kind: kind, Language: "cpp", Source: tolerantChecker,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.process(t); err != nil {
+		t.Fatal(err)
+	}
+	row, err := e.db.GetSubmission(ctx, sub.ID)
+	if err != nil || row.Verdict != "IE" {
+		t.Fatalf("两个都配了 = %+v, %v，要 IE", row, err)
+	}
+	if _, detail, err := e.db.SubmissionPayload(ctx, sub.ID); err != nil ||
+		!strings.Contains(detail, "只能留一个") {
+		t.Fatalf("拒绝的话没说清只能留一个：%q %v", detail, err)
+	}
+}
