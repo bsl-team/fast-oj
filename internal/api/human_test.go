@@ -37,9 +37,10 @@ func humanToken(body string) (string, int, bool) {
 
 const browserUA = "Mozilla/5.0 (X11; Linux x86_64) fast-oj-test-browser"
 
-// postAs 用一个指定的形状发一次表单 POST。这一条只为本文件服务：要证的正是
-// "带不带浏览器那三个头"的区别，塞进通用夹具里反而会把别的用例也一起改掉。
-func (h *harness) postShape(path string, values url.Values, ua string, sameOrigin bool) (int, string, http.Header) {
+// postShape 用一个指定的形状发一次表单 POST。这一条只为本文件服务：要证的正是
+// "带不带浏览器那几个头"的区别，塞进通用夹具里反而会把别的用例也一起改掉。
+// lang 非空时带上 Accept-Language——真浏览器一定会带，`curl -A Mozilla/5.0` 不会。
+func (h *harness) postShape(path string, values url.Values, ua string, sameOrigin bool, lang string) (int, string, http.Header) {
 	h.t.Helper()
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, strings.NewReader(values.Encode()))
 	if err != nil {
@@ -49,6 +50,9 @@ func (h *harness) postShape(path string, values url.Values, ua string, sameOrigi
 	req.Header.Set("Accept", "text/html")
 	if ua != "" {
 		req.Header.Set("User-Agent", ua)
+	}
+	if lang != "" {
+		req.Header.Set("Accept-Language", lang)
 	}
 	if sameOrigin {
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -72,16 +76,16 @@ func (h *harness) postShape(path string, values url.Values, ua string, sameOrigi
 // clickVerify 是"点那一下"：浏览器形状、脚本走的那一路（js=1，只要状态码）。
 func (h *harness) clickVerify(kind, token string) (int, string) {
 	h.t.Helper()
-	return h.clickVerifyAs(kind, token, browserUA, true)
+	return h.clickVerifyAs(kind, token, browserUA, true, "")
 }
 
 // clickVerifyAs 用指定形状点那一下：ua 为空表示连 User-Agent 都不带，sameOrigin 为 false
 // 表示不带 Sec-Fetch-*。
-func (h *harness) clickVerifyAs(kind, token, ua string, sameOrigin bool) (int, string) {
+func (h *harness) clickVerifyAs(kind, token, ua string, sameOrigin bool, lang string) (int, string) {
 	h.t.Helper()
 	code, body, _ := h.postShape("/verify", url.Values{
 		"verify": {token}, "kind": {kind}, "js": {"1"},
-	}, ua, sameOrigin)
+	}, ua, sameOrigin, lang)
 	return code, body
 }
 
@@ -167,7 +171,7 @@ func TestHumanVerifyRegisterWaitsFromSecondAccount(t *testing.T) {
 	}
 
 	// curl 那种形状去点也点不上：不是它等得不够，是这一眼不像浏览器发的。
-	if code, _ := h.clickVerifyAs(store.VerifyRegister, token, "curl/8.6.0", false); code != http.StatusForbidden {
+	if code, _ := h.clickVerifyAs(store.VerifyRegister, token, "curl/8.6.0", false, ""); code != http.StatusForbidden {
 		t.Fatalf("curl 形状盖上了章 = %d", code)
 	}
 	// 换个地址领的、或者根本不存在的令牌，章也盖不上。
@@ -229,18 +233,23 @@ func TestHumanVerifySleepAndSubmitIsNotEnough(t *testing.T) {
 	if code != http.StatusForbidden {
 		t.Errorf("睡够就直接注册上了 = %d", code)
 	}
-	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "", false); got != http.StatusForbidden {
+	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "", false, ""); got != http.StatusForbidden {
 		t.Errorf("什么头都不带就盖上了章 = %d", got)
 	}
-	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "python-requests/2.32", false); got != http.StatusForbidden {
+	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "python-requests/2.32", false, ""); got != http.StatusForbidden {
 		t.Errorf("python-requests 盖上了章 = %d", got)
 	}
 	if _, err := h.db.GetUserByHandle(ctx(), "sleepy"); err != store.ErrNotFound {
 		t.Errorf("绕过路线建出了账号：%v", err)
 	}
-	// 只有"长得像浏览器的那一次点击"能放行。
-	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "Mozilla/5.0 (Windows NT 10.0)", true); got != http.StatusNoContent {
-		t.Fatalf("浏览器形状的点被拒了 = %d", got)
+	// 只改 UA 的那一行命令（`curl -A Mozilla/5.0`）不算浏览器：它不会带 Accept-Language，
+	// 而这正是老 Safari 那条宽松分支要求的第三条。真人浏览器三条同时缺的概率极低。
+	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "Mozilla/5.0 (Windows NT 10.0)", false, ""); got != http.StatusForbidden {
+		t.Errorf("只改 UA 不改别的就盖上了章 = %d", got)
+	}
+	// 老浏览器（不带 Sec-Fetch-* 的那批）仍然要放行：UA + 收 HTML + 有语言偏好。
+	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15", false, "zh-CN,zh;q=0.9"); got != http.StatusNoContent {
+		t.Errorf("老 Safari 的形状被当成脚本拒了 = %d", got)
 	}
 	code, out, _ := h.postNoRedirect("/register", url.Values{
 		"handle": {"sleepy"}, "email": {"sleepy@example.com"}, "password": {testPassword},
@@ -248,6 +257,10 @@ func TestHumanVerifySleepAndSubmitIsNotEnough(t *testing.T) {
 	}, "")
 	if code != http.StatusSeeOther {
 		t.Fatalf("点过之后还是注册不上 = %d:\n%s", code, short(out))
+	}
+	// 章只能盖一次：已经用掉的窗口再点也算没过。
+	if got, _ := h.clickVerifyAs(store.VerifyRegister, token, browserUA, true, "zh-CN"); got != http.StatusForbidden {
+		t.Errorf("同一个令牌盖了两次章 = %d", got)
 	}
 }
 
@@ -374,7 +387,7 @@ func TestHumanVerifyNoScriptPathCompletes(t *testing.T) {
 		t.Fatalf("第二条注册没有验证窗：\n%s", short(page))
 	}
 	time.Sleep(1100 * time.Millisecond)
-	code, _, hdr := h.postShape("/verify", url.Values{"verify": {token}, "kind": {"register"}}, browserUA, true)
+	code, _, hdr := h.postShape("/verify", url.Values{"verify": {token}, "kind": {"register"}}, browserUA, true, "zh-CN")
 	if code != http.StatusSeeOther {
 		t.Fatalf("没有 JavaScript 的那一次点 = %d", code)
 	}

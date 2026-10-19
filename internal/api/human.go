@@ -162,11 +162,14 @@ func looksLikeBrowser(r *http.Request) bool {
 	if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
 		return true
 	}
-	// 老浏览器（以及部分隐私设置）不带 Sec-Fetch-*，那就退回看 UA 加 Accept：
-	// 一个要提交 HTML 表单的请求，总该说自己收 HTML。
+	// 老浏览器（Safari 16.4 之前、部分隐私设置）不带 Sec-Fetch-*，那就退回看三样：说自己收
+	// HTML、UA 是 Mozilla 系、而且带了 Accept-Language。第三样不是摆设：`curl -A Mozilla/5.0`
+	// 一行就能伪造前两个，而真人浏览器三条同时缺的概率极低——这仍旧是抬门槛，不是识别，
+	// 缺任何一条就当作不是浏览器发的，宁可让人换台机器注册。
 	accept := r.Header.Get("Accept")
 	return strings.Contains(accept, "text/html") &&
-		(strings.Contains(ua, "mozilla/") || strings.Contains(ua, "safari") || strings.Contains(ua, "opera"))
+		strings.TrimSpace(r.Header.Get("Accept-Language")) != "" &&
+		(strings.HasPrefix(ua, "mozilla/") || strings.Contains(ua, "safari") || strings.Contains(ua, "opera"))
 }
 
 // handleVerifyClick 是复选框那一下落到服务端的地方：POST /verify。
