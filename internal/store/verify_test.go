@@ -24,6 +24,23 @@ func TestVerifyChallengeWaitsAndIsSingleUse(t *testing.T) {
 	}
 	// 换用途、换来源地址都不算：登录页领的令牌交不了注册表单，别处的地址也用不了它。
 	time.Sleep(80 * time.Millisecond)
+
+	// 0029 新增的那一条：时间到了但没点过，照样核销不掉。少了这一步，"睡够秒数直接交表单"
+	// 就是完全合法的路线，复选框成了纯装饰。
+	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyRegister, "203.0.113.9"); err != nil || ok {
+		t.Fatalf("没点过复选框也核销成功 = %v（err %v）", ok, err)
+	}
+	// 盖章同样认来源地址和用途。
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyLogin, "203.0.113.9"); err != nil || ok {
+		t.Fatalf("换个用途就盖上章 = %v（err %v）", ok, err)
+	}
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyRegister, "198.51.100.7"); err != nil || ok {
+		t.Fatalf("换个来源地址就盖上章 = %v（err %v）", ok, err)
+	}
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyRegister, "203.0.113.9"); err != nil || !ok {
+		t.Fatalf("正常盖章 = %v（err %v）", ok, err)
+	}
+
 	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyLogin, "203.0.113.9"); err != nil || ok {
 		t.Fatalf("换用途核销成功 = %v（err %v）", ok, err)
 	}
@@ -34,11 +51,34 @@ func TestVerifyChallengeWaitsAndIsSingleUse(t *testing.T) {
 		t.Fatalf("空令牌核销成功 = %v（err %v）", ok, err)
 	}
 	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyRegister, "203.0.113.9"); err != nil || !ok {
-		t.Fatalf("到时间后核销 = %v（err %v）", ok, err)
+		t.Fatalf("点过章且到时间后核销 = %v（err %v）", ok, err)
 	}
 	// 用过即废：同一个令牌提交两次，第二次必须算没过。
 	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyRegister, "203.0.113.9"); err != nil || ok {
 		t.Fatalf("令牌被用了第二次 = %v（err %v）", ok, err)
+	}
+}
+
+func TestMarkVerifyClickWaitsForTheClock(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+
+	token, _, err := db.NewVerifyChallenge(ctx, VerifyRegister, "203.0.113.13", 40*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 抢着点不算：盖章也要等 ready_at，否则"手比脑子快"等于跳过等待。
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyRegister, "203.0.113.13"); err != nil || ok {
+		t.Fatalf("等待没走完就盖上章 = %v（err %v）", ok, err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyRegister, "203.0.113.13"); err != nil || !ok {
+		t.Fatalf("到时间后盖章 = %v（err %v）", ok, err)
+	}
+	// 盖过章的窗口要能在渲染时被认出来，不然页面会挡着一个已经完成的验证。
+	_, at, verified, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.13")
+	if err != nil || !pending || !verified || at == 0 {
+		t.Fatalf("找回已盖章的窗口 = %d/盖过%v/%v（err %v）", at, verified, pending, err)
 	}
 }
 
@@ -59,6 +99,9 @@ func TestVerifyChallengeKeepsOneWindowPerAddress(t *testing.T) {
 		t.Fatal("两次发令牌给出同一个值")
 	}
 	time.Sleep(20 * time.Millisecond)
+	if ok, err := db.MarkVerifyClick(ctx, second, VerifyRegister, "203.0.113.10"); err != nil || !ok {
+		t.Fatalf("给最新那个窗口盖章 = %v（err %v）", ok, err)
+	}
 	if ok, _ := db.SpendVerifyChallenge(ctx, first, VerifyRegister, "203.0.113.10"); ok {
 		t.Error("旧的令牌还能核销：刷页留下的行没被收掉")
 	}
@@ -81,6 +124,9 @@ func TestVerifyChallengeExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyLogin, "203.0.113.11"); err != nil || ok {
+		t.Fatalf("过期令牌仍然盖得上章 = %v（err %v）", ok, err)
+	}
 	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyLogin, "203.0.113.11"); err != nil || ok {
 		t.Fatalf("过期令牌仍然可用 = %v（err %v）", ok, err)
 	}
@@ -91,30 +137,33 @@ func TestPendingVerifyChallengeFindsTheOngoingWindow(t *testing.T) {
 	db := openTestDB(t)
 
 	// 还没有人领过窗口。
-	if _, _, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12"); err != nil || pending {
+	if _, _, _, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12"); err != nil || pending {
 		t.Fatalf("空表就有待核销窗口 = %v（err %v）", pending, err)
 	}
 	token, readyAt, err := db.NewVerifyChallenge(ctx, VerifyRegister, "203.0.113.12", 20*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, at, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12")
-	if err != nil || !pending || got != token || at != readyAt {
-		t.Fatalf("找回的窗口 = %q/%d/%v（err %v），应该是 %q/%d/true", got, at, pending, err, token, readyAt)
+	got, at, verified, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12")
+	if err != nil || !pending || got != token || at != readyAt || verified {
+		t.Fatalf("找回的窗口 = %q/%d/盖过%v/%v（err %v），应该是 %q/%d/false/true", got, at, verified, pending, err, token, readyAt)
 	}
 	// 用途和来源地址都得对上，别处的、别的用途的窗口不算。
-	if _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyLogin, "203.0.113.12"); pending {
+	if _, _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyLogin, "203.0.113.12"); pending {
 		t.Error("换个用途也找回了同一个窗口")
 	}
-	if _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyRegister, "198.51.100.8"); pending {
+	if _, _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyRegister, "198.51.100.8"); pending {
 		t.Error("换个来源地址也找回了同一个窗口")
 	}
-	// 等够之后核销掉，就没有"还在计时"这一说了。
+	// 等够、盖章、核销掉，就没有"还在计时"这一说了。
 	time.Sleep(40 * time.Millisecond)
+	if ok, err := db.MarkVerifyClick(ctx, token, VerifyRegister, "203.0.113.12"); err != nil || !ok {
+		t.Fatalf("盖章 = %v（err %v）", ok, err)
+	}
 	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyRegister, "203.0.113.12"); err != nil || !ok {
 		t.Fatalf("核销 = %v（err %v）", ok, err)
 	}
-	if _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12"); pending {
+	if _, _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12"); pending {
 		t.Error("已经用掉的窗口还算在计时")
 	}
 }

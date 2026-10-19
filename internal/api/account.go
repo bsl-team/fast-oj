@@ -185,7 +185,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !humanOK {
-		s.loginFailed(w, r, "请先完成页面里的验证：等它转完、勾上那个复选框，再点登录。", http.StatusForbidden)
+		s.loginFailed(w, r, "请先完成页面里的验证：等它转完，再点那一下「我是人类，不是机器」，然后回来点登录。", http.StatusForbidden)
 		return
 	}
 
@@ -334,7 +334,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if !humanOK {
 		s.renderRegisterForm(w, r, http.StatusForbidden,
-			"请先完成页面里的验证：等它转完、勾上那个复选框，再点注册。", handle, email, display)
+			"请先完成页面里的验证：等它转完，再点那一下「我是人类，不是机器」，然后回来点注册。", handle, email, display)
 		return
 	}
 

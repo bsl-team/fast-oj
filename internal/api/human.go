@@ -4,6 +4,8 @@ import (
 	"context"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/liangbinchen2013/fast-oj/internal/store"
@@ -31,12 +33,16 @@ const (
 	humanVerifyFloor = 1
 )
 
-// humanGate 是渲染给表单的那件事：要等，就给出令牌和还剩几秒。
+// humanGate 是渲染给表单的那件事：要等，就给出令牌和还剩几秒；点过了，就不再挡人。
 type humanGate struct {
+	// Kind 是这块表单的用途（register / login），页面里那个"我已完成验证"的兜底按钮要把它带回来。
+	Kind  string
 	Token string
 	// Seconds 是倒计时给人看的秒数。复用旧窗口时可能比这次抽出来的短，也可能正好走完
 	// ——走完就是 0，页面直接把复选框给出来。
 	Seconds int
+	// Verified 是真的盖过章了：那一格已经点过，页面不用再挡人，只提一句"可以直接提交"。
+	Verified bool
 }
 
 // humanSpan 报告这个来源地址现在要不要弹验证窗，以及等待上限（秒，实际是 1..span）。
@@ -94,21 +100,22 @@ func (s *Server) humanGateFor(ctx context.Context, kind, ip, presented string) (
 		return nil, err
 	}
 	var (
-		readyAt int64
-		token   string
+		token    string
+		readyAt  int64
+		verified bool
 	)
 	if presented != "" {
-		at, pending, err := s.db.VerifyState(ctx, presented, kind, ip)
+		at, wasClicked, pending, err := s.db.VerifyState(ctx, presented, kind, ip)
 		if err != nil {
 			return nil, err
 		}
 		if pending {
-			token, readyAt = presented, at
+			token, readyAt, verified = presented, at, wasClicked
 		}
 	}
 	if token == "" {
 		var pending bool
-		token, readyAt, pending, err = s.db.PendingVerifyChallenge(ctx, kind, ip)
+		token, readyAt, verified, pending, err = s.db.PendingVerifyChallenge(ctx, kind, ip)
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +131,93 @@ func (s *Server) humanGateFor(ctx context.Context, kind, ip, presented string) (
 	if left < 0 {
 		left = 0
 	}
-	return &humanGate{Token: token, Seconds: int((left + 999) / 1000)}, nil
+	return &humanGate{
+		Kind: kind, Token: token,
+		Seconds:  int((left + 999) / 1000),
+		Verified: verified,
+	}, nil
+}
+
+// looksLikeBrowser 是"这一眼看起来像浏览器发的"这个启发式，用在盖 verified 章那一步。
+//
+// 它挡的是"随手写的脚本"，不是"决心要绕的人"：curl、wget、python-requests、Go 的默认
+// client 这些都不会带 Sec-Fetch-*，UA 也自报家门；而一个肯把我们这页 JS 抄一遍、再把三个
+// 头补上的脚本，这一关是拦不住的——这条注释存在的意义就是别让任何人以为这里是道墙。
+// 真正能数着掐住批量注册的是 login_attempts 里那两条按地址的计数，加上邮箱验证那道闸。
+func looksLikeBrowser(r *http.Request) bool {
+	ua := strings.ToLower(strings.TrimSpace(r.UserAgent()))
+	if ua == "" {
+		return false
+	}
+	// 自报是命令行工具的，直接不算浏览器——它们连 Sec-Fetch 都懒得带，没必要陪它演。
+	for _, tool := range []string{
+		"curl/", "wget/", "libcurl", "python-requests", "python-urllib", "urllib3",
+		"go-http-client", "okhttp/", "java/", "node-fetch", "axios/", "httpie",
+		"scrapy", "powershell", "aria2", "caddy", "kube-probe", "prometheus",
+	} {
+		if strings.Contains(ua, tool) {
+			return false
+		}
+	}
+	if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+		return true
+	}
+	// 老浏览器（以及部分隐私设置）不带 Sec-Fetch-*，那就退回看 UA 加 Accept：
+	// 一个要提交 HTML 表单的请求，总该说自己收 HTML。
+	accept := r.Header.Get("Accept")
+	return strings.Contains(accept, "text/html") &&
+		(strings.Contains(ua, "mozilla/") || strings.Contains(ua, "safari") || strings.Contains(ua, "opera"))
+}
+
+// handleVerifyClick 是复选框那一下落到服务端的地方：POST /verify。
+//
+// 时间没走完、令牌不是这个地址领的、或者请求一眼就不是浏览器——一律不盖章。盖了章的令牌
+// 才能被注册/登录核销，所以"睡够秒数然后直接 curl 交表单"这条路要多一次绑定同一令牌的请求。
+func (s *Server) handleVerifyClick(w http.ResponseWriter, r *http.Request) {
+	kind := r.FormValue("kind")
+	if kind != store.VerifyRegister && kind != store.VerifyLogin {
+		s.errorPage(w, r, http.StatusBadRequest, "验证请求没说要验证的是注册还是登录")
+		return
+	}
+	ip := clientIP(r)
+	rejected := func(why string) {
+		s.log.Info("verify click rejected", "kind", kind, "ip", ip, "reason", why)
+		if r.FormValue("js") == "1" {
+			// 脚本走的那一路：只给状态码，正文空着，页面自己决定怎么说。
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		s.redirectToForm(w, r, kind, "还不能确认你是人类：这一页要等的时间还没走完。等它转完再点一次。")
+	}
+	if !looksLikeBrowser(r) {
+		rejected("请求形状不像浏览器")
+		return
+	}
+	ok, err := s.db.MarkVerifyClick(r.Context(), r.FormValue("verify"), kind, ip)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !ok {
+		rejected("等待未走完或令牌不对")
+		return
+	}
+	if r.FormValue("js") == "1" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// 没有 JavaScript 的浏览器：这一跳就是它点复选框的方式，回到表单页并带着盖过章的令牌。
+	s.redirectToForm(w, r, kind, "验证好了，再点一次下面的提交按钮就行。")
+}
+
+// redirectToForm 把人送回他来的那张表单。目标地址是这两个常量之一，不是请求里给的——
+// 拿 kind 拼跳转地址就会开一个"登录页可以把你送到任何站内路径"的口子。
+func (s *Server) redirectToForm(w http.ResponseWriter, r *http.Request, kind, msg string) {
+	back := "/register"
+	if kind == store.VerifyLogin {
+		back = "/login"
+	}
+	http.Redirect(w, r, back+"?msg="+url.QueryEscape(msg), http.StatusSeeOther)
 }
 
 // humanAllowed 核销表单带回来的令牌。放行与否之外不返回原因：这一条路上失败的原因只有

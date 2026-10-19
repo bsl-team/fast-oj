@@ -7,9 +7,11 @@
   <input type="text" name="identifier" value="{{.Data.Identifier}}" autocomplete="username" required>
   <label>密码</label>
   <input type="password" name="password" autocomplete="current-password" required>
-  {{with .Data.Human}}{{template "humanverify" .}}{{end}}
+  {{template "humanfield" .Data.Human}}
   <p><input type="submit" value="登录"></p>
 </form>
+
+{{template "humanverify" .Data.Human}}
 
 <p class="meta">还没有账号？<a href="/register">注册</a>。邮箱暂不发送验证邮件，注册后即可使用。</p>
 {{end}}

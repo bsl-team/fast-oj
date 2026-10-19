@@ -44,69 +44,87 @@
 {{end}}
 {{end}}
 
-{{define "humanverify"}}
+{{define "humanfield"}}{{if .}}
 <input type="hidden" name="verify" value="{{.Token}}">
-<div class="human-verify" data-seconds="{{.Seconds}}">
+{{end}}{{end}}
+
+{{define "humanverify"}}
+{{if .}}{{if .Verified}}
+<p class="meta human-verify-done">验证好了，直接点下面的提交按钮。</p>
+{{else}}
+<form class="human-verify counting" method="post" action="/verify" data-seconds="{{.Seconds}}">
+  <input type="hidden" name="verify" value="{{.Token}}">
+  <input type="hidden" name="kind" value="{{.Kind}}">
   <div class="human-verify-card" role="dialog" aria-live="polite">
     <div class="human-verify-spin" aria-hidden="true"></div>
     <p class="human-verify-text">正在验证你是人类…</p>
-    <label class="human-verify-tick" hidden>
-      <input type="checkbox" class="human-verify-box" disabled> 我是人类，不是机器
-    </label>
-    <noscript><p class="meta">这台浏览器没有开启 JavaScript，所以上面那个窗不会自己打开。服务端仍然要等满 {{.Seconds}} 秒才放行这一页的提交：等够时间以后再点一次提交就行。</p></noscript>
+    <button class="human-verify-tick" type="submit">我是人类，不是机器</button>
+    <noscript><p class="meta">这台浏览器没有开启 JavaScript：上面这个按钮照样能用，但要等服务端那段等待走完再点。点成功之后回到这一页，把表单重新填一次提交即可。</p></noscript>
   </div>
-</div>
+</form>
 <script>
-  // 这个窗只做一件事：把服务端已经决定了的那段等待演给人看，然后把提交按钮放开。
-  // 转多久、能不能提交，浏览器说了都不算——verify 那个隐藏字段是渲染这一页时服务端发的
-  // 令牌，提交时要到 internal/store/verify.go 里核销，时间没到就核销不掉。所以关掉
-  // JavaScript 也拦不住谁，只是看不见这个窗。
+  // 这个窗只做两件事：把服务端已经决定了的那段等待演给人看，然后在"那一下真的点到了"之后
+  // 放开提交按钮。
   //
-  // 要等 DOMContentLoaded：这段脚本在表单中间，提交按钮在它后面，现在就找 [type=submit]
-  // 找到的是 null——按钮找不到就什么都别拦（宁可没有这个窗，也不能让正常人提交不了表单），
-  // 于是整个窗白屏立着不动。
+  // 关键点是"点到"要落到服务端：这个按钮本身就是一次 POST /verify，服务端只在等待时间已经
+  // 走完、令牌确实是这个地址领的、而且请求长得像浏览器发的时候才盖章（verified=1）；注册与
+  // 登录只核销盖过章的令牌。所以把这段 JS 抄走、或者直接 sleep 以后 curl 交表单，都要多伪造
+  // 一次绑定同一令牌的请求——而 sleep 伪造不了已经过去的时间。
+  //
+  // 不写剩余秒数：那个数字只会让人盯着看，也等于替脚本报时。
+  //
+  // 要等 DOMContentLoaded：这段脚本紧贴在表单后面，主表单的提交按钮在页面更靠前的地方，但
+  // 上一版这里找到的还是 null（脚本当时在表单中间，按钮还没解析出来），于是窗白立着不动。
   document.addEventListener('DOMContentLoaded', function () {
-    var overlay = document.querySelector('.human-verify');
-    if (!overlay) return;
-    overlay.style.display = 'flex';
-    var form = overlay.closest('form');
-    var submit = form ? form.querySelector('[type=submit]') : null;
-    var tick = overlay.querySelector('.human-verify-box');
+    var box = document.querySelector('form.human-verify');
+    if (!box) return;
+    var main = document.querySelector('form[action="/register"], form[action="/login"]');
+    var submit = main ? main.querySelector('[type=submit]') : null;
+    var tick = box.querySelector('.human-verify-tick');
     if (!submit || !tick) return;
-    var spin = overlay.querySelector('.human-verify-spin');
-    var text = overlay.querySelector('.human-verify-text');
-    var label = overlay.querySelector('.human-verify-tick');
-    var left = parseInt(overlay.getAttribute('data-seconds'), 10);
+    var spin = box.querySelector('.human-verify-spin');
+    var text = box.querySelector('.human-verify-text');
+    var left = parseInt(box.getAttribute('data-seconds'), 10);
     if (!(left > 0)) left = 0;
     submit.disabled = true;
-    function say() {
-      text.textContent = left > 0
-        ? '正在验证你是人类…（还有 ' + left + ' 秒）'
-        : '验证完了，勾上下面那个框就能提交。';
-    }
     function reveal() {
+      box.classList.remove('counting');
       spin.classList.add('done');
-      label.hidden = false;
-      tick.disabled = false;
-      say();
+      text.textContent = '验证完了，点下面那个按钮。';
     }
-    say();
     if (left === 0) {
       reveal();
     } else {
       var timer = setInterval(function () {
         left--;
-        say();
         if (left <= 0) {
           clearInterval(timer);
           reveal();
         }
       }, 1000);
     }
-    tick.addEventListener('change', function () {
-      submit.disabled = !tick.checked;
-      overlay.style.display = tick.checked ? 'none' : 'flex';
+    box.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var body = new URLSearchParams(new FormData(box));
+      body.set('js', '1');
+      fetch('/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        credentials: 'same-origin'
+      }).then(function (resp) {
+        if (!resp.ok) {
+          text.textContent = '还没到时间，稍等一下再点。';
+          return;
+        }
+        tick.classList.add('tick-on');
+        box.style.display = 'none';
+        submit.disabled = false;
+      }, function () {
+        text.textContent = '这一步没发出去，再点一次看看。';
+      });
     });
   });
 </script>
+{{end}}{{end}}
 {{end}}

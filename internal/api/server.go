@@ -155,6 +155,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login", s.handleLogin)
 	mux.HandleFunc("GET /register", s.handleRegisterPage)
 	mux.HandleFunc("POST /register", s.handleRegister)
+	// 人机验证窗里那一下勾选：只有到这里才算数，写在表单里的秒数不算。
+	mux.HandleFunc("POST /verify", s.handleVerifyClick)
 	mux.HandleFunc("POST /logout", s.handleLogout)
 
 	mux.HandleFunc("GET /settings", s.handleSettings)

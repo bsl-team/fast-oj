@@ -196,10 +196,10 @@ table.batch td { padding: .2rem .4rem; }
 table.batch input[type=number] { width: 5.5rem; }
 table.batch input[type=text] { width: 100%; min-width: 6rem; }
 
-/* 伪人机验证：半透明底 + 居中卡片。默认不显示，由脚本打开——所以没有 JavaScript 的浏览器
-   看不见这个窗，但服务端那段等待照旧要等：弹窗是观感，时间才是强制的那部分。 */
+/* 伪人机验证：半透明底 + 居中卡片。渲染出来就显示（没有 JavaScript 的浏览器也要能点那个
+   按钮），点成功之后由脚本把它收起。 */
 .human-verify {
-  display: none;
+  display: flex;
   position: fixed;
   inset: 0;
   z-index: 10;
@@ -228,5 +228,7 @@ table.batch input[type=text] { width: 100%; min-width: 6rem; }
 }
 .human-verify-spin.done { animation-name: none; border-color: var(--ok); }
 @keyframes human-verify-turn { to { transform: rotate(360deg); } }
-.human-verify-tick { display: block; margin-top: .8rem; }
-.human-verify-tick input { margin-right: .4rem; }
+/* 等待期间把那个按钮藏起来：不是防人，是防"手比脑子快"——真点早了服务端也会拒。 */
+.human-verify.counting .human-verify-tick { display: none; }
+.human-verify-tick::before { content: "\2610\FE0E  "; }
+.human-verify-tick.tick-on::before { content: "\2611\FE0E  "; }

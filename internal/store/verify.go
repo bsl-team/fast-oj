@@ -49,8 +49,8 @@ func (db *DB) NewVerifyChallenge(ctx context.Context, kind, ip string, wait time
 	return token, ready, nil
 }
 
-// SpendVerifyChallenge 核销一个令牌：来源地址对、用途对、没过期、而且等待时间已经走完，
-// 五条同时成立才算过，并且用过一次就作废。
+// SpendVerifyChallenge 核销一个令牌：来源地址对、用途对、没过期、等待时间已经走完，
+// 而且**那一下复选框真的点过**，五条同时成立才算过，并且用过一次就作废。
 //
 // 判断写在一条 DELETE 的 WHERE 里、靠 RowsAffected 定成败，而不是"先查再改"：并发提交同
 // 一个令牌时两次请求都读到了"可用"，但只有一次删得掉那一行。用 `used` 标记反而要处理
@@ -65,7 +65,7 @@ func (db *DB) SpendVerifyChallenge(ctx context.Context, token, kind, ip string) 
 	now := nowMS()
 	res, err := db.SQL.ExecContext(ctx,
 		`DELETE FROM verify_challenges
-		 WHERE token=? AND kind=? AND ip=? AND ready_at<=? AND expires_at>?`,
+		 WHERE token=? AND kind=? AND ip=? AND ready_at<=? AND expires_at>? AND verified=1`,
 		token, kind, ip, now, now)
 	if err != nil {
 		return false, err
@@ -82,48 +82,78 @@ func (db *DB) SpendVerifyChallenge(ctx context.Context, token, kind, ip string) 
 	return n == 1, nil
 }
 
-// VerifyState 看一眼这个令牌还挂着没有，并返回它要求的时刻（毫秒）。
+// MarkVerifyClick 把"复选框点过了"盖在窗口上：**只有等待时间已经走完**才盖得上。
+//
+// 这一条是 0029 存在的原因：0028 之后脚本睡够秒数就能直接交表单，复选框是纯装饰。现在
+// 勾一下就是一次独立的 HTTP 请求（还要长得像浏览器，见 internal/api/human.go），提交那一步
+// 只认盖过章的令牌。它仍能被刻意模仿——一次 POST 而已——但模仿不了 ready_at 那段已经过去的时间，
+// 两道叠起来才是这道门的实际内容。
+func (db *DB) MarkVerifyClick(ctx context.Context, token, kind, ip string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	now := nowMS()
+	res, err := db.SQL.ExecContext(ctx,
+		`UPDATE verify_challenges SET verified=1
+		 WHERE token=? AND kind=? AND ip=? AND ready_at<=? AND expires_at>? AND verified=0`,
+		token, kind, ip, now, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// VerifyState 看一眼这个令牌还挂着没有，返回它要求的时刻（毫秒）和有没有被点过。
 //
 // 存在的理由是不让人白等：提交早了被打回去重填时，表单要能把原来那个等待接着用，而不是
 // 每次失败都发一个新的、从此刻重新计时的窗口——那样多点几次提交就永远等不完。
-func (db *DB) VerifyState(ctx context.Context, token, kind, ip string) (int64, bool, error) {
+func (db *DB) VerifyState(ctx context.Context, token, kind, ip string) (int64, bool, bool, error) {
 	if token == "" {
-		return 0, false, nil
+		return 0, false, false, nil
 	}
-	var readyAt int64
+	var (
+		readyAt  int64
+		verified int
+	)
 	err := db.SQL.QueryRowContext(ctx,
-		`SELECT ready_at FROM verify_challenges WHERE token=? AND kind=? AND ip=? AND expires_at>?`,
-		token, kind, ip, nowMS()).Scan(&readyAt)
+		`SELECT ready_at, verified FROM verify_challenges WHERE token=? AND kind=? AND ip=? AND expires_at>?`,
+		token, kind, ip, nowMS()).Scan(&readyAt, &verified)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
+		return 0, false, false, nil
 	}
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
-	return readyAt, true, nil
+	return readyAt, verified == 1, true, nil
 }
 
-// PendingVerifyChallenge 返回这个地址在这一用途上还没走完的那个窗口（如果有）。
+// PendingVerifyChallenge 返回这个地址在这一用途上还没走完的那个窗口（如果有），连带
+// 它要求的时刻和有没有被点过。
 //
 // 有了它，"同一个地址同一个用途只留一行"才不只是省地方：渲染表单时如果已经有窗口在计时，
 // 就接着用它。否则两个标签页来回切、或者有人拿废令牌试一次，都会把正在计时的窗口顶掉，
 // 等于让老实等待的人重新等一遍——那正好是这张表最不该造成的事。
-func (db *DB) PendingVerifyChallenge(ctx context.Context, kind, ip string) (string, int64, bool, error) {
+func (db *DB) PendingVerifyChallenge(ctx context.Context, kind, ip string) (string, int64, bool, bool, error) {
 	var (
-		token   string
-		readyAt int64
+		token    string
+		readyAt  int64
+		verified int
 	)
 	err := db.SQL.QueryRowContext(ctx,
-		`SELECT token, ready_at FROM verify_challenges
+		`SELECT token, ready_at, verified FROM verify_challenges
 		 WHERE kind=? AND ip=? AND expires_at>? ORDER BY ready_at DESC LIMIT 1`,
-		kind, ip, nowMS()).Scan(&token, &readyAt)
+		kind, ip, nowMS()).Scan(&token, &readyAt, &verified)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", 0, false, nil
+		return "", 0, false, false, nil
 	}
 	if err != nil {
-		return "", 0, false, err
+		return "", 0, false, false, err
 	}
-	return token, readyAt, true, nil
+	return token, readyAt, verified == 1, true, nil
 }
 
 // RateHits 报告一个键在滚动窗口里已经攒了几次动作。窗口已经过掉的按 0 算——那正是
