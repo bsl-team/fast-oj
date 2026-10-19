@@ -86,6 +86,39 @@ func TestVerifyChallengeExpires(t *testing.T) {
 	}
 }
 
+func TestPendingVerifyChallengeFindsTheOngoingWindow(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+
+	// 还没有人领过窗口。
+	if _, _, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12"); err != nil || pending {
+		t.Fatalf("空表就有待核销窗口 = %v（err %v）", pending, err)
+	}
+	token, readyAt, err := db.NewVerifyChallenge(ctx, VerifyRegister, "203.0.113.12", 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, at, pending, err := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12")
+	if err != nil || !pending || got != token || at != readyAt {
+		t.Fatalf("找回的窗口 = %q/%d/%v（err %v），应该是 %q/%d/true", got, at, pending, err, token, readyAt)
+	}
+	// 用途和来源地址都得对上，别处的、别的用途的窗口不算。
+	if _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyLogin, "203.0.113.12"); pending {
+		t.Error("换个用途也找回了同一个窗口")
+	}
+	if _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyRegister, "198.51.100.8"); pending {
+		t.Error("换个来源地址也找回了同一个窗口")
+	}
+	// 等够之后核销掉，就没有"还在计时"这一说了。
+	time.Sleep(40 * time.Millisecond)
+	if ok, err := db.SpendVerifyChallenge(ctx, token, VerifyRegister, "203.0.113.12"); err != nil || !ok {
+		t.Fatalf("核销 = %v（err %v）", ok, err)
+	}
+	if _, _, pending, _ := db.PendingVerifyChallenge(ctx, VerifyRegister, "203.0.113.12"); pending {
+		t.Error("已经用掉的窗口还算在计时")
+	}
+}
+
 func TestRateHitsCountsInsideWindowOnly(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

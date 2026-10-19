@@ -43,3 +43,68 @@
 <p class="meta"><a href="/login">登录</a> 后就能发动态。</p>
 {{end}}
 {{end}}
+
+{{define "humanverify"}}
+<input type="hidden" name="verify" value="{{.Token}}">
+<div class="human-verify" data-seconds="{{.Seconds}}">
+  <div class="human-verify-card" role="dialog" aria-live="polite">
+    <div class="human-verify-spin" aria-hidden="true"></div>
+    <p class="human-verify-text">正在验证你是人类…（约 {{.Seconds}} 秒）</p>
+    <label class="human-verify-tick" hidden>
+      <input type="checkbox" class="human-verify-box" disabled> 我是人类，不是机器
+    </label>
+    <noscript><p class="meta">这台浏览器没有开启 JavaScript，所以上面那个窗不会自己打开。服务端仍然要等满 {{.Seconds}} 秒才放行这一页的提交：等够时间以后再点一次提交就行。</p></noscript>
+  </div>
+</div>
+<script>
+  // 这个窗只做一件事：把服务端已经决定了的那段等待演给人看，然后把提交按钮放开。
+  // 转多久、能不能提交，浏览器说了都不算——verify 那个隐藏字段是渲染这一页时服务端发的
+  // 令牌，提交时要到 internal/store/verify.go 里核销，时间没到就核销不掉。所以关掉
+  // JavaScript 也拦不住谁，只是看不见这个窗。
+  (function () {
+    var overlay = document.querySelector('.human-verify');
+    if (!overlay) return;
+    overlay.style.display = 'flex';
+    var form = overlay.closest('form');
+    var submit = form ? form.querySelector('[type=submit]') : null;
+    var tick = overlay.querySelector('.human-verify-box');
+    // 找不到按钮或框就说明页面结构变了，这时什么都不拦：宁可没有这个窗，也不能让正常人
+    // 提交不了表单。
+    if (!submit || !tick) return;
+    var spin = overlay.querySelector('.human-verify-spin');
+    var text = overlay.querySelector('.human-verify-text');
+    var label = overlay.querySelector('.human-verify-tick');
+    var left = parseInt(overlay.getAttribute('data-seconds'), 10);
+    if (!(left > 0)) left = 0;
+    submit.disabled = true;
+    function say() {
+      text.textContent = left > 0
+        ? '正在验证你是人类…（还有 ' + left + ' 秒）'
+        : '验证完了，勾上下面那个框就能提交。';
+    }
+    function reveal() {
+      spin.classList.add('done');
+      label.hidden = false;
+      tick.disabled = false;
+      say();
+    }
+    say();
+    if (left === 0) {
+      reveal();
+    } else {
+      var timer = setInterval(function () {
+        left--;
+        say();
+        if (left <= 0) {
+          clearInterval(timer);
+          reveal();
+        }
+      }, 1000);
+    }
+    tick.addEventListener('change', function () {
+      submit.disabled = !tick.checked;
+      overlay.style.display = tick.checked ? 'none' : 'flex';
+    });
+  })();
+</script>
+{{end}}

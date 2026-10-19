@@ -82,6 +82,50 @@ func (db *DB) SpendVerifyChallenge(ctx context.Context, token, kind, ip string) 
 	return n == 1, nil
 }
 
+// VerifyState 看一眼这个令牌还挂着没有，并返回它要求的时刻（毫秒）。
+//
+// 存在的理由是不让人白等：提交早了被打回去重填时，表单要能把原来那个等待接着用，而不是
+// 每次失败都发一个新的、从此刻重新计时的窗口——那样多点几次提交就永远等不完。
+func (db *DB) VerifyState(ctx context.Context, token, kind, ip string) (int64, bool, error) {
+	if token == "" {
+		return 0, false, nil
+	}
+	var readyAt int64
+	err := db.SQL.QueryRowContext(ctx,
+		`SELECT ready_at FROM verify_challenges WHERE token=? AND kind=? AND ip=? AND expires_at>?`,
+		token, kind, ip, nowMS()).Scan(&readyAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return readyAt, true, nil
+}
+
+// PendingVerifyChallenge 返回这个地址在这一用途上还没走完的那个窗口（如果有）。
+//
+// 有了它，"同一个地址同一个用途只留一行"才不只是省地方：渲染表单时如果已经有窗口在计时，
+// 就接着用它。否则两个标签页来回切、或者有人拿废令牌试一次，都会把正在计时的窗口顶掉，
+// 等于让老实等待的人重新等一遍——那正好是这张表最不该造成的事。
+func (db *DB) PendingVerifyChallenge(ctx context.Context, kind, ip string) (string, int64, bool, error) {
+	var (
+		token   string
+		readyAt int64
+	)
+	err := db.SQL.QueryRowContext(ctx,
+		`SELECT token, ready_at FROM verify_challenges
+		 WHERE kind=? AND ip=? AND expires_at>? ORDER BY ready_at DESC LIMIT 1`,
+		kind, ip, nowMS()).Scan(&token, &readyAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, err
+	}
+	return token, readyAt, true, nil
+}
+
 // RateHits 报告一个键在滚动窗口里已经攒了几次动作。窗口已经过掉的按 0 算——那正是
 // LoginAllowed 里"重新开始数"的那个判断，这里要给出同一个口径，否则渲染出来的等待秒数
 // 和限流真正用的那个数字会打架。

@@ -156,7 +156,14 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.page(w, r, http.StatusOK, "登录", "login", nil, msgOf(r), map[string]any{"Next": r.URL.Query().Get("next")})
+	gate, err := s.humanGateFor(r.Context(), store.VerifyLogin, clientIP(r), "")
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	s.page(w, r, http.StatusOK, "登录", "login", nil, msgOf(r), map[string]any{
+		"Next": r.URL.Query().Get("next"), "Human": gate,
+	})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +175,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowed {
 		s.loginFailed(w, r, "失败次数过多，请 15 分钟后再试", http.StatusTooManyRequests)
+		return
+	}
+	// 验证闸排在密码之前：它不要 bcrypt，也不该把"你没等够"记成一次密码错误。手快点
+	// 了一次提交的人不该被推向那条真正的锁。
+	humanOK, err := s.humanAllowed(r, store.VerifyLogin)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !humanOK {
+		s.loginFailed(w, r, "请先完成页面里的验证：等它转完、勾上那个复选框，再点登录。", http.StatusForbidden)
 		return
 	}
 
@@ -204,8 +222,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // loginFailed re-renders the form instead of redirecting, so the typed handle
 // survives and the status code stays meaningful.
 func (s *Server) loginFailed(w http.ResponseWriter, r *http.Request, msg string, status int) {
+	// 被打回来的这一页要接着原来那个等待：另发一个从此刻重新计时的窗口，等于让"手快
+	// 点了一次提交"的人重新等一遍。
+	gate, err := s.humanGateFor(r.Context(), store.VerifyLogin, clientIP(r), r.FormValue("verify"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, status, "登录", "login", nil, msg, map[string]any{
-		"Next": r.FormValue("next"),
+		"Next":  r.FormValue("next"),
+		"Human": gate,
 		// 回填的登录名一样要截断：html/template 挡住的是注入，挡不住"把十 MB 的输入
 		// 原样印回响应里"这种放大。
 		"Identifier": clip(r.FormValue("identifier"), 200),
@@ -224,10 +250,16 @@ func (s *Server) handleRegisterPage(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusForbidden, "当前未开放注册")
 		return
 	}
+	gate, err := s.humanGateFor(r.Context(), store.VerifyRegister, clientIP(r), "")
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, http.StatusOK, "注册", "register", nil, msgOf(r), map[string]any{
 		"Handle": "", "Email": "", "DisplayName": "",
 		// 先告诉人要收邮件，比注册完才发现交不了题省事。
 		"RequireVerify": s.requiresEmailVerify(r),
+		"Human":         gate,
 	})
 }
 
@@ -289,6 +321,20 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if problem != "" {
 		s.renderRegisterForm(w, r, http.StatusBadRequest, problem, handle, email, display)
+		return
+	}
+
+	// 验证闸排在表单校验之后、bcrypt 之前：填错邮箱的人先看到"邮箱格式不正确"这种他
+	// 能懂的话，而不是先被告知去等一个他还没看到的窗；而脚本也别想拿一堆废表单去换
+	// bcrypt 的次数——那才是这里真正要省的东西。
+	humanOK, err := s.humanAllowed(r, store.VerifyRegister)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !humanOK {
+		s.renderRegisterForm(w, r, http.StatusForbidden,
+			"请先完成页面里的验证：等它转完、勾上那个复选框，再点注册。", handle, email, display)
 		return
 	}
 
@@ -395,10 +441,17 @@ func (s *Server) claimSiteOwner(r *http.Request, u store.User) bool {
 }
 
 func (s *Server) renderRegisterForm(w http.ResponseWriter, r *http.Request, status int, msg, handle, email, display string) {
+	// 同登录那一页：重填时沿用还没走完的等待，别让人每被打回一次就重新等一遍。
+	gate, err := s.humanGateFor(r.Context(), store.VerifyRegister, clientIP(r), r.FormValue("verify"))
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	s.page(w, r, status, "注册", "register", nil, msg, map[string]any{
 		"Handle": handle, "Email": email, "DisplayName": display,
 		// 被打回去重填的时候，这一句不能跟着消失：那一页还是同一页。
 		"RequireVerify": s.requiresEmailVerify(r),
+		"Human":         gate,
 	})
 }
 

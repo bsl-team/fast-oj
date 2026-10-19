@@ -33,7 +33,11 @@ type Config struct {
 	// ProblemPerMinute 是一个人每分钟能建几道题。建题会带出用例文件与目录，是比提交更贵
 	// 的动作；批量导入题库的人靠的是 zip 与脚本，不是这个。
 	ProblemPerMinute int
-	Verbose          bool
+	// HumanVerifyMax 是「伪人机验证」那次等待的上限（秒）。同一个出口 IP 注册得越多、
+	// 登录失败得越多，要等的秒数就越往上加，这里给它的头顶封顶；负数与 0 都是关掉整套
+	// ——全班共用一个 NAT 出口的那天，这是最快的降压阀，关掉之后剩下的是原来那两条限流。
+	HumanVerifyMax int
+	Verbose        bool
 }
 
 func envOr(key, fallback string) string {
@@ -92,6 +96,11 @@ func (c *Config) Validate() error {
 		// would look like a bug, and one everybody can flood looks like one too.
 		c.RegisterPerMinute = 1
 	}
+	if c.HumanVerifyMax < 0 {
+		// 关掉的写法只留一种：0。负数是笔误，按关掉的语义处理而不是让它起不来——
+		// 部署脚本里多打一个减号不该让站点发不动。
+		c.HumanVerifyMax = 0
+	}
 	abs, err := filepath.Abs(c.DataDir)
 	if err != nil {
 		return err
@@ -122,6 +131,8 @@ func Load(args []string) (Config, error) {
 		"一个人每分钟可提交几次（0=不限；判机是共享资源，队列深度是所有人的等待时间）")
 	problemPerMinute := fs.Int("problem-per-minute", 20,
 		"一个人每分钟可建几道题（0=不限）")
+	fs.IntVar(&c.HumanVerifyMax, "human-verify-max-seconds", envInt("FASTOJ_HUMAN_VERIFY_MAX", 20),
+		"人机验证那次等待的秒数上限（越注册/越失败等得越久，到这条就封顶；0=关掉整套验证窗）")
 	fs.BoolVar(&c.Verbose, "v", false, "verbose request logging")
 	if err := fs.Parse(args); err != nil {
 		return c, err

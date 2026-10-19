@@ -195,3 +195,38 @@ article.reply .body p { margin: .3rem 0; }
 table.batch td { padding: .2rem .4rem; }
 table.batch input[type=number] { width: 5.5rem; }
 table.batch input[type=text] { width: 100%; min-width: 6rem; }
+
+/* 伪人机验证：半透明底 + 居中卡片。默认不显示，由脚本打开——所以没有 JavaScript 的浏览器
+   看不见这个窗，但服务端那段等待照旧要等：弹窗是观感，时间才是强制的那部分。 */
+.human-verify {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, .45);
+}
+.human-verify-card {
+  max-width: 22rem;
+  padding: 1.25rem 1.4rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+  text-align: center;
+}
+.human-verify-card p { margin: .35rem 0; }
+.human-verify-spin {
+  width: 2rem;
+  height: 2rem;
+  margin: 0 auto .8rem;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: human-verify-turn .9s linear infinite;
+}
+.human-verify-spin.done { animation-name: none; border-color: var(--ok); }
+@keyframes human-verify-turn { to { transform: rotate(360deg); } }
+.human-verify-tick { display: block; margin-top: .8rem; }
+.human-verify-tick input { margin-right: .4rem; }

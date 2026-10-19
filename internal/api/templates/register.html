@@ -20,6 +20,8 @@
 
   <input type="hidden" name="device" id="device" value="">
 
+  {{with .Data.Human}}{{template "humanverify" .}}{{end}}
+
   <p><input type="submit" value="注册并登录"></p>
 </form>
 
