@@ -1,0 +1,105 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+)
+
+// verify.go 是「伪人机验证」里唯一真的那部分。页面上转的圈和那个复选框都不作数——
+// 浏览器说自己已经等了 5 秒，服务端没有任何理由相信；真正让脚本多花成本的是记在这里的
+// ready_at：令牌由渲染表单那一次发出来，绑死来源地址和用途，时间没到就核销不掉。
+// 脚本要绕过它，只能同样等那么久。
+
+// 用途。注册和登录两条路的"这个人最近有多少次动作"来源不同（一个是成功注册次数，
+// 一个是失败次数），所以令牌不能串用：拿登录页领的令牌去交注册表单不算数。
+const (
+	VerifyRegister = "register"
+	VerifyLogin    = "login"
+)
+
+// verifyChallengeTTL 是领来不用的窗口的寿命。十分钟是给"页面开着去倒了杯水"的人留的；
+// 再长就等于给未来的提交预留额度——一个地址把令牌攒着，哪天想注册就随时能注册。
+const verifyChallengeTTL = 10 * time.Minute
+
+// NewVerifyChallenge 给这个来源地址发一个"要等到 readyAt 之后才被放行"的窗口，返回令牌
+// 和那个时刻（毫秒）。
+//
+// 同一 kind+ip 先删旧再写新：这张表是匿名请求能写东西的少数几张表之一，刷新一次注册页
+// 就多一行。按来源地址收成一条待核销窗口，表的大小就被"同时在看表单的地址数"限制住，
+// 而不是被"刷页的次数"限制住。
+func (db *DB) NewVerifyChallenge(ctx context.Context, kind, ip string, wait time.Duration) (string, int64, error) {
+	token, err := NewSecret(24)
+	if err != nil {
+		return "", 0, err
+	}
+	now := nowMS()
+	ready := now + wait.Milliseconds()
+	if _, err := db.SQL.ExecContext(ctx,
+		`DELETE FROM verify_challenges WHERE kind=? AND ip=?`, kind, ip); err != nil {
+		return "", 0, err
+	}
+	if _, err := db.SQL.ExecContext(ctx,
+		`INSERT INTO verify_challenges (token, kind, ip, ready_at, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		token, kind, ip, ready, now+verifyChallengeTTL.Milliseconds(), now); err != nil {
+		return "", 0, err
+	}
+	return token, ready, nil
+}
+
+// SpendVerifyChallenge 核销一个令牌：来源地址对、用途对、没过期、而且等待时间已经走完，
+// 五条同时成立才算过，并且用过一次就作废。
+//
+// 判断写在一条 DELETE 的 WHERE 里、靠 RowsAffected 定成败，而不是"先查再改"：并发提交同
+// 一个令牌时两次请求都读到了"可用"，但只有一次删得掉那一行。用 `used` 标记反而要处理
+// "标记写成功但请求失败"的中间态。
+//
+// 过期清理挂在这条路上：这里是提交，本来就被限流和核销管着；渲染表单那一次是无条件的，
+// 不能拿它当清理的触发器。
+func (db *DB) SpendVerifyChallenge(ctx context.Context, token, kind, ip string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	now := nowMS()
+	res, err := db.SQL.ExecContext(ctx,
+		`DELETE FROM verify_challenges
+		 WHERE token=? AND kind=? AND ip=? AND ready_at<=? AND expires_at>?`,
+		token, kind, ip, now, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if _, err := db.SQL.ExecContext(ctx,
+		`DELETE FROM verify_challenges WHERE expires_at<=?`, now); err != nil {
+		// 清不掉过期行不影响核销的结论，也不该把一次正常的登录判成失败。
+		return n == 1, nil
+	}
+	return n == 1, nil
+}
+
+// RateHits 报告一个键在滚动窗口里已经攒了几次动作。窗口已经过掉的按 0 算——那正是
+// LoginAllowed 里"重新开始数"的那个判断，这里要给出同一个口径，否则渲染出来的等待秒数
+// 和限流真正用的那个数字会打架。
+func (db *DB) RateHits(ctx context.Context, key string, window time.Duration) (int, error) {
+	var (
+		hits  int
+		start int64
+	)
+	err := db.SQL.QueryRowContext(ctx,
+		`SELECT failures, window_start FROM login_attempts WHERE key=?`, key).Scan(&hits, &start)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if start < nowMS()-window.Milliseconds() {
+		return 0, nil
+	}
+	return hits, nil
+}
