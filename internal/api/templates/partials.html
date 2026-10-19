@@ -49,7 +49,7 @@
 <div class="human-verify" data-seconds="{{.Seconds}}">
   <div class="human-verify-card" role="dialog" aria-live="polite">
     <div class="human-verify-spin" aria-hidden="true"></div>
-    <p class="human-verify-text">正在验证你是人类…（约 {{.Seconds}} 秒）</p>
+    <p class="human-verify-text">正在验证你是人类…</p>
     <label class="human-verify-tick" hidden>
       <input type="checkbox" class="human-verify-box" disabled> 我是人类，不是机器
     </label>
@@ -61,15 +61,17 @@
   // 转多久、能不能提交，浏览器说了都不算——verify 那个隐藏字段是渲染这一页时服务端发的
   // 令牌，提交时要到 internal/store/verify.go 里核销，时间没到就核销不掉。所以关掉
   // JavaScript 也拦不住谁，只是看不见这个窗。
-  (function () {
+  //
+  // 要等 DOMContentLoaded：这段脚本在表单中间，提交按钮在它后面，现在就找 [type=submit]
+  // 找到的是 null——按钮找不到就什么都别拦（宁可没有这个窗，也不能让正常人提交不了表单），
+  // 于是整个窗白屏立着不动。
+  document.addEventListener('DOMContentLoaded', function () {
     var overlay = document.querySelector('.human-verify');
     if (!overlay) return;
     overlay.style.display = 'flex';
     var form = overlay.closest('form');
     var submit = form ? form.querySelector('[type=submit]') : null;
     var tick = overlay.querySelector('.human-verify-box');
-    // 找不到按钮或框就说明页面结构变了，这时什么都不拦：宁可没有这个窗，也不能让正常人
-    // 提交不了表单。
     if (!submit || !tick) return;
     var spin = overlay.querySelector('.human-verify-spin');
     var text = overlay.querySelector('.human-verify-text');
@@ -105,6 +107,6 @@
       submit.disabled = !tick.checked;
       overlay.style.display = tick.checked ? 'none' : 'flex';
     });
-  })();
+  });
 </script>
 {{end}}
