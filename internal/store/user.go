@@ -20,7 +20,8 @@ const BootstrapHandle = "admin"
 // made by 批量建号, the token account — reads as verified, and nobody is locked out by
 // a column that was only ever meant to gate new registrations.
 const userColumns = `id, handle, IFNULL(email, ''), display_name, bio, role, status, dm_policy,
-		(passhash <> '') AS has_password, IFNULL(email_verified, 1), created_at, IFNULL(last_login_at, 0)`
+		(passhash <> '') AS has_password, IFNULL(email_verified, 1), created_at, IFNULL(last_login_at, 0),
+		IFNULL(theme, '')`
 
 func scanUser(row scanner) (User, error) {
 	var (
@@ -29,7 +30,7 @@ func scanUser(row scanner) (User, error) {
 		verifiedMS int
 	)
 	err := row.Scan(&u.ID, &u.Handle, &u.Email, &u.DisplayName, &u.Bio, &u.Role, &u.Status,
-		&u.DMPolicy, &hasPass, &verifiedMS, &u.CreatedAt, &u.LastLoginAt)
+		&u.DMPolicy, &hasPass, &verifiedMS, &u.CreatedAt, &u.LastLoginAt, &u.Theme)
 	u.HasPassword = hasPass != 0
 	u.EmailVerified = verifiedMS != 0
 	return u, notFound(err)
@@ -127,7 +128,7 @@ func (db *DB) CancelAccount(ctx context.Context, userID int64) (string, error) {
 	err := db.InTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE users SET handle=?, email=NULL, passhash='', display_name=?, bio='',
-			                        status='deleted', dm_policy='off', last_login_at=NULL
+			                        status='deleted', dm_policy='off', last_login_at=NULL, theme=''
 			 WHERE id=?`, handle, AnonymousName, userID); err != nil {
 			return err
 		}

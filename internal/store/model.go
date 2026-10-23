@@ -22,6 +22,9 @@ type User struct {
 	EmailVerified bool  `json:"email_verified"`
 	CreatedAt     int64 `json:"created_at"`
 	LastLoginAt   int64 `json:"last_login_at"`
+	// Theme 是这个人自己的配色原文（一串 key=value，见 theme.go）。它跟着每次 authenticate
+	// 一起读出来，所以渲染一个人的页面不需要第二条查询；空串是他什么都没调。
+	Theme string `json:"-"`
 }
 
 type Problem struct {
