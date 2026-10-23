@@ -162,6 +162,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings/profile", s.handleProfileSave)
 	mux.HandleFunc("POST /settings/password", s.handlePasswordSave)
+	// 配色：每个人的九格颜色，只影响他自己看到的页面。
+	mux.HandleFunc("POST /settings/theme", s.handleThemeSave)
 	// 重新发送验证邮件：只能给自己账号上那个已经存着的地址发，表单里没有收件地址栏。
 	mux.HandleFunc("POST /settings/email/resend", s.handleResendEmail)
 

@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 
@@ -265,6 +266,7 @@ func (a actor) viewer() *viewer {
 	if a.User.DisplayName != "" {
 		name = a.User.DisplayName
 	}
+	theme := store.ParseTheme(a.User.Theme)
 	return &viewer{
 		Handle: a.User.Handle, Name: name, Admin: a.Admin,
 		Manage: a.can(permPermissionManage), Site: a.can(permSiteSettings),
@@ -275,5 +277,9 @@ func (a actor) viewer() *viewer {
 		Stats:         a.can(permStatsView),
 		IPs:           a.can(permIPManage),
 		Audit:         a.can(permIPManage),
+		// 配色不查第二遍：它已经在 authenticate 读出的那一行 users 里，这里只是把那串文本
+		// 解析成"能进 <html style> 的形状"（解析本身只认白名单，脏值掉出去）。
+		ThemeMode:  theme.Mode,
+		ThemeStyle: template.CSS(theme.Style()),
 	}
 }

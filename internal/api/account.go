@@ -479,6 +479,8 @@ type settingsData struct {
 	// itself, not the site switch, because a row this feature never touched reads as
 	// verified and that person must not be offered a link to click.
 	EmailVerified bool
+	// Theme 是这一页的配色卡：九格颜色 + 明暗底色，只影响看的人自己。
+	Theme themeView
 }
 
 func (s *Server) buildSettings(a actor) settingsData {
@@ -486,6 +488,7 @@ func (s *Server) buildSettings(a actor) settingsData {
 		Email: a.User.Email, DisplayName: a.User.DisplayName, Bio: a.User.Bio,
 		HasPassword: a.User.HasPassword, Joined: agoMS(a.User.CreatedAt),
 		DMPolicy: a.User.DMPolicy, EmailVerified: a.User.EmailVerified,
+		Theme: buildThemeView(a.User.Theme),
 	}
 }
 

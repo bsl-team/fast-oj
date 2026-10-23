@@ -64,4 +64,31 @@
   <p><input type="submit" value="设置密码"></p>
 </form>
 {{end}}
+
+<h2>配色</h2>
+<form method="post" action="/settings/theme">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <label>明暗底色</label>
+  <select name="mode">
+    <option value="" {{if eq .Data.Theme.Mode "" }}selected{{end }}>跟随系统（默认）</option>
+    <option value="light" {{if eq .Data.Theme.Mode "light" }}selected{{end }}>固定浅色</option>
+    <option value="dark" {{if eq .Data.Theme.Mode "dark" }}selected{{end }}>固定深色</option>
+  </select>
+  <label>九格颜色（这一页就是你调完之后的样子，保存后立刻生效，也只有你看到它）</label>
+  <div class="swatches">
+    {{range .Data.Theme.Swatches}}
+    <label class="swatch{{if .Custom}} custom{{end}}" title="{{.Hint}}">
+      <input type="color" name="{{.Key}}" value="{{.Value}}">
+      <span>{{.Label}}</span>
+      <code>{{.Value}}</code>
+    </label>
+    {{end}}
+  </div>
+  <p>
+    <input type="submit" value="保存配色">
+    {{if .Data.Theme.Custom}}<button type="submit" name="clear" value="1">全部恢复默认</button>{{end}}
+  </p>
+</form>
+<p class="meta">配色跟着你的账号走，别人看同一个站仍然是他们自己的样子；没登录的人看到的是站点的默认配色。
+  这里能改的就是这九格——只有颜色，不是一段样式，否则任何人都能改写这台站点的页面。</p>
 {{end}}

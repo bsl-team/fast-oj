@@ -86,6 +86,11 @@ type viewer struct {
 	// Stats is the 统计 entry: only someone holding stats.view sees the link.
 	Stats bool
 	CSRF  string
+	// ThemeMode 与 ThemeStyle 是这个人在 /settings 里给自己挑的观感：前者是明暗底色
+	// （空=跟着系统），后者是已经过白名单校验的自定义属性串。匿名访客两个都是空，页面
+	// 与没有这个功能时一模一样，也就多不出一分钱开销。
+	ThemeMode  string
+	ThemeStyle template.CSS
 }
 
 // shell is the envelope every page template sees: layout fields plus the page

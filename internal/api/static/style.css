@@ -1,3 +1,9 @@
+/* 调色板的三层，顺序有意义：
+   1. :root 是站点默认（浅色）。
+   2. [data-theme=…] 是这个人自己选的明暗底色（设置页里那个三选）。
+   3. 媒体查询只在"没选过"的时候兜底：跟着系统走。
+   各人自己调的那九个颜色不在这里——它们由 <html style="--fg:#…"> 内联进来，内联样式压过
+   上面任何一条，所以"完全 DIY"就是"你调过的那几格一定算数"。见 internal/store/theme.go。 */
 :root {
   --fg: #16181d;
   --muted: #6a7280;
@@ -8,9 +14,22 @@
   --ok: #1c7a3e;
   --bad: #b3261e;
   --warn: #8a6100;
+  color-scheme: light;
+}
+[data-theme=dark] {
+  --fg: #e6e8ee;
+  --muted: #98a1b3;
+  --line: #2a2f3a;
+  --bg: #12151b;
+  --code: #1a1e26;
+  --accent: #7fb0ff;
+  --ok: #6dd58c;
+  --bad: #ff8a80;
+  --warn: #e6c15c;
+  color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme=light]) {
     --fg: #e6e8ee;
     --muted: #98a1b3;
     --line: #2a2f3a;
@@ -20,6 +39,7 @@
     --ok: #6dd58c;
     --bad: #ff8a80;
     --warn: #e6c15c;
+    color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
@@ -232,3 +252,23 @@ table.batch input[type=text] { width: 100%; min-width: 6rem; }
 .human-verify.counting .human-verify-tick { display: none; }
 .human-verify-tick::before { content: "\2610\FE0E  "; }
 .human-verify-tick.tick-on::before { content: "\2611\FE0E  "; }
+
+/* 配色卡的九格取色器：原生 input[type=color]，没有 JS、没有外部库。
+   一格 = 色块 + 名字 + 当前值，窄屏自动换行。 */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: .4rem .6rem;
+  margin: .4rem 0 .8rem;
+}
+.swatch { display: flex; align-items: center; gap: .4rem; color: var(--muted); }
+.swatch input[type=color] {
+  width: 2.2rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: .3rem;
+  background: var(--code);
+}
+.swatch code { color: var(--fg); font-size: .8rem; }
+.swatch.custom span { color: var(--fg); font-weight: 600; }

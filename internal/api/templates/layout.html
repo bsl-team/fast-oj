@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="zh-Hans">
+<html lang="zh-Hans"{{if .Me}}{{with .Me.ThemeMode}} data-theme="{{.}}"{{end}}{{with .Me.ThemeStyle}} style="{{.}}"{{end}}{{end}}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
