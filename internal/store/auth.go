@@ -219,6 +219,17 @@ type Session struct {
 	UserID    int64
 	CSRF      string
 	ExpiresAt int64
+	// StepUpAt 是这个会话最近一次"把密码再输对"的时刻（毫秒），0 从没输过。权限控制台
+	// 用它决定要不要再问一次密码；它属于会话，不属于账号，见 0031。
+	StepUpAt int64
+}
+
+// StepUpFresh 报告那次确认还在有效期内。窗口多长是策略，由调用方给（api 那边的 2 分钟）。
+//
+// 带上"时刻不能在未来"这一条：这一列只会被 nowMS() 写入，但系统时钟倒退过一次，一个
+// 未来的时间戳就能让这个会话永远不用再确认——多比一次整数减法换掉这种可能，值。
+func (s Session) StepUpFresh(nowMS int64, window time.Duration) bool {
+	return s.StepUpAt > 0 && s.StepUpAt <= nowMS && nowMS-s.StepUpAt <= window.Milliseconds()
 }
 
 func (db *DB) CreateSession(ctx context.Context, userID int64, ip, userAgent string, ttl time.Duration) (Session, error) {
@@ -246,16 +257,17 @@ func (db *DB) CreateSession(ctx context.Context, userID int64, ip, userAgent str
 // disabled accounts, and refreshes the last-seen stamp.
 func (db *DB) SessionUser(ctx context.Context, id string) (User, Session, error) {
 	var (
-		u       User
-		userID  int64
-		csrf    string
-		expires int64
+		u        User
+		userID   int64
+		csrf     string
+		expires  int64
+		stepUpAt int64
 	)
 	err := db.SQL.QueryRowContext(ctx,
-		`SELECT s.user_id, s.csrf, s.expires_at, u.handle, u.role, u.status
+		`SELECT s.user_id, s.csrf, s.expires_at, s.step_up_at, u.handle, u.role, u.status
 		 FROM sessions s JOIN users u ON u.id=s.user_id
 		 WHERE s.id=? AND s.expires_at > ?`, id, nowMS()).
-		Scan(&userID, &csrf, &expires, &u.Handle, &u.Role, &u.Status)
+		Scan(&userID, &csrf, &expires, &stepUpAt, &u.Handle, &u.Role, &u.Status)
 	if err != nil {
 		return User{}, Session{}, notFound(err)
 	}
@@ -269,7 +281,17 @@ func (db *DB) SessionUser(ctx context.Context, id string) (User, Session, error)
 	if _, err := db.SQL.ExecContext(ctx, `UPDATE sessions SET last_seen_at=? WHERE id=?`, nowMS(), id); err != nil {
 		return User{}, Session{}, err
 	}
-	return u, Session{ID: id, UserID: userID, CSRF: csrf, ExpiresAt: expires}, nil
+	return u, Session{ID: id, UserID: userID, CSRF: csrf, ExpiresAt: expires, StepUpAt: stepUpAt}, nil
+}
+
+// MarkStepUp 记下"这个会话刚刚把密码输对了"。调用方必须先自己比对过密码——这一行存在的意义
+// 就是"非零当且仅当证明过"，所以它只接受比对成功的结果。
+//
+// 反过来不需要"收回"这条路：改密码与封号都会把会话整条删掉（SetPassword / SetUserStatus 里的
+// DropUserSessions），会话没了，那次确认自然跟着没了。
+func (db *DB) MarkStepUp(ctx context.Context, sessionID string) error {
+	_, err := db.SQL.ExecContext(ctx, `UPDATE sessions SET step_up_at=? WHERE id=?`, nowMS(), sessionID)
+	return err
 }
 
 func (db *DB) DropSession(ctx context.Context, id string) error {

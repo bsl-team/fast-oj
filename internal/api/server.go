@@ -177,6 +177,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /admin/perms", s.handleAdminUsers)
 	mux.HandleFunc("GET /admin/perms/u/{handle}", s.handleAdminUser)
+	// 改权限、改角色、改状态、注销账号之前的一次身份再确认：密码只写在这个会话上，2 分钟有效。
+	mux.HandleFunc("POST /admin/perms/unlock", s.handleStepUpUnlock)
 	mux.HandleFunc("POST /admin/perms/u/{handle}", s.handleAdminPermChange)
 	mux.HandleFunc("POST /admin/users/{handle}/role", s.handleAdminRoleChange)
 	mux.HandleFunc("POST /admin/users/{handle}/status", s.handleAdminStatusChange)

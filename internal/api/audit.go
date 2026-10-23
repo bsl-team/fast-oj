@@ -174,6 +174,9 @@ var auditLabels = map[string]string{
 	"judge.denied":           "判机鉴权被拒",
 	"judge.claim":            "判机领走工单",
 	"judge.result":           "判机回报判定",
+	// 身份再确认被拒：有人拿着一个能改权限的会话，却连着五次答不出这个账号的密码。
+	// 这是这一站最该留下的"篡改未遂"记录。
+	"step_up.denied": "权限确认失败",
 }
 
 // auditActions is the filter list, ordered the way an operator reads the page: the
@@ -185,7 +188,7 @@ var auditActions = []string{
 	"case.delete", "cases.wipe", "problem.delete",
 	"contest.delete", "contest.problem.remove",
 	"ticket.status", "ticket.delete", "judge.denied",
-	"judge.claim", "judge.result",
+	"judge.claim", "judge.result", "step_up.denied",
 }
 
 func auditLabel(action string) string {

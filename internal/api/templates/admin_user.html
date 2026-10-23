@@ -19,6 +19,21 @@
   他的权限、角色和状态只有他自己能动，所以这一页没有任何按钮。</p>
 {{end}}
 
+{{if and .Data.NeedStepUp (not .Data.Self) (not .Data.Owner)}}
+<h2>先确认是你本人</h2>
+<p class="flash">改权限、角色、状态或注销账号都要先把你的密码再输一遍。<b>确认一次管 2 分钟</b>，
+  这期间这一路的改动不再问密码。这一步防的是"会话被人拿走"：拿到 cookie 而不知道密码的人，
+  到这里就过不去。</p>
+<form method="post" action="/admin/perms/unlock">
+  <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
+  <input type="hidden" name="next" value="/admin/perms/u/{{.Data.Target.Handle}}">
+  <label>你的密码</label>
+  <input type="password" name="step_up" autocomplete="current-password" required>
+  <p><input type="submit" value="确认身份"></p>
+</form>
+<p class="meta">确认之后，下面的按钮才会出现；没确认时这一页只读。</p>
+{{end}}
+
 <table>
   <tr><th>权限</th><th>含义</th><th>角色自带</th><th>单独设置</th><th>生效</th><th></th></tr>
   {{range .Data.Grants}}
@@ -29,7 +44,7 @@
     <td>{{if eq .Override "granted"}}授予{{else if eq .Override "removed"}}收回{{else}}—{{end}}</td>
     <td><span class="badge {{if .Effective}}AC{{else}}WA{{end}}">{{if .Effective}}有{{else}}无{{end}}</span></td>
     <td>
-      {{if and (not $.Data.Self) (not $.Data.Owner)}}
+      {{if and (not $.Data.Self) (not $.Data.Owner) (not $.Data.NeedStepUp)}}
       <form class="inline" method="post" action="/admin/perms/u/{{$.Data.Target.Handle}}">
         <input type="hidden" name="csrf" value="{{$.Me.CSRF}}">
         <input type="hidden" name="key" value="{{.Key}}">
@@ -43,7 +58,7 @@
   {{end}}
 </table>
 
-{{if and (not .Data.Self) (not .Data.Owner) .Data.CanUser}}
+{{if and (not .Data.Self) (not .Data.Owner) (not .Data.NeedStepUp) .Data.CanUser}}
 <h2>角色与状态</h2>
 <form class="row" method="post" action="/admin/users/{{.Data.Target.Handle}}/role">
   <input type="hidden" name="csrf" value="{{.Me.CSRF}}">
@@ -68,7 +83,7 @@
 </form>
 {{end}}
 
-{{if and (not .Data.Self) (not .Data.Owner) (not .Data.Cancelled)}}
+{{if and (not .Data.Self) (not .Data.Owner) (not .Data.Cancelled) (not .Data.NeedStepUp)}}
 <h2>注销这个账号</h2>
 <p class="meta">抹掉<b>身份</b>：用户名、邮箱、密码、昵称、简介全部清空，这个用户名马上可以
   被下一个人注册。<b>行为记录一条都不删</b>：他的提交、判题结果、动态、帖子、评论都还在，

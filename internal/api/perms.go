@@ -96,6 +96,24 @@ func (s *Server) requirePerm(w http.ResponseWriter, r *http.Request, key string)
 	return a, true
 }
 
+// requireAnyPerm 是"拿着这几把钥匙里的任意一把就行"那一种闸门：身份确认这一页同时服务于
+// permission.manage（逐项权限）与 user.manage（角色、状态、注销），两个都得进得去。
+// 被拒时只报第一把键：在页面上交代"你其实握着另一把"没有意义，那是在替人探权限表。
+func (s *Server) requireAnyPerm(w http.ResponseWriter, r *http.Request, keys ...string) (actor, bool) {
+	a, err := s.authenticate(r)
+	if err != nil {
+		s.writeAuthError(w, r, err)
+		return actor{}, false
+	}
+	for _, key := range keys {
+		if a.can(key) {
+			return a, true
+		}
+	}
+	s.respondError(w, r, http.StatusForbidden, "缺少权限："+keys[0])
+	return a, false
+}
+
 // requireProblemEdit loads a problem and checks authoring rights. Owning it is
 // enough; problem.edit.any is only needed to touch someone else's.
 func (s *Server) requireProblemEdit(w http.ResponseWriter, r *http.Request, key string) (actor, store.Problem, bool) {

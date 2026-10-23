@@ -91,6 +91,36 @@ func TestSessionLifecycle(t *testing.T) {
 	if err != nil || got.ID != u.ID || back.CSRF != sess.CSRF {
 		t.Fatalf("session lookup = %+v %+v %v", got, back, err)
 	}
+	// 身份再确认的时刻跟着同一行读出来：新会话是 0（登录成功不等于证明过密码），
+	// MarkStepUp 之后它带着一个非零值，而 SessionUser 已经在读它了。
+	if back.StepUpAt != 0 {
+		t.Errorf("新建会话的 step_up_at = %d，应该是 0", back.StepUpAt)
+	}
+	if back.StepUpFresh(time.Now().UnixMilli(), 2*time.Minute) {
+		t.Error("没确认过的会话被当成已确认")
+	}
+	if err := db.MarkStepUp(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, after, err := db.SessionUser(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.StepUpAt == 0 || !after.StepUpFresh(time.Now().UnixMilli(), 2*time.Minute) {
+		t.Fatalf("确认之后还是没过：step_up_at = %d", after.StepUpAt)
+	}
+	// 窗口之外必须重新问：把"现在"推到那次确认之后 2 分 1 秒。
+	if after.StepUpFresh(after.StepUpAt+(2*time.Minute+time.Second).Milliseconds(), 2*time.Minute) {
+		t.Error("窗口之外的确认还算数")
+	}
+	// 正好 2 分钟还算数：这条边界要说清是含还是不含，否则以后没人敢改。
+	if !after.StepUpFresh(after.StepUpAt+(2*time.Minute).Milliseconds(), 2*time.Minute) {
+		t.Error("正好 2 分钟时被当成过期了")
+	}
+	// 未来的时刻不算数：时钟倒退过一次，也不该让一个会话永远不用再确认。
+	if after.StepUpFresh(after.StepUpAt-time.Hour.Milliseconds(), 2*time.Minute) {
+		t.Error("那次确认还在未来，却算已通过")
+	}
 	if _, _, err := db.SessionUser(ctx, sess.ID+"x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown session = %v", err)
 	}

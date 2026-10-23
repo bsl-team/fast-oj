@@ -86,6 +86,9 @@ func (s *Server) handleAdminUser(w http.ResponseWriter, r *http.Request) {
 		"Cancelled": u.IsCancelled(),
 		"Anonym":    store.AnonymousName,
 		"CanUser":   a.can(permUserManage),
+		// NeedStepUp 决定这一页摆的是密码框还是那排改权限的按钮：判断与 requireStepUp
+		// 用的是同一个函数，所以页面和闸门不会各说一套。
+		"NeedStepUp": !stepUpOK(a),
 	})
 }
 
@@ -172,6 +175,11 @@ func (s *Server) handleAdminCancel(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, back+"?msg="+url.QueryEscape("要注销请把用户名原样填进确认框"), http.StatusSeeOther)
 		return
 	}
+	// 打字确认管的是"我知道我在干什么"，这道确认管的是"是我本人在干"。两个都要，顺序上
+	// 先把填错的那种最常见的手滑挡掉。
+	if !s.requireStepUp(w, r, a, back, "注销") {
+		return
+	}
 	// 名下还有题或比赛时先拦住：注销会让这些题没人能改，比赛没人能办。
 	problems, contests, err := s.db.OwnedCounts(r.Context(), target.ID)
 	if err != nil {
@@ -212,6 +220,11 @@ func (s *Server) handleAdminPermChange(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.FormValue("key"))
 	action := strings.TrimSpace(r.FormValue("action"))
 	back := "/admin/perms/u/" + url.PathEscape(target.Handle)
+	// 逐项权限是这套站点最值钱的改动：光有 permission.manage 不够，这一次还得证明
+	// 拿着这个会话的人本人还在。
+	if !s.requireStepUp(w, r, a, back, "权限") {
+		return
+	}
 
 	switch action {
 	case "grant", "revoke":
@@ -249,6 +262,9 @@ func (s *Server) handleAdminRoleChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := strings.TrimSpace(r.FormValue("role"))
+	if !s.requireStepUp(w, r, a, "/admin/perms/u/"+url.PathEscape(target.Handle), "角色") {
+		return
+	}
 	if err := s.db.SetUserRole(r.Context(), target.ID, role); err != nil {
 		s.respondError(w, r, http.StatusBadRequest, "角色设置失败: "+err.Error())
 		return
@@ -268,6 +284,9 @@ func (s *Server) handleAdminStatusChange(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	status := strings.TrimSpace(r.FormValue("status"))
+	if !s.requireStepUp(w, r, a, "/admin/perms/u/"+url.PathEscape(target.Handle), "状态") {
+		return
+	}
 	if err := s.db.SetUserStatus(r.Context(), target.ID, status); err != nil {
 		s.respondError(w, r, http.StatusBadRequest, "状态设置失败: "+err.Error())
 		return
