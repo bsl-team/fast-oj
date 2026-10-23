@@ -127,3 +127,25 @@ func TestUpdateThemeReadsBackWithTheUserRow(t *testing.T) {
 		t.Fatalf("脏值被写进了库：%q", got.Theme)
 	}
 }
+
+// 这两条是给"速度"那个要求留的证据：配色在每个页面都要解析一次，所以它得能被量出来。
+// 九个键的解析与拼接是纳秒级，而它换来的是"不再多查一次库"（见 api 包那条查询计数用例）。
+func BenchmarkParseTheme(b *testing.B) {
+	const raw = "mode=dark;fg=#e6e8ee;muted=#98a1b3;line=#2a2f3a;bg=#12151b;code=#1a1e26;accent=#7fb0ff;ok=#6dd58c;bad=#ff8a80;warn=#e6c15c"
+	b.ReportAllocs()
+	for b.Loop() {
+		if got := ParseTheme(raw); len(got.Colors) != 9 || got.Mode != "dark" {
+			b.Fatalf("解析出来的东西不对：%q", got.String())
+		}
+	}
+}
+
+func BenchmarkThemeStyle(b *testing.B) {
+	t := ParseTheme("mode=dark;fg=#e6e8ee;muted=#98a1b3;line=#2a2f3a;bg=#12151b;code=#1a1e26;accent=#7fb0ff;ok=#6dd58c;bad=#ff8a80;warn=#e6c15c")
+	b.ReportAllocs()
+	for b.Loop() {
+		if s := t.Style(); len(s) == 0 {
+			b.Fatal("空串")
+		}
+	}
+}
