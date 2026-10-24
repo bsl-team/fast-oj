@@ -1,3 +1,30 @@
-# 判机镜像只需要交叉编译好的那一个文件，别把仓库和演示数据喂给构建上下文。
-*
-!dist/linux_amd64/fast-judge
+# 构建上下文里不要出现的东西——逐条列出来，而不是用 `*` 减白名单。
+#
+# 原来这里是 `*` 加一句 `!dist/linux_amd64/fast-judge`：那等于把 go.mod、go.sum、cmd/、
+# internal/ 一起从上下文里拿走。判机镜像（Dockerfile.judge）只 COPY 一个预先交叉编译好的
+# 二进制，看起来没受影响；但任何**在容器里从源码编译**的构建（`COPY go.mod go.sum ./`、
+# `go mod tidy`、多阶段镜像）第一步就撞死——上下文里根本没有模块文件，依赖图无从算起。
+# 一个为了省 56MB 的写法，把整条源码构建路给堵了，这个便宜不该占。
+#
+# 该挡的东西其实就那几样，列得出来：本机编译产物、演示数据与库文件、仓库自己的元信息。
+
+# 仓库元信息与工作目录（.tmp 里是子代理留下的 worktree 副本）。
+.git/
+.qoder/
+.tmp/
+
+# 演示库与用例数据：几十 MB，而且里面是账号和提交，不该进任何镜像的构建上下文。
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 本机编译产物。判机要的那个 linux 二进制不在这里——它没有扩展名，见下面 dist 那条。
+*.exe
+*.log
+*.test
+.DS_Store
+
+# dist/ 里留着的只有判机镜像需要的那一个文件（scripts/judge.docker.sh 交叉编译出来的
+# dist/linux_amd64/fast-judge）。同目录下的 linux 服务器二进制用不到，23MB 不进上下文。
+dist/linux_amd64/fast-oj
