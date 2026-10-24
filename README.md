@@ -1092,12 +1092,24 @@ sudo bash scripts/judge-isolation.sh --check      # 只看，不动任何东西
 # 2. 交叉编译 + 构建镜像 + 起容器（只需出站连接，没暴露任何端口）
 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh          # 本地已有镜像时直接复用
 REBUILD=1 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh  # 装了新工具链时强制重建
+SOURCE=1 FASTOJ_JUDGE_TOKEN=JDG bash scripts/judge.docker.sh   # 本机没有 Go：把编译挪进容器
 ```
 
 `docker build` 每次都要向 Docker Hub 取 `FROM` 的元数据，网络不通就整镜像失败；脚本
 因此带了一条离线回退：把新编译的二进制 `docker cp` 进临时容器再 `docker commit`
 （commit 时显式写回 `ENTRYPOINT`，否则会把临时容器的 `sleep` 提交进去）。等价于只重跑
 那一层 COPY，工具链没变时完全够用。
+
+两份 Dockerfile 的分工，别混用：
+
+| 文件 | 怎么出二进制 | 需要什么 |
+|------|--------------|----------|
+| `Dockerfile.judge` | 本机先交叉编译，`COPY dist/linux_amd64/fast-judge` | 本机有 Go；`dist/linux_amd64/` 里**要有那个文件**（空目录会让构建在 COPY 那一步失败） |
+| `Dockerfile.judge.source` | 容器里 `golang` 阶段编（`SOURCE=1` 走这条） | 构建上下文里有 `go.mod`、`go.sum`、`cmd/`、`internal/`；一次网络取模块（默认 `GOPROXY=https://goproxy.cn,direct`） |
+
+`.dockerignore` 因此**不能用 `*` 减白名单**：那样上下文里就没有模块文件，后一份在
+`COPY go.mod` / `go mod tidy` 那一步直接撞死。它现在是逐条列的黑名单——挡的是
+`data/`（几十 MB 演示库与用例）、`.git/`、`.tmp/`、`*.exe` 这些，源码留在上下文里。
 
 容器里跑的约束（下面这套已在 Docker Desktop 29.7.2 / linux 引擎上实测）：
 

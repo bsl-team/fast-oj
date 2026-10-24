@@ -7,7 +7,9 @@ services:
     image: fast-oj-judge:latest
     build:
       context: .
-      dockerfile: Dockerfile.judge
+      # 默认是"本机先交叉编译、镜像只 COPY 二进制"那一份；SOURCE=1 时脚本会把
+      # DOCKERFILE 指到 Dockerfile.judge.source（编译挪进容器，本机不需要 Go）。
+      dockerfile: ${DOCKERFILE:-Dockerfile.judge}
     container_name: fast-oj-judge
     environment:
       FASTOJ_SERVER: ${FASTOJ_SERVER:-http://host.docker.internal:18080}

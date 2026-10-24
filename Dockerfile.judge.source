@@ -1,0 +1,55 @@
+# 判机镜像的"从源码构建"版本：一台没装 Go 的机器，一条 docker build 就能出镜像。
+#
+#   docker build -f Dockerfile.judge.source -t fast-oj-judge .
+#
+# 与 Dockerfile.judge 的分工：那份是"本机先交叉编译好，把二进制 COPY 进来"（快、不占构建
+# 网络，scripts/judge.docker.sh 用的就是它）；这份把编译挪进容器，需要的是构建上下文里有
+# go.mod、go.sum、cmd/、internal/——这正是 .dockerignore 之前用 `*` 挡掉的东西。
+#
+# 判机只是出站连接服务器，所以这个容器不需要任何入站端口，也不挂载宿主目录。
+#
+# 编译阶段只需要 go.mod、go.sum、cmd/、internal/ 这四样：把同样的四条 COPY 结果在本地
+# 拼一棵树出来，CGO_ENABLED=0 GOOS=linux go build ./cmd/fast-judge 就能出二进制（试过）。
+# 仓库里的 //go:embed 全在 internal/ 底下（模板与静态资源、pyguard.py、迁移文件），
+# 所以不需要把 docs/ 或 README 也塞进上下文。
+ARG GO_VERSION=1.27.2
+FROM golang:${GO_VERSION}-bookworm AS build
+
+# 这台 ECS 上实测 proxy.golang.org 直接 i/o timeout，所以默认走 goproxy.cn；
+# 在能直连的机器上构建时用 --build-arg GOPROXY= 换回默认值。
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=$GOPROXY
+
+WORKDIR /src
+
+# 先只拷依赖清单：源码改一行不会让下面这一层白重跑。
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+
+# 静态编译成 linux/amd64，运行时那一层就不需要任何 glibc 版本匹配。
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/fast-judge ./cmd/fast-judge
+
+FROM debian:bookworm-slim
+
+# g++/gcc 是判题工具链；-static 编译需要 libc6-dev 里的静态库。
+# python3 让这台判机能收 Python 提交——但只是"有解释器"，能不能真收还要看牢房开不开得起来：
+# 容器里 unshare 常被 Docker 的 seccomp 挡掉，那时闸门会把 python 从名单上摘掉并在
+# /judges 上写明原因，而不是让解释器裸跑。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ gcc libc6-dev ca-certificates python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# 非 root 的专用账号：容器里它什么都不是，宿主上更不存在。
+RUN groupadd -g 1000 oj && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin oj
+
+# 编译阶段整个不进最终镜像：留下来的只有那一个二进制。
+COPY --from=build /out/fast-judge /usr/local/bin/fast-judge
+RUN mkdir -p /work && chown oj:oj /work
+WORKDIR /work
+
+USER oj
+ENTRYPOINT ["/usr/local/bin/fast-judge"]
+CMD ["-server", "http://host.docker.internal:8080"]
