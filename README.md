@@ -1,6 +1,6 @@
 # fast-oj
 
-[Demo](http://116.62.85.27:8080/)
+[Demo1](http://116.62.85.27:8080/)
 
 [Demo2](https://oj.lbcoj.top/)
 
